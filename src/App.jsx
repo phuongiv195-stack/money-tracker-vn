@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
+import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
-import TransactionsTab from './components/Transactions/TransactionsTab'; // <--- MỚI IMPORT
-import AccountsTab from './components/Accounts/AccountsTab'; // <--- Thêm dòng này
-import ReportsTab from './components/Reports/ReportsTab'; // <--- Thêm dòng này
-function App() {
+import TransactionsTab from './components/Transactions/TransactionsTab';
+import AccountsTab from './components/Accounts/AccountsTab';
+import ReportsTab from './components/Reports/ReportsTab';
+
+function AppContent() {
   const { currentUser } = useAuth();
-  const [activeTab, setActiveTab] = useState('categories'); // Mặc định là tab Categories
+  const [activeTab, setActiveTab] = useState('categories');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Tạm thời comment phần Login để dev cho nhanh, sau này sẽ bật lại
+  // Comment để dev nhanh
   // if (!currentUser) {
   //   return <Login />;
   // }
@@ -21,11 +23,11 @@ function App() {
       case 'categories':
         return <CategoriesTab />;
       case 'transactions':
-        return <TransactionsTab />; // <--- ĐÃ KẾT NỐI VÀO ĐÂY
+        return <TransactionsTab />;
       case 'accounts':
-        return <AccountsTab />; // <--- Gọi component vừa tạo
+        return <AccountsTab />;
       case 'reports':
-        return <ReportsTab />; // <--- Gọi component Reports
+        return <ReportsTab />;
       default:
         return <CategoriesTab />;
     }
@@ -34,12 +36,12 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
       
-      {/* 1. Main Content Area */}
+      {/* Main Content */}
       <main className="max-w-md mx-auto bg-white min-h-screen shadow-lg relative pb-20">
         {renderContent()}
       </main>
 
-      {/* 2. Floating Action Button (FAB) - Nút dấu + */}
+      {/* FAB Button */}
       <button
         onClick={() => setIsModalOpen(true)}
         className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
@@ -47,7 +49,7 @@ function App() {
         +
       </button>
 
-      {/* 3. Bottom Navigation */}
+      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20">
         <div className="max-w-md mx-auto flex justify-around">
           <NavButton 
@@ -77,12 +79,11 @@ function App() {
         </div>
       </nav>
 
-      {/* 4. Modal Add Transaction */}
+      {/* Modal */}
       <AddTransactionModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
         onSave={() => {
-          // Khi save xong thì refresh data (các component con tự listen firebase nên ko cần làm gì nhiều)
           console.log("Transaction saved!");
         }}
       />
@@ -90,7 +91,6 @@ function App() {
   );
 }
 
-// Component con cho nút bấm menu
 const NavButton = ({ active, onClick, icon, label }) => (
   <button 
     onClick={onClick}
@@ -102,5 +102,13 @@ const NavButton = ({ active, onClick, icon, label }) => (
     <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
   </button>
 );
+
+function App() {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
+  );
+}
 
 export default App;
