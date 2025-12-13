@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
@@ -9,6 +10,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const { signup, login } = useAuth();
+  const navigate = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -21,11 +23,12 @@ export default function Login() {
       } else {
         await signup(email, password);
       }
+      navigate('/');
     } catch (err) {
       setError('Failed to ' + (isLogin ? 'login' : 'sign up'));
       console.error(err);
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
