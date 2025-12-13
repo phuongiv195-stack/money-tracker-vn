@@ -2,6 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import CategoryDetail from './CategoryDetail';
+import AddCategoryModal from './AddCategoryModal';
+import EditGroupModal from './EditGroupModal';
 
 const CategoriesTab = () => {
   const [categories, setCategories] = useState([]);
@@ -12,8 +14,13 @@ const CategoriesTab = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [activeTab, setActiveTab] = useState('expense');
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  
+  // Group editing
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [longPressTimer, setLongPressTimer] = useState(null);
 
-  // 1. Fetch Categories
   useEffect(() => {
     const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -23,7 +30,6 @@ const CategoriesTab = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. Fetch Transactions
   useEffect(() => {
     const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -34,7 +40,6 @@ const CategoriesTab = () => {
     return () => unsubscribe();
   }, []);
 
-  // Helpers
   const getMonthYearLabel = (date) => {
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   };
@@ -46,11 +51,9 @@ const CategoriesTab = () => {
   };
 
   const formatCurrency = (amount) => {
-    // Xóa 'đ', chỉ để lại số và dấu phẩy
     return new Intl.NumberFormat('en-US').format(amount);
   };
 
-  // 3. TÍNH TOÁN SỐ LIỆU
   const { categoryTotals, summary } = useMemo(() => {
     const currentMonthStr = currentDate.toISOString().slice(0, 7); 
     const filteredTrans = transactions.filter(t => t.date.startsWith(currentMonthStr));
@@ -75,7 +78,6 @@ const CategoriesTab = () => {
     };
   }, [transactions, currentDate]);
 
-  // 4. GROUP & FILTER LOGIC
   const filteredGroups = useMemo(() => {
     const groups = {};
     categories.forEach(cat => {
@@ -97,11 +99,30 @@ const CategoriesTab = () => {
     }, {});
   }, [categories, searchQuery, categoryTotals, activeTab]);
 
+  // Long press handlers
+  const handleGroupTouchStart = (groupName) => {
+    const timer = setTimeout(() => {
+      setEditingGroup({ name: groupName, type: activeTab });
+    }, 500); // 500ms = long press
+    setLongPressTimer(timer);
+  };
+
+  const handleGroupTouchEnd = () => {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
+    }
+  };
+
+  const handleCategoryClick = (cat) => {
+    setEditingCategory(cat);
+    setIsAddModalOpen(true);
+  };
+
   if (loading) return <div className="p-4 text-center">Loading data...</div>;
 
   return (
     <div className="pb-20">
-      {/* 1. Summary Header */}
       <div className="bg-white p-4 shadow-sm mb-4">
         <div className="flex justify-between items-center mb-4">
           <button onClick={() => changeMonth(-1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded">←</button>
@@ -122,15 +143,25 @@ const CategoriesTab = () => {
         </div>
       </div>
 
-      {/* 2. TABS & SEARCH */}
       <div className="px-4 mb-4">
-        <input
-          type="text"
-          placeholder={`🔍 Search ${activeTab} categories...`}
-          className="w-full p-2 pl-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:border-emerald-500 mb-3"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="text"
+            placeholder={`🔍 Search ${activeTab} categories...`}
+            className="flex-1 p-2 pl-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:border-emerald-500"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <button
+            onClick={() => {
+              setEditingCategory(null);
+              setIsAddModalOpen(true);
+            }}
+            className="bg-emerald-500 text-white w-10 h-10 rounded-lg flex items-center justify-center text-2xl hover:bg-emerald-600 transition-colors shadow-md"
+          >
+            +
+          </button>
+        </div>
         
         <div className="flex gap-2">
           <button 
@@ -156,19 +187,26 @@ const CategoriesTab = () => {
         </div>
       </div>
 
-      {/* 3. CATEGORIES LIST */}
       <div className="px-4 space-y-4">
         {Object.entries(filteredGroups).map(([groupName, groupCats]) => (
           <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-100">
-            <div className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider">
+            <div 
+              className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider cursor-pointer select-none active:bg-gray-100"
+              onTouchStart={() => handleGroupTouchStart(groupName)}
+              onTouchEnd={handleGroupTouchEnd}
+              onMouseDown={() => handleGroupTouchStart(groupName)}
+              onMouseUp={handleGroupTouchEnd}
+              onMouseLeave={handleGroupTouchEnd}
+            >
               <span>{groupName}</span>
+              <span className="text-[10px] opacity-50">Long press to edit</span>
             </div>
             
             <div className="divide-y divide-gray-50">
               {groupCats.map(cat => (
                 <div 
                   key={cat.id} 
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => handleCategoryClick(cat)}
                   className="p-3 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
                 >
                   <div className="flex items-center gap-3">
@@ -190,6 +228,15 @@ const CategoriesTab = () => {
           <div className="text-center text-gray-500 py-8">
             <div className="text-4xl mb-2">🤷‍♂️</div>
             No {activeTab} categories found
+            <button
+              onClick={() => {
+                setEditingCategory(null);
+                setIsAddModalOpen(true);
+              }}
+              className="block mx-auto mt-4 bg-emerald-500 text-white px-6 py-2 rounded-lg hover:bg-emerald-600 transition-colors"
+            >
+              + Add First Category
+            </button>
           </div>
         )}
       </div>
@@ -202,6 +249,28 @@ const CategoriesTab = () => {
           onClose={() => setSelectedCategory(null)}
         />
       )}
+
+      <AddCategoryModal
+        isOpen={isAddModalOpen}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setEditingCategory(null);
+        }}
+        onSave={() => {
+          setIsAddModalOpen(false);
+          setEditingCategory(null);
+        }}
+        defaultType={activeTab}
+        editCategory={editingCategory}
+      />
+
+      <EditGroupModal
+        isOpen={editingGroup !== null}
+        onClose={() => setEditingGroup(null)}
+        onSave={() => setEditingGroup(null)}
+        groupName={editingGroup?.name}
+        groupType={editingGroup?.type}
+      />
     </div>
   );
 };

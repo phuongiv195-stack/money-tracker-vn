@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import AddTransactionModal from './AddTransactionModal';
 
 const TransactionsTab = () => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState(null);
+  const [editingTransaction, setEditingTransaction] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // 1. Fetch Transactions
   useEffect(() => {
     try {
       const q = query(
@@ -27,7 +29,7 @@ const TransactionsTab = () => {
         setLoading(false);
       }, (err) => {
         console.error("Firebase Error:", err);
-        setError("Không tải được dữ liệu (Đang đợi Index hoặc lỗi mạng)");
+        setError("Không tải được dữ liệu");
         setLoading(false);
       });
 
@@ -39,7 +41,6 @@ const TransactionsTab = () => {
     }
   }, []);
 
-  // 2. Filter & Search Logic
   const filteredTransactions = useMemo(() => {
     if (!searchQuery.trim()) return transactions;
 
@@ -57,7 +58,6 @@ const TransactionsTab = () => {
     });
   }, [transactions, searchQuery]);
 
-  // 3. Group by Date
   const groupedTransactions = useMemo(() => {
     const groups = {};
     filteredTransactions.forEach(t => {
@@ -68,10 +68,8 @@ const TransactionsTab = () => {
     return groups;
   }, [filteredTransactions]);
 
-  // Helpers
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null) return '0';
-    // Dùng en-US để có dấu phẩy (50,000) và KHÔNG hiện ký hiệu tiền tệ
     return new Intl.NumberFormat('en-US').format(amount);
   };
 
@@ -89,12 +87,21 @@ const TransactionsTab = () => {
     }
   };
 
+  const handleTransactionClick = (transaction) => {
+    setEditingTransaction(transaction);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingTransaction(null);
+  };
+
   if (loading) return <div className="p-4 text-center">Loading transactions...</div>;
   if (error) return <div className="p-4 text-center text-red-500 text-sm">{error}</div>;
 
   return (
     <div className="pb-24">
-      {/* 1. Header & Search */}
       <div className="bg-white p-4 shadow-sm sticky top-0 z-10">
         <h1 className="text-xl font-bold text-gray-800 mb-3">All Transactions</h1>
         <div className="relative">
@@ -108,7 +115,6 @@ const TransactionsTab = () => {
         </div>
       </div>
 
-      {/* 2. Transaction List */}
       <div className="px-4 mt-4 space-y-4">
         {Object.keys(groupedTransactions).length === 0 ? (
           <div className="text-center text-gray-500 py-10">
@@ -123,16 +129,19 @@ const TransactionsTab = () => {
               
               <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
                 {items.map((t, index) => (
-                  <div key={t.id || index} className={`p-3 flex justify-between items-center ${index !== items.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                    
-                    <div className="flex items-center gap-3">
+                  <div 
+                    key={t.id || index}
+                    onClick={() => handleTransactionClick(t)}
+                    className={`p-3 flex justify-between items-center cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors ${index !== items.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  >
+                    <div className="flex items-center gap-3 flex-1">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg
                         ${t.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-50 text-red-500'}
                       `}>
                         {t.type === 'income' ? '💰' : (t.type === 'transfer' ? '⇄' : '💸')}
                       </div>
                       
-                      <div>
+                      <div className="flex-1">
                         <div className="font-medium text-gray-800 line-clamp-1">
                           {t.payee || t.category || 'No Name'}
                         </div>
@@ -161,6 +170,13 @@ const TransactionsTab = () => {
           ))
         )}
       </div>
+
+      <AddTransactionModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onSave={handleCloseModal}
+        editTransaction={editingTransaction}
+      />
     </div>
   );
 };
