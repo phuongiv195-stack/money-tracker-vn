@@ -1,0 +1,180 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+
+const ReportsTab = () => {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  // Màu sắc cho biểu đồ (Top 5 + Others)
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#9ca3af'];
+
+  useEffect(() => {
+    const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const trans = snapshot.docs.map(doc => doc.data());
+      setTransactions(trans);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- LOGIC TÍNH TOÁN ---
+  const { summary, categoryData, totalExpense } = useMemo(() => {
+    const monthStr = currentDate.toISOString().slice(0, 7); // "2025-12"
+    const monthlyTrans = transactions.filter(t => t.date && t.date.startsWith(monthStr));
+
+    let inc = 0, exp = 0;
+    const catMap = {};
+
+    monthlyTrans.forEach(t => {
+      const amt = Number(t.amount);
+      if (t.type === 'income') inc += amt;
+      if (t.type === 'expense') {
+        exp += Math.abs(amt);
+        // Gom nhóm theo Category cho biểu đồ
+        if (t.category) {
+          catMap[t.category] = (catMap[t.category] || 0) + Math.abs(amt);
+        }
+      }
+    });
+
+    // Xử lý data cho biểu đồ (Sort và lấy Top 5)
+    let sortedCats = Object.entries(catMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    // Tính % cho từng mục
+    sortedCats = sortedCats.map(item => ({
+      ...item,
+      percent: exp > 0 ? (item.value / exp) * 100 : 0
+    }));
+
+    return {
+      summary: { income: inc, expense: exp, net: inc - exp },
+      categoryData: sortedCats,
+      totalExpense: exp
+    };
+  }, [transactions, currentDate]);
+
+  // --- LOGIC VẼ BIỂU ĐỒ SVG (DONUT CHART) ---
+  const renderPieChart = () => {
+    if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10">No data to display</div>;
+
+    let cumulativePercent = 0;
+    
+    // Chỉ lấy Top 5 để vẽ, còn lại gom vào Others (để biểu đồ đẹp)
+    const chartData = categoryData.slice(0, 5);
+    const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
+    if (otherValue > 0) {
+      chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalExpense) * 100 });
+    }
+
+    return (
+      <div className="relative w-48 h-48 mx-auto my-4">
+        <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
+          {chartData.map((item, index) => {
+            // Tính toán độ dài cung tròn (Stroke Dasharray)
+            const strokeDasharray = `${item.percent} ${100 - item.percent}`;
+            const strokeDashoffset = -cumulativePercent;
+            cumulativePercent += item.percent;
+
+            return (
+              <circle
+                key={index}
+                cx="50" cy="50" r="40"
+                fill="transparent"
+                stroke={COLORS[index % COLORS.length]}
+                strokeWidth="20"
+                strokeDasharray={strokeDasharray}
+                strokeDashoffset={strokeDashoffset}
+              />
+            );
+          })}
+        </svg>
+        {/* Số tổng ở giữa */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-xs text-gray-500 font-medium">Total Expense</span>
+          <span className="text-sm font-bold text-gray-800">{formatCurrencyCompact(totalExpense)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // Helpers
+  const changeMonth = (offset) => {
+    const newDate = new Date(currentDate);
+    newDate.setMonth(newDate.getMonth() + offset);
+    setCurrentDate(newDate);
+  };
+
+  const formatCurrency = (val) => new Intl.NumberFormat('en-US').format(val);
+  
+  // Format rút gọn cho biểu đồ (VD: 1.5M, 500k)
+  const formatCurrencyCompact = (val) => {
+    if (val >= 1000000) return (val / 1000000).toFixed(1) + 'M';
+    if (val >= 1000) return (val / 1000).toFixed(0) + 'k';
+    return val;
+  };
+
+  const getMonthLabel = (date) => date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  if (loading) return <div className="p-4 text-center">Loading reports...</div>;
+
+  return (
+    <div className="pb-24">
+      {/* 1. Month Selector */}
+      <div className="bg-white p-4 shadow-sm flex justify-between items-center sticky top-0 z-10">
+        <button onClick={() => changeMonth(-1)} className="p-2 bg-gray-100 rounded hover:bg-gray-200">←</button>
+        <span className="font-bold text-lg">{getMonthLabel(currentDate)}</span>
+        <button onClick={() => changeMonth(1)} className="p-2 bg-gray-100 rounded hover:bg-gray-200">→</button>
+      </div>
+
+      {/* 2. Overview Cards */}
+      <div className="p-4 grid grid-cols-3 gap-2 text-center">
+        <div className="bg-white p-2 rounded-lg shadow-sm border border-green-100">
+          <div className="text-[10px] text-gray-500 uppercase">Income</div>
+          <div className="text-sm font-bold text-green-600">{formatCurrencyCompact(summary.income)}</div>
+        </div>
+        <div className="bg-white p-2 rounded-lg shadow-sm border border-red-100">
+          <div className="text-[10px] text-gray-500 uppercase">Expense</div>
+          <div className="text-sm font-bold text-red-500">{formatCurrencyCompact(summary.expense)}</div>
+        </div>
+        <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-100">
+          <div className="text-[10px] text-gray-500 uppercase">Net</div>
+          <div className={`text-sm font-bold ${summary.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            {summary.net > 0 ? '+' : ''}{formatCurrencyCompact(summary.net)}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. CHART SECTION */}
+      <div className="bg-white mx-4 rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
+        <h3 className="font-bold text-gray-700 text-sm mb-2">Spending Structure</h3>
+        {renderPieChart()}
+        
+        {/* Legend / List */}
+        <div className="space-y-3 mt-4">
+          {categoryData.map((item, index) => (
+            <div key={item.name} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 flex-1">
+                <div 
+                  className="w-3 h-3 rounded-full" 
+                  style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                ></div>
+                <span className="text-gray-700 truncate">{item.name}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-gray-900">{formatCurrency(item.value)}</span>
+                <span className="text-xs text-gray-400 w-8 text-right">{item.percent.toFixed(0)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ReportsTab;

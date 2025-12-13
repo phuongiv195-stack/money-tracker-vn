@@ -1,122 +1,106 @@
-import { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import React, { useState } from 'react';
+import { useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
+import TransactionsTab from './components/Transactions/TransactionsTab'; // <--- MỚI IMPORT
+import AccountsTab from './components/Accounts/AccountsTab'; // <--- Thêm dòng này
+import ReportsTab from './components/Reports/ReportsTab'; // <--- Thêm dòng này
+function App() {
+  const { currentUser } = useAuth();
+  const [activeTab, setActiveTab] = useState('categories'); // Mặc định là tab Categories
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
-function ProtectedApp() {
-  const { currentUser, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('categories');
-  const [showModal, setShowModal] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-
+  // Tạm thời comment phần Login để dev cho nhanh, sau này sẽ bật lại
   // if (!currentUser) {
-  //   return <Navigate to="/login" />;
+  //   return <Login />;
   // }
 
-  const handleTransactionSuccess = () => {
-    setRefreshKey(prev => prev + 1);
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'categories':
+        return <CategoriesTab />;
+      case 'transactions':
+        return <TransactionsTab />; // <--- ĐÃ KẾT NỐI VÀO ĐÂY
+      case 'accounts':
+        return <AccountsTab />; // <--- Gọi component vừa tạo
+      case 'reports':
+        return <ReportsTab />; // <--- Gọi component Reports
+      default:
+        return <CategoriesTab />;
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-xl font-bold text-gray-900">Money Tracker</h1>
-          <button
-            onClick={logout}
-            className="text-sm text-gray-600 hover:text-gray-900"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-4 pb-24">
-        {activeTab === 'categories' && <CategoriesTab key={refreshKey} />}
-        {activeTab === 'transactions' && (
-          <div className="text-center py-20 text-gray-500">Transactions Tab - Coming Soon</div>
-        )}
-        {activeTab === 'accounts' && (
-          <div className="text-center py-20 text-gray-500">Accounts Tab - Coming Soon</div>
-        )}
-        {activeTab === 'reports' && (
-          <div className="text-center py-20 text-gray-500">Reports Tab - Coming Soon</div>
-        )}
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
+      
+      {/* 1. Main Content Area */}
+      <main className="max-w-md mx-auto bg-white min-h-screen shadow-lg relative pb-20">
+        {renderContent()}
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-area-bottom">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex justify-around items-center h-16">
-            <button
-              onClick={() => setActiveTab('categories')}
-              className={`flex flex-col items-center justify-center flex-1 ${
-                activeTab === 'categories' ? 'text-emerald-600' : 'text-gray-400'
-              }`}
-            >
-              <span className="text-xs font-medium">CATEGORIES</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('transactions')}
-              className={`flex flex-col items-center justify-center flex-1 ${
-                activeTab === 'transactions' ? 'text-emerald-600' : 'text-gray-400'
-              }`}
-            >
-              <span className="text-xs font-medium">TRANSACTIONS</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('accounts')}
-              className={`flex flex-col items-center justify-center flex-1 ${
-                activeTab === 'accounts' ? 'text-emerald-600' : 'text-gray-400'
-              }`}
-            >
-              <span className="text-xs font-medium">ACCOUNTS</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('reports')}
-              className={`flex flex-col items-center justify-center flex-1 ${
-                activeTab === 'reports' ? 'text-emerald-600' : 'text-gray-400'
-              }`}
-            >
-              <span className="text-xs font-medium">REPORTS</span>
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      {/* FAB Button */}
+      {/* 2. Floating Action Button (FAB) - Nút dấu + */}
       <button
-        onClick={() => setShowModal(true)}
-        className="fixed bottom-20 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-600 z-20"
+        onClick={() => setIsModalOpen(true)}
+        className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
       >
         +
       </button>
 
-      {/* Add Transaction Modal */}
-      <AddTransactionModal
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        onSuccess={handleTransactionSuccess}
+      {/* 3. Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20">
+        <div className="max-w-md mx-auto flex justify-around">
+          <NavButton 
+            active={activeTab === 'categories'} 
+            onClick={() => setActiveTab('categories')}
+            icon="📊" 
+            label="Categories" 
+          />
+          <NavButton 
+            active={activeTab === 'transactions'} 
+            onClick={() => setActiveTab('transactions')}
+            icon="📝" 
+            label="Transactions" 
+          />
+          <NavButton 
+            active={activeTab === 'accounts'} 
+            onClick={() => setActiveTab('accounts')}
+            icon="🏦" 
+            label="Accounts" 
+          />
+          <NavButton 
+            active={activeTab === 'reports'} 
+            onClick={() => setActiveTab('reports')}
+            icon="📈" 
+            label="Reports" 
+          />
+        </div>
+      </nav>
+
+      {/* 4. Modal Add Transaction */}
+      <AddTransactionModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)}
+        onSave={() => {
+          // Khi save xong thì refresh data (các component con tự listen firebase nên ko cần làm gì nhiều)
+          console.log("Transaction saved!");
+        }}
       />
     </div>
   );
 }
 
-function App() {
-  return (
-    <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/*" element={<ProtectedApp />} />
-        </Routes>
-      </Router>
-    </AuthProvider>
-  );
-}
+// Component con cho nút bấm menu
+const NavButton = ({ active, onClick, icon, label }) => (
+  <button 
+    onClick={onClick}
+    className={`flex-1 py-3 flex flex-col items-center justify-center transition-colors ${
+      active ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
+    }`}
+  >
+    <span className="text-xl mb-1">{icon}</span>
+    <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
+  </button>
+);
 
 export default App;

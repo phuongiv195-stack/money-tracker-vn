@@ -1,272 +1,357 @@
-import { useState } from 'react';
-import { collection, addDoc } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { collection, addDoc, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useAuth } from '../../contexts/AuthContext';
 
-export default function AddTransactionModal({ isOpen, onClose, onSuccess }) {
-  const [activeTab, setActiveTab] = useState('expense'); // expense, income, transfer
-  const [amount, setAmount] = useState('');
-  const [payee, setPayee] = useState('');
-  const [category, setCategory] = useState('');
-  const [account, setAccount] = useState('Cash');
-  const [fromAccount, setFromAccount] = useState('');
-  const [toAccount, setToAccount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [memo, setMemo] = useState('');
+const AddTransactionModal = ({ isOpen, onClose, onSave }) => {
+  const { currentUser } = useAuth();
+  const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
+  
+  // State hiển thị số tiền
+  const [displayAmount, setDisplayAmount] = useState('');
+  
+  // State mẹo hiển thị ngày (Text vs Date)
+  const [dateInputType, setDateInputType] = useState('text');
 
-  if (!isOpen) return null;
+  // Form Data
+  const [formData, setFormData] = useState({
+    amount: '',
+    payee: '',
+    category: '',
+    account: 'Cash',
+    fromAccount: 'Cash',
+    toAccount: 'Vietcombank',
+    date: new Date().toISOString().split('T')[0], // yyyy-mm-dd
+    memo: ''
+  });
 
-  const handleSave = async () => {
-    if (!amount || parseFloat(amount) === 0) {
-      alert('Nhập số tiền!');
-      return;
+  const [payeeSuggestions, setPayeeSuggestions] = useState([]);
+  const [categorySuggestions, setCategorySuggestions] = useState([]);
+  const [showPayeeList, setShowPayeeList] = useState(false);
+  const [showCategoryList, setShowCategoryList] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadPayees();
+      loadCategories();
+      setFormData({
+        amount: '',
+        payee: '',
+        category: '',
+        account: 'Cash',
+        fromAccount: 'Cash',
+        toAccount: 'Vietcombank',
+        date: new Date().toISOString().split('T')[0],
+        memo: ''
+      });
+      setDisplayAmount(''); 
+      setDateInputType('text'); // Reset về hiển thị text
+    }
+  }, [isOpen]);
+
+  // Helper: Format ngày hiển thị (2025-12-13 -> 13 Dec 2025)
+  const formatDateForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    // Format theo kiểu Anh (ngắn gọn): 13 Dec 2025
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  const loadPayees = async () => {
+    try {
+        const q = query(
+            collection(db, 'transactions'), 
+            where('userId', '==', 'test-user'),
+            orderBy('date', 'desc'),
+            limit(50)
+        );
+        const snapshot = await getDocs(q);
+        const payees = [...new Set(snapshot.docs.map(d => d.data().payee))];
+        setPayeeSuggestions(payees);
+    } catch (e) {
+        // Silent error
+    }
+  };
+
+  const loadCategories = async () => {
+    const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+    const snapshot = await getDocs(q);
+    setCategorySuggestions(snapshot.docs.map(d => d.data()));
+  };
+
+  const handleAmountChange = (e) => {
+    const rawValue = e.target.value.replace(/,/g, '');
+    if (!isNaN(rawValue) && rawValue !== '') {
+        const formatted = Number(rawValue).toLocaleString('en-US');
+        setDisplayAmount(formatted);
+        setFormData({ ...formData, amount: rawValue });
+    } else if (rawValue === '') {
+        setDisplayAmount('');
+        setFormData({ ...formData, amount: '' });
+    }
+  };
+
+  // --- HÀM SAVE ĐÃ SỬA ---
+  const handleSubmit = async () => {
+    // 1. Validation có thông báo rõ ràng
+    if (!formData.amount) {
+        alert("Vui lòng nhập số tiền!");
+        return;
+    }
+    if (activeTab !== 'transfer' && !formData.category) {
+        alert("Vui lòng chọn hoặc nhập Category!");
+        return;
     }
 
     setLoading(true);
     try {
+      let finalAmount = Number(formData.amount);
+      
       const transactionData = {
         userId: 'test-user',
-        date: date,
-        memo: memo || ''
+        type: activeTab,
+        amount: finalAmount,
+        date: formData.date,
+        memo: formData.memo,
+        createdAt: new Date()
       };
 
       if (activeTab === 'transfer') {
-        if (!fromAccount || !toAccount) {
-          alert('Chọn account!');
-          setLoading(false);
-          return;
-        }
-        transactionData.type = 'transfer';
-        transactionData.amount = parseFloat(amount);
-        transactionData.fromAccount = fromAccount;
-        transactionData.toAccount = toAccount;
+        transactionData.fromAccount = formData.fromAccount;
+        transactionData.toAccount = formData.toAccount;
       } else {
-        if (!category) {
-          alert('Nhập category!');
-          setLoading(false);
-          return;
-        }
-        transactionData.type = activeTab;
-        transactionData.amount = activeTab === 'expense' 
-          ? -Math.abs(parseFloat(amount))
-          : Math.abs(parseFloat(amount));
-        transactionData.payee = payee || '';
-        transactionData.category = category;
-        transactionData.account = account;
+        if (activeTab === 'expense') transactionData.amount = -Math.abs(finalAmount);
+        else transactionData.amount = Math.abs(finalAmount);
+        
+        transactionData.payee = formData.payee;
+        transactionData.category = formData.category;
+        transactionData.account = formData.account;
       }
 
       await addDoc(collection(db, 'transactions'), transactionData);
+
+      // 2. Gọi onSave an toàn (kiểm tra xem có hàm onSave không mới gọi)
+      if (onSave) {
+          onSave();
+      }
       
-      // Reset form
-      setAmount('');
-      setPayee('');
-      setCategory('');
-      setMemo('');
-      
-      onSuccess();
+      // 3. Đóng modal
       onClose();
+
     } catch (error) {
-      console.error('Error adding transaction:', error);
-      alert('Lỗi! Thử lại.');
+      console.error("Error adding transaction:", error);
+      alert("Lỗi khi lưu: " + error.message);
     }
     setLoading(false);
   };
 
-  const changeDate = (days) => {
-    const currentDate = new Date(date);
-    currentDate.setDate(currentDate.setDate() + days);
-    setDate(currentDate.toISOString().split('T')[0]);
-  };
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end sm:items-center justify-center z-50">
-      <div className="bg-white w-full sm:max-w-lg sm:rounded-lg rounded-t-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:w-[450px] h-[90vh] sm:h-auto sm:rounded-xl flex flex-col animate-slide-up">
+        
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-lg font-semibold">Add Transaction</h2>
-          <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+        <div className="flex justify-between items-center p-4 border-b">
+            <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
+            <h2 className="font-semibold text-lg">Add Transaction</h2>
+            <button 
+                onClick={handleSubmit} 
+                disabled={loading}
+                className="text-emerald-600 font-bold disabled:opacity-50"
+            >
+                {loading ? 'SAVING...' : 'SAVE'}
+            </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b">
-          <button
-            onClick={() => setActiveTab('expense')}
-            className={`flex-1 py-3 text-sm font-medium ${
-              activeTab === 'expense'
-                ? 'text-red-600 border-b-2 border-red-600'
-                : 'text-gray-500'
-            }`}
-          >
-            Expense
-          </button>
-          <button
-            onClick={() => setActiveTab('income')}
-            className={`flex-1 py-3 text-sm font-medium ${
-              activeTab === 'income'
-                ? 'text-green-600 border-b-2 border-green-600'
-                : 'text-gray-500'
-            }`}
-          >
-            Income
-          </button>
-          <button
-            onClick={() => setActiveTab('transfer')}
-            className={`flex-1 py-3 text-sm font-medium ${
-              activeTab === 'transfer'
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500'
-            }`}
-          >
-            Transfer
-          </button>
+        <div className="flex p-2 gap-2 bg-gray-50">
+            {['expense', 'income', 'transfer'].map(tab => (
+                <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`flex-1 py-2 rounded-lg capitalize font-medium transition-colors ${
+                        activeTab === tab 
+                        ? (tab === 'expense' ? 'bg-red-100 text-red-700' : tab === 'income' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700')
+                        : 'bg-white text-gray-500 border'
+                    }`}
+                >
+                    {tab}
+                </button>
+            ))}
         </div>
 
-        {/* Form */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Amount */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Amount</label>
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder={activeTab === 'expense' ? '-0' : activeTab === 'income' ? '+0' : '0'}
-              className={`w-full px-4 py-3 text-2xl font-bold border rounded-lg focus:outline-none focus:ring-2 ${
-                activeTab === 'expense'
-                  ? 'text-red-600 focus:ring-red-500'
-                  : activeTab === 'income'
-                  ? 'text-green-600 focus:ring-green-500'
-                  : 'text-gray-900 focus:ring-blue-500'
-              }`}
-              autoFocus
-            />
-          </div>
-
-          {/* Expense/Income Fields */}
-          {activeTab !== 'transfer' && (
-            <>
-              {/* Payee */}
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Payee</label>
+        {/* Form Fields */}
+        <div className="p-4 space-y-4 overflow-y-auto">
+            
+            {/* AMOUNT INPUT */}
+            <div className="text-center py-4">
                 <input
-                  type="text"
-                  value={payee}
-                  onChange={(e) => setPayee(e.target.value)}
-                  placeholder="Enter payee name"
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={displayAmount}
+                    onChange={handleAmountChange}
+                    className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
+                        activeTab === 'expense' ? 'text-red-500' : activeTab === 'income' ? 'text-green-500' : 'text-blue-500'
+                    }`}
+                    autoFocus
                 />
-              </div>
-
-              {/* Category */}
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Category</label>
-                <input
-                  type="text"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  placeholder="Enter category"
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* Account */}
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Account</label>
-                <select
-                  value={account}
-                  onChange={(e) => setAccount(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="Cash">Cash</option>
-                  <option value="Bank">Bank</option>
-                  <option value="Credit Card">Credit Card</option>
-                </select>
-              </div>
-            </>
-          )}
-
-          {/* Transfer Fields */}
-          {activeTab === 'transfer' && (
-            <>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">From Account</label>
-                <select
-                  value={fromAccount}
-                  onChange={(e) => setFromAccount(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select account</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Bank">Bank</option>
-                  <option value="Credit Card">Credit Card</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">To Account</label>
-                <select
-                  value={toAccount}
-                  onChange={(e) => setToAccount(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select account</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Bank">Bank</option>
-                  <option value="Credit Card">Credit Card</option>
-                </select>
-              </div>
-            </>
-          )}
-
-          {/* Date */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Date</label>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => changeDate(-1)}
-                className="px-3 py-2 border rounded-lg hover:bg-gray-50"
-              >
-                ←
-              </button>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button
-                onClick={() => changeDate(1)}
-                className="px-3 py-2 border rounded-lg hover:bg-gray-50"
-              >
-                →
-              </button>
             </div>
-          </div>
 
-          {/* Memo */}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Memo (Optional)</label>
-            <input
-              type="text"
-              value={memo}
-              onChange={(e) => setMemo(e.target.value)}
-              placeholder="Add note"
-              className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-        </div>
+            {activeTab !== 'transfer' ? (
+                // === GIAO DIỆN EXPENSE / INCOME ===
+                <>
+                    {/* Payee */}
+                    <div className="relative">
+                        <label className="text-xs text-gray-500 uppercase font-semibold">Payee</label>
+                        <input
+                            type="text"
+                            placeholder="Who did you pay?"
+                            value={formData.payee}
+                            onChange={(e) => setFormData({...formData, payee: e.target.value})}
+                            onFocus={() => setShowPayeeList(true)}
+                            onBlur={() => setTimeout(() => setShowPayeeList(false), 200)}
+                            className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                        {showPayeeList && payeeSuggestions.length > 0 && (
+                            <div className="absolute z-10 w-full bg-white shadow-lg max-h-40 overflow-y-auto rounded-lg mt-1 border">
+                                {payeeSuggestions
+                                .filter(p => p.toLowerCase().includes(formData.payee.toLowerCase()))
+                                .map((payee, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        className="p-2 hover:bg-gray-100 cursor-pointer"
+                                        onClick={() => {
+                                            setFormData({...formData, payee});
+                                            setShowPayeeList(false);
+                                        }}
+                                    >
+                                        {payee}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t">
-          <button
-            onClick={handleSave}
-            disabled={loading}
-            className="w-full py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : 'Save'}
-          </button>
+                    {/* Category */}
+                    <div className="relative">
+                        <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
+                        <input
+                            type="text"
+                            placeholder="Search category..."
+                            value={formData.category}
+                            onChange={(e) => {
+                                setFormData({...formData, category: e.target.value});
+                                setShowCategoryList(true);
+                            }}
+                            onFocus={() => setShowCategoryList(true)}
+                            onBlur={() => setTimeout(() => setShowCategoryList(false), 200)}
+                            className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                        
+                        {showCategoryList && (
+                            <div className="absolute z-20 w-full bg-white shadow-xl max-h-60 overflow-y-auto rounded-lg mt-1 border border-gray-200">
+                                {categorySuggestions
+                                    .filter(cat => cat.name.toLowerCase().includes(formData.category.toLowerCase()))
+                                    .map(cat => (
+                                    <div 
+                                        key={cat.id} 
+                                        className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-gray-50 flex items-center gap-2"
+                                        onClick={() => {
+                                            setFormData({...formData, category: cat.name});
+                                            setShowCategoryList(false);
+                                        }}
+                                    >
+                                        <span className="text-xl">{cat.icon}</span>
+                                        <span>{cat.name}</span>
+                                        <span className="text-xs text-gray-400 ml-auto">{cat.group}</span>
+                                    </div>
+                                ))}
+                                {categorySuggestions.filter(cat => cat.name.toLowerCase().includes(formData.category.toLowerCase())).length === 0 && (
+                                    <div className="p-3 text-gray-500 text-sm text-center">No category found</div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Account */}
+                    <div>
+                        <label className="text-xs text-gray-500 uppercase font-semibold">Account</label>
+                        <select 
+                            className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                            value={formData.account}
+                            onChange={(e) => setFormData({...formData, account: e.target.value})}
+                        >
+                            <option>Cash</option>
+                            <option>Vietcombank</option>
+                            <option>Techcombank</option>
+                        </select>
+                    </div>
+                </>
+            ) : (
+                // === GIAO DIỆN TRANSFER (Đã tách dòng) ===
+                <div className="space-y-4"> 
+                    {/* From Account */}
+                    <div>
+                        <label className="text-xs text-gray-500 uppercase font-semibold">From Account</label>
+                        <select 
+                            className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none border border-gray-200"
+                            value={formData.fromAccount}
+                            onChange={(e) => setFormData({...formData, fromAccount: e.target.value})}
+                        >
+                            <option>Cash</option>
+                            <option>Vietcombank</option>
+                            <option>Techcombank</option>
+                        </select>
+                    </div>
+                    
+                    {/* To Account */}
+                    <div>
+                        <label className="text-xs text-gray-500 uppercase font-semibold">To Account</label>
+                        <select 
+                            className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none border border-gray-200"
+                            value={formData.toAccount}
+                            onChange={(e) => setFormData({...formData, toAccount: e.target.value})}
+                        >
+                            <option>Cash</option>
+                            <option>Vietcombank</option>
+                            <option>Techcombank</option>
+                        </select>
+                    </div>
+                </div>
+            )}
+
+            {/* Date - Toggle giữa Text và Date picker */}
+            <div>
+                <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
+                <input 
+                    type={dateInputType} 
+                    className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                    value={dateInputType === 'text' ? formatDateForDisplay(formData.date) : formData.date}
+                    onChange={(e) => setFormData({...formData, date: e.target.value})}
+                    onFocus={() => setDateInputType('date')} 
+                    onBlur={() => setDateInputType('text')}  
+                />
+            </div>
+
+            {/* Memo */}
+            <div>
+                <label className="text-xs text-gray-500 uppercase font-semibold">Memo</label>
+                <input
+                    type="text"
+                    placeholder="Notes (optional)"
+                    className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                    value={formData.memo}
+                    onChange={(e) => setFormData({...formData, memo: e.target.value})}
+                />
+            </div>
+
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default AddTransactionModal;

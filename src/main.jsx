@@ -1,19 +1,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
-import Login from './pages/Login.jsx'
-import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
 import './index.css'
-
-function Root() {
-  const { currentUser } = useAuth();
-  return currentUser ? <App /> : <Login />;
-}
+import { AuthProvider } from './contexts/AuthContext' // 1. Import cái này
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
+    {/* 2. Bọc App bên trong AuthProvider */}
     <AuthProvider>
-      <Root />
+      <App />
     </AuthProvider>
   </React.StrictMode>,
 )

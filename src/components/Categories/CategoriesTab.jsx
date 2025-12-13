@@ -1,201 +1,209 @@
-import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import React, { useState, useMemo, useEffect } from 'react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import CategoryDetail from './CategoryDetail';
 
-export default function CategoriesTab() {
-  const [activeView, setActiveView] = useState('expenses');
+const CategoriesTab = () => {
   const [categories, setCategories] = useState([]);
-  const [transactions, setTransactions] = useState([]);
+  const [transactions, setTransactions] = useState([]); 
   const [loading, setLoading] = useState(true);
-
-  // Fetch categories and transactions
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-        
-        // Fetch categories
-        const catQuery = query(
-          collection(db, 'categories'),
-          where('userId', '==', 'test-user'),
-          where('type', '==', activeView === 'expenses' ? 'expense' : 'income')
-        );
-        const catSnapshot = await getDocs(catQuery);
-        const cats = [];
-        catSnapshot.forEach((doc) => {
-          cats.push({ id: doc.id, ...doc.data() });
-        });
-        
-        // Fetch ALL transactions for summary calculation
-const txnQuery = query(
-  collection(db, 'transactions'),
-  where('userId', '==', 'test-user')
-);
-        const txnSnapshot = await getDocs(txnQuery);
-        const txns = [];
-        txnSnapshot.forEach((doc) => {
-          txns.push({ id: doc.id, ...doc.data() });
-        });
-        
-        setCategories(cats);
-        setTransactions(txns);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-  }, [activeView]);
-
-  // Calculate totals for each category
-  const categoryTotals = {};
-  transactions.forEach((txn) => {
-    if (!categoryTotals[txn.categoryId]) {
-      categoryTotals[txn.categoryId] = 0;
-    }
-    categoryTotals[txn.categoryId] += txn.amount;
-  });
-
-  // Group categories with totals
-  const groupedCategories = categories.reduce((acc, cat) => {
-    const group = cat.group || 'Uncategorized';
-    if (!acc[group]) {
-      acc[group] = {
-        categories: [],
-        total: 0
-      };
-    }
-    const catTotal = categoryTotals[cat.id] || 0;
-    acc[group].categories.push({ ...cat, total: catTotal });
-    acc[group].total += catTotal;
-    return acc;
-  }, {});
-
-  // Calculate summary
-  const totalExpenses = transactions
-    .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
   
-  const totalIncome = transactions
-    .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [activeTab, setActiveTab] = useState('expense');
+  const [selectedCategory, setSelectedCategory] = useState(null);
 
-  const summary = {
-    income: totalIncome,
-    expenses: totalExpenses,
-    net: totalIncome - totalExpenses
+  // 1. Fetch Categories
+  useEffect(() => {
+    const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCategories(cats);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Fetch Transactions
+  useEffect(() => {
+    const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTransactions(trans);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Helpers
+  const getMonthYearLabel = (date) => {
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   };
 
+  const changeMonth = (offset) => {
+    const newDate = new Date(currentDate);
+    newDate.setMonth(newDate.getMonth() + offset);
+    setCurrentDate(newDate);
+  };
+
+  const formatCurrency = (amount) => {
+    // Xóa 'đ', chỉ để lại số và dấu phẩy
+    return new Intl.NumberFormat('en-US').format(amount);
+  };
+
+  // 3. TÍNH TOÁN SỐ LIỆU
+  const { categoryTotals, summary } = useMemo(() => {
+    const currentMonthStr = currentDate.toISOString().slice(0, 7); 
+    const filteredTrans = transactions.filter(t => t.date.startsWith(currentMonthStr));
+
+    const catTotals = {};
+    let income = 0;
+    let expense = 0;
+
+    filteredTrans.forEach(t => {
+      const amt = Number(t.amount);
+      if (t.type === 'income') income += amt;
+      if (t.type === 'expense') expense += amt; 
+
+      if (t.category) {
+        catTotals[t.category] = (catTotals[t.category] || 0) + amt;
+      }
+    });
+
+    return {
+      categoryTotals: catTotals,
+      summary: { income, expense, net: income + expense }
+    };
+  }, [transactions, currentDate]);
+
+  // 4. GROUP & FILTER LOGIC
+  const filteredGroups = useMemo(() => {
+    const groups = {};
+    categories.forEach(cat => {
+      if (cat.type !== activeTab) return;
+      const groupName = cat.group || 'Other';
+      if (!groups[groupName]) groups[groupName] = [];
+      const realAmount = categoryTotals[cat.name] || 0;
+      groups[groupName].push({ ...cat, amount: realAmount });
+    });
+
+    if (!searchQuery.trim()) return groups;
+
+    return Object.entries(groups).reduce((acc, [group, cats]) => {
+      const filtered = cats.filter(cat => 
+        cat.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      if (filtered.length > 0) acc[group] = filtered;
+      return acc;
+    }, {});
+  }, [categories, searchQuery, categoryTotals, activeTab]);
+
+  if (loading) return <div className="p-4 text-center">Loading data...</div>;
+
   return (
-    <div className="space-y-4">
-      {/* Period Selector */}
-      <div className="flex items-center justify-between bg-white p-3 rounded-lg shadow-sm">
-        <button className="text-primary-600 hover:text-primary-700">←</button>
-        <select className="text-sm font-medium border-0 focus:ring-2 focus:ring-primary-500 rounded">
-          <option>December 2025</option>
-        </select>
-        <button className="text-primary-600 hover:text-primary-700">→</button>
-      </div>
-
-      {/* Summary Bar */}
-      <div className="bg-white p-4 rounded-lg shadow-sm">
-        <div className="grid grid-cols-3 gap-4 text-sm">
-          <div>
-            <div className="text-gray-500 mb-1">Income</div>
-            <div className="font-semibold text-green-600">
-              {summary.income.toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <div className="text-gray-500 mb-1">Expenses</div>
-            <div className="font-semibold text-red-600">
-              {summary.expenses.toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <div className="text-gray-500 mb-1">Net</div>
-            <div className={`font-semibold ${summary.net >= 0 ? 'text-primary-600' : 'text-red-600'}`}>
-              {summary.net >= 0 ? '+' : ''}{summary.net.toLocaleString()}
-            </div>
-          </div>
+    <div className="pb-20">
+      {/* 1. Summary Header */}
+      <div className="bg-white p-4 shadow-sm mb-4">
+        <div className="flex justify-between items-center mb-4">
+          <button onClick={() => changeMonth(-1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded">←</button>
+          <button className="text-gray-800 font-bold text-lg">{getMonthYearLabel(currentDate)}</button>
+          <button onClick={() => changeMonth(1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded">→</button>
+        </div>
+        
+        <div className="flex justify-between text-sm mb-2 text-gray-600">
+          <span>Income: <span className="text-green-600 font-medium">{formatCurrency(summary.income)}</span></span>
+          <span>Expense: <span className="text-red-600 font-medium">{formatCurrency(Math.abs(summary.expense))}</span></span>
+        </div>
+        
+        <div className="flex justify-between items-center border-t pt-2">
+          <span className="text-gray-500 font-medium">Net Total</span>
+          <span className={`font-bold text-xl ${summary.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            {summary.net > 0 ? '+' : ''}{formatCurrency(summary.net)}
+          </span>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="bg-white p-3 rounded-lg shadow-sm">
-        <input 
-          type="text" 
-          placeholder="🔍 Search categories..." 
-          className="w-full border-0 focus:ring-2 focus:ring-primary-500 rounded text-sm"
+      {/* 2. TABS & SEARCH */}
+      <div className="px-4 mb-4">
+        <input
+          type="text"
+          placeholder={`🔍 Search ${activeTab} categories...`}
+          className="w-full p-2 pl-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:border-emerald-500 mb-3"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
+        
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setActiveTab('expense')}
+            className={`flex-1 py-2 font-medium rounded-lg transition-colors border ${
+              activeTab === 'expense' 
+                ? 'bg-red-50 border-red-200 text-red-600 shadow-sm' 
+                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            - Expenses
+          </button>
+          <button 
+            onClick={() => setActiveTab('income')}
+            className={`flex-1 py-2 font-medium rounded-lg transition-colors border ${
+              activeTab === 'income' 
+                ? 'bg-green-50 border-green-200 text-green-600 shadow-sm' 
+                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            + Income
+          </button>
+        </div>
       </div>
 
-      {/* Toggle Expenses/Income */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setActiveView('expenses')}
-          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-            activeView === 'expenses'
-              ? 'bg-primary-500 text-white'
-              : 'bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          - Expenses
-        </button>
-        <button
-          onClick={() => setActiveView('income')}
-          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-            activeView === 'income'
-              ? 'bg-primary-500 text-white'
-              : 'bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          + Income
-        </button>
-      </div>
-
-      {/* Category Groups */}
-      {loading ? (
-        <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-          <p className="text-gray-500">Loading...</p>
-        </div>
-      ) : Object.keys(groupedCategories).length === 0 ? (
-        <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-          <p className="text-gray-500">No categories found</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {Object.entries(groupedCategories).map(([groupName, data]) => (
-            <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden">
-              <div className="p-3 border-b border-gray-100 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">▼</span>
-                  <span className="font-medium">{groupName}</span>
-                </div>
-                <span className="font-semibold">
-                  {data.total.toLocaleString()}
-                </span>
-              </div>
-              {data.categories.map((cat) => (
+      {/* 3. CATEGORIES LIST */}
+      <div className="px-4 space-y-4">
+        {Object.entries(filteredGroups).map(([groupName, groupCats]) => (
+          <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-100">
+            <div className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider">
+              <span>{groupName}</span>
+            </div>
+            
+            <div className="divide-y divide-gray-50">
+              {groupCats.map(cat => (
                 <div 
                   key={cat.id} 
-                  className="p-3 border-b border-gray-50 flex justify-between items-center hover:bg-gray-50 cursor-pointer"
+                  onClick={() => setSelectedCategory(cat)}
+                  className="p-3 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
                 >
-                  <div className="flex items-center gap-2">
-                    <span>{cat.icon}</span>
-                    <span className="text-sm">{cat.name}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl w-8 text-center">{cat.icon}</span>
+                    <span className="text-gray-700 font-medium">{cat.name}</span>
                   </div>
-                  <span className={`text-sm font-medium ${cat.total < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {cat.total.toLocaleString()}
-                  </span>
+                  <div className="text-right">
+                    <div className={`text-sm ${cat.amount !== 0 ? 'text-gray-900 font-medium' : 'text-gray-300'}`}>
+                      {formatCurrency(cat.amount)}
+                    </div> 
+                  </div>
                 </div>
               ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
+
+        {Object.keys(filteredGroups).length === 0 && (
+          <div className="text-center text-gray-500 py-8">
+            <div className="text-4xl mb-2">🤷‍♂️</div>
+            No {activeTab} categories found
+          </div>
+        )}
+      </div>
+
+      {selectedCategory && (
+        <CategoryDetail 
+          category={selectedCategory}
+          transactions={transactions}
+          currentDate={currentDate}
+          onClose={() => setSelectedCategory(null)}
+        />
       )}
     </div>
   );
-}
+};
+
+export default CategoriesTab;
