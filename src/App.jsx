@@ -33,13 +33,15 @@ function AppContent() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
-      
-      {/* Main Content */}
-      <main className="max-w-md mx-auto bg-white min-h-screen shadow-lg relative pb-20">
-        {renderContent()}
-      </main>
+ return (
+  <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
+    
+    {/* Fix Button */}
+        
+    {/* Main Content */}
+    <main className="max-w-md mx-auto bg-white min-h-screen shadow-lg relative pb-20">
+      {renderContent()}
+    </main>
 
       {/* FAB Button */}
       <button

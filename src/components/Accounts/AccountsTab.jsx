@@ -1,31 +1,40 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import AddAccountModal from './AddAccountModal';
+import AccountDetail from './AccountDetail';
 
 const AccountsTab = () => {
+  const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [selectedAccount, setSelectedAccount] = useState(null);
 
-  // Cấu hình nhóm tài khoản (Hardcode theo Design)
-  const accountGroups = {
-    'SPENDING': ['Cash', 'Vietcombank', 'Techcombank', 'BV Checking'],
-    'SAVINGS': ['VCB Savings 6M', 'Heo đất'],
-    'INVESTMENTS': ['D-Cash SSI', 'Coin', 'Chứng khoán'],
-    'LOANS': ['Loan to Minh', 'Bố gửi tiền']
-  };
+  // Fetch Accounts from Firebase
+  useEffect(() => {
+    const q = query(collection(db, 'accounts'), where('userId', '==', 'test-user'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const accs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAccounts(accs);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Fetch Transactions
   useEffect(() => {
     const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => doc.data());
+      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setTransactions(trans);
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // TÍNH TOÁN SỐ DƯ (Logic cốt lõi)
+  // Calculate balances for transaction-based accounts
   const balances = useMemo(() => {
     const bal = {};
 
@@ -33,86 +42,197 @@ const AccountsTab = () => {
       const amt = Number(t.amount);
       
       if (t.type === 'transfer') {
-        // Transfer: Trừ nơi đi, cộng nơi đến
+        // Transfer: Subtract from source, add to destination
         if (t.fromAccount) bal[t.fromAccount] = (bal[t.fromAccount] || 0) - amt;
         if (t.toAccount) bal[t.toAccount] = (bal[t.toAccount] || 0) + amt;
       } else {
-        // Income/Expense: Cộng/Trừ trực tiếp vào account
-        // Lưu ý: Expense trong DB đang lưu số ÂM, nên cứ cộng vào là được
+        // Income/Expense: Add/Subtract directly to account
         const acc = t.account;
         if (acc) bal[acc] = (bal[acc] || 0) + amt;
       }
     });
+    
     return bal;
   }, [transactions]);
 
-  // Tính Net Worth (Tổng tài sản)
-  const netWorth = Object.values(balances).reduce((a, b) => a + b, 0);
+  // Group accounts and calculate balances
+  const accountGroups = useMemo(() => {
+    const groups = {
+      'SPENDING': [],
+      'SAVINGS': [],
+      'INVESTMENTS': [],
+      'LOANS': [],
+      'ASSETS': []
+    };
+
+    accounts.forEach(acc => {
+      if (!acc.isActive) return; // Skip inactive accounts
+
+      const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(acc.type);
+      
+      // Calculate balance based on account type
+      const balance = isMarketValue 
+        ? (acc.currentValue || 0) 
+        : (balances[acc.name] || 0);
+
+      groups[acc.group].push({
+        ...acc,
+        balance
+      });
+    });
+
+    // Sort by order within each group
+    Object.keys(groups).forEach(group => {
+      groups[group].sort((a, b) => (a.order || 999) - (b.order || 999));
+    });
+
+    return groups;
+  }, [accounts, balances]);
+
+  // Calculate Net Worth
+  const netWorth = useMemo(() => {
+    return Object.values(accountGroups)
+      .flat()
+      .reduce((sum, acc) => sum + acc.balance, 0);
+  }, [accountGroups]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US').format(amount || 0);
+  };
+
+  const handleAccountClick = (account) => {
+    setSelectedAccount(account);
+  };
+
+  const handleEditAccount = (account) => {
+    setEditingAccount(account);
+    setIsAddModalOpen(true);
   };
 
   if (loading) return <div className="p-4 text-center">Loading accounts...</div>;
 
   return (
     <div className="pb-24">
-      {/* 1. Net Worth Header */}
+      {/* Net Worth Header */}
       <div className="bg-emerald-600 p-6 text-white text-center shadow-sm mb-4">
         <div className="text-sm opacity-80 uppercase tracking-wider">Net Worth</div>
         <div className="text-3xl font-bold mt-1">{formatCurrency(netWorth)} VND</div>
       </div>
 
-      {/* 2. Account Groups */}
+      {/* Account Groups */}
       <div className="px-4 space-y-6">
         {Object.entries(accountGroups).map(([groupName, accountList]) => {
-            // Lọc ra những account có số dư hoặc có trong list
-            // Logic: Hiện tất cả account trong list mẫu + account lạ (nếu có tiền)
-            const accountsToShow = accountList.filter(acc => true); // Hiện hết list mẫu
-            
-            // Tính tổng group
-            const groupTotal = accountsToShow.reduce((sum, acc) => sum + (balances[acc] || 0), 0);
+          if (accountList.length === 0) return null; // Don't show empty groups
+          
+          const groupTotal = accountList.reduce((sum, acc) => sum + acc.balance, 0);
 
-            return (
-                <div key={groupName}>
-                    <div className="flex justify-between items-center mb-2 px-1">
-                        <span className="text-xs font-bold text-gray-500 uppercase">{groupName}</span>
-                        <span className="text-xs font-bold text-gray-500">{formatCurrency(groupTotal)}</span>
-                    </div>
-                    
-                    <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
-                        {accountsToShow.map(accName => (
-                            <div key={accName} className="p-4 flex justify-between items-center hover:bg-gray-50">
-                                <div className="flex items-center gap-3">
-                                    {/* Icon placeholder theo Group */}
-                                    <span className="text-xl">
-                                        {groupName === 'SPENDING' ? '💳' : 
-                                         groupName === 'SAVINGS' ? '🐷' :
-                                         groupName === 'INVESTMENTS' ? '📈' : '💸'}
-                                    </span>
-                                    <span className="font-medium text-gray-800">{accName}</span>
-                                </div>
-                                <div className={`font-bold ${(balances[accName] || 0) < 0 ? 'text-red-500' : 'text-gray-900'}`}>
-                                    {formatCurrency(balances[accName])}
-                                </div>
+          return (
+            <div key={groupName}>
+              {/* Group Header */}
+              <div className="flex justify-between items-center mb-2 px-1">
+                <span className="text-xs font-bold text-gray-500 uppercase">{groupName}</span>
+                <span className="text-xs font-bold text-gray-500">{formatCurrency(groupTotal)}</span>
+              </div>
+              
+              {/* Account List */}
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
+                {accountList.map(acc => {
+                  const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(acc.type);
+                  
+                  return (
+                    <div 
+                      key={acc.id} 
+                      className="p-4 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
+                      onClick={() => handleAccountClick(acc)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        handleEditAccount(acc);
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl">{acc.icon}</span>
+                        <div>
+                          <div className="font-medium text-gray-800">{acc.name}</div>
+                          {isMarketValue && (
+                            <div className="text-xs text-blue-600 flex items-center gap-1">
+                              📊 Manual value
                             </div>
-                        ))}
+                          )}
+                        </div>
+                      </div>
+                      <div className={`font-bold ${acc.balance < 0 ? 'text-red-500' : 'text-gray-900'}`}>
+                        {formatCurrency(acc.balance)}
+                      </div>
                     </div>
-                </div>
-            );
+                  );
+                })}
+              </div>
+            </div>
+          );
         })}
       </div>
 
-      {/* 3. Transfer Button (Fixed Bottom) */}
-      <div className="fixed bottom-24 left-4 z-30">
-        <button 
-            className="bg-white text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full shadow-lg font-bold text-sm flex items-center gap-2 active:bg-emerald-50"
-            // Sau này sẽ mở Modal Transfer tại đây
-            onClick={() => alert("Chức năng Quick Transfer đang phát triển!")}
+      {/* Empty State */}
+      {accounts.length === 0 && (
+        <div className="text-center text-gray-500 py-8 px-4">
+          <div className="text-4xl mb-2">🏦</div>
+          <p className="mb-4">No accounts yet</p>
+          <button
+            onClick={() => {
+              setEditingAccount(null);
+              setIsAddModalOpen(true);
+            }}
+            className="bg-emerald-500 text-white px-6 py-2 rounded-lg hover:bg-emerald-600 transition-colors"
+          >
+            + Add First Account
+          </button>
+        </div>
+      )}
+
+      {/* Add Account Button (Floating Top-Right) */}
+      {accounts.length > 0 && (
+        <button
+          onClick={() => {
+            setEditingAccount(null);
+            setIsAddModalOpen(true);
+          }}
+          className="fixed top-4 right-4 md:right-[calc(50%-200px)] bg-white text-emerald-600 border border-emerald-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-50 transition-colors z-30"
         >
-            <span>⇄</span> Transfer
+          +
+        </button>
+      )}
+
+      {/* Transfer Button (Fixed Bottom) */}
+      <div className="fixed bottom-24 left-4 md:left-[calc(50%-200px)] z-30">
+        <button 
+          className="bg-white text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full shadow-lg font-bold text-sm flex items-center gap-2 active:bg-emerald-50"
+          onClick={() => alert("Transfer feature coming soon!")}
+        >
+          <span>⇄</span> Transfer
         </button>
       </div>
+
+      {/* Modals */}
+      <AddAccountModal
+        isOpen={isAddModalOpen}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setEditingAccount(null);
+        }}
+        onSave={() => {
+          setIsAddModalOpen(false);
+          setEditingAccount(null);
+        }}
+        editAccount={editingAccount}
+      />
+
+      {selectedAccount && (
+        <AccountDetail
+          account={selectedAccount}
+          transactions={transactions}
+          onClose={() => setSelectedAccount(null)}
+        />
+      )}
     </div>
   );
 };
