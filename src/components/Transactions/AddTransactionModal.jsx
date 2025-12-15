@@ -118,9 +118,13 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
         type: activeTab,
         amount: finalAmount,
         date: formData.date,
-        memo: formData.memo,
-        createdAt: editTransaction ? editTransaction.createdAt : new Date()
+        memo: formData.memo
       };
+
+      // ✅ FIX: Chỉ thêm createdAt khi tạo mới, không ghi undefined khi edit
+      if (!editTransaction) {
+        transactionData.createdAt = new Date();
+      }
 
       if (activeTab === 'transfer') {
         transactionData.fromAccount = formData.fromAccount;

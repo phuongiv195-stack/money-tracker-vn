@@ -7,6 +7,7 @@ import AddTransactionModal from './components/Transactions/AddTransactionModal';
 import TransactionsTab from './components/Transactions/TransactionsTab';
 import AccountsTab from './components/Accounts/AccountsTab';
 import ReportsTab from './components/Reports/ReportsTab';
+import LoansTab from './components/Loans/LoansTab';
 
 function AppContent() {
   const { currentUser } = useAuth();
@@ -26,6 +27,8 @@ function AppContent() {
         return <TransactionsTab />;
       case 'accounts':
         return <AccountsTab />;
+      case 'loans':
+        return <LoansTab />;
       case 'reports':
         return <ReportsTab />;
       default:
@@ -43,15 +46,17 @@ function AppContent() {
       {renderContent()}
     </main>
 
-      {/* FAB Button */}
-      <button
-        onClick={() => setIsModalOpen(true)}
-        className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
-      >
-        +
-      </button>
+      {/* FAB Button - Hidden in Loans tab */}
+      {activeTab !== 'loans' && (
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
+        >
+          +
+        </button>
+      )}
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation - 5 TABS */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20">
         <div className="max-w-md mx-auto flex justify-around">
           <NavButton 
@@ -71,6 +76,12 @@ function AppContent() {
             onClick={() => setActiveTab('accounts')}
             icon="🏦" 
             label="Accounts" 
+          />
+          <NavButton 
+            active={activeTab === 'loans'} 
+            onClick={() => setActiveTab('loans')}
+            icon="💰" 
+            label="Loans" 
           />
           <NavButton 
             active={activeTab === 'reports'} 

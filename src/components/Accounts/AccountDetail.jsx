@@ -376,14 +376,19 @@ const AccountDetail = ({ account, transactions, onClose }) => {
                       {/* Transaction Info */}
                       <div className="flex-1">
                         <div className="font-medium text-gray-800">
-                          {isTransfer 
-                            ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? t.toAccount : t.fromAccount}`
-                            : t.payee || 'No Payee'
+                          {t.type === 'loan' 
+                            ? (t.memo || 'Loan Transaction')
+                            : isTransfer 
+                              ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? t.toAccount : t.fromAccount}`
+                              : t.payee || 'No Payee'
                           }
                         </div>
                         <div className="text-xs text-gray-500">
-                          {!isTransfer && t.category}
-                          {t.memo && ` • ${t.memo}`}
+                          {t.type === 'loan'
+                            ? t.loan
+                            : !isTransfer && t.category
+                          }
+                          {!isTransfer && t.type !== 'loan' && t.memo && ` • ${t.memo}`}
                         </div>
                       </div>
 

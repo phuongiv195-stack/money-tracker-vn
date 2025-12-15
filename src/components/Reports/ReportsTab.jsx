@@ -20,10 +20,16 @@ const ReportsTab = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- LOGIC TÍNH TOÁN ---
+  // --- LOGIC TÍNH TOÁN (LOẠI TRỪ LOAN TRANSACTIONS) ---
   const { summary, categoryData, totalExpense } = useMemo(() => {
     const monthStr = currentDate.toISOString().slice(0, 7); // "2025-12"
-    const monthlyTrans = transactions.filter(t => t.date && t.date.startsWith(monthStr));
+    
+    // ⚠️ CRITICAL: Filter out loan transactions from reports
+    const monthlyTrans = transactions.filter(t => 
+      t.date && 
+      t.date.startsWith(monthStr) &&
+      t.type !== 'loan' // ← KEY CHANGE: Exclude loan transactions
+    );
 
     let inc = 0, exp = 0;
     const catMap = {};
@@ -129,6 +135,17 @@ const ReportsTab = () => {
         <button onClick={() => changeMonth(-1)} className="p-2 bg-gray-100 rounded hover:bg-gray-200">←</button>
         <span className="font-bold text-lg">{getMonthLabel(currentDate)}</span>
         <button onClick={() => changeMonth(1)} className="p-2 bg-gray-100 rounded hover:bg-gray-200">→</button>
+      </div>
+
+      {/* Loan Exclusion Notice */}
+      <div className="mx-4 mt-4 bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs">
+        <div className="flex items-center gap-2 text-purple-700">
+          <span>ℹ️</span>
+          <div>
+            <span className="font-semibold">Note:</span> Loan transactions are excluded from these reports. 
+            Check the Loans tab for loan details.
+          </div>
+        </div>
       </div>
 
       {/* 2. Overview Cards */}
