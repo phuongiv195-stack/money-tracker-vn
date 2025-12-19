@@ -2,16 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import AddNewLoanModal from './AddNewLoanModal';
-import AddLoanTransactionModal from './AddLoanTransactionModal';
 import LoanDetail from './LoanDetail';
 
 const LoansTab = () => {
-  const [transactions, setTransactions] = useState([]);
+  const [loanTransactions, setLoanTransactions] = useState([]);
+  const [splitTransactions, setSplitTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAddNewLoanOpen, setIsAddNewLoanOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
 
-  // Fetch loan transactions from Firebase
+  // Load loan transactions
   useEffect(() => {
     const q = query(
       collection(db, 'transactions'),
@@ -21,46 +21,126 @@ const LoansTab = () => {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTransactions(trans);
+      setLoanTransactions(trans);
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Calculate loan balances
+  // Load split transactions (may contain loan splits)
+  useEffect(() => {
+    const q = query(
+      collection(db, 'transactions'),
+      where('userId', '==', 'test-user'),
+      where('type', '==', 'split')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSplitTransactions(trans);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Calculate loan data including splits
   const loanData = useMemo(() => {
     const loans = {};
 
-    transactions.forEach(t => {
+    // Process regular loan transactions
+    loanTransactions.forEach(t => {
       const loanName = t.loan;
       if (!loanName) return;
 
       if (!loans[loanName]) {
         loans[loanName] = {
           name: loanName,
-          payee: t.payee,
-          loanType: t.loanType, // 'borrow' or 'lend'
-          totalAmount: 0,
-          paidAmount: 0,
+          loanType: t.loanType,
+          balance: 0,
+          paidBack: 0,
+          received: 0,
           transactions: []
         };
       }
 
       const amt = Number(t.amount);
-      loans[loanName].totalAmount += amt;
+      loans[loanName].balance += amt;
+      
+      if (t.loanType === 'borrow' && amt < 0) {
+        loans[loanName].paidBack += Math.abs(amt);
+      } else if (t.loanType === 'lend' && amt > 0) {
+        loans[loanName].received += amt;
+      }
 
       loans[loanName].transactions.push(t);
     });
 
-    // Calculate balance
-    Object.keys(loans).forEach(key => {
-      loans[key].balance = loans[key].totalAmount;
-      loans[key].paidAmount = 0; // Not used anymore
+    // Process split transactions with loan splits
+    splitTransactions.forEach(t => {
+      if (!t.splits) return;
+      
+      t.splits.forEach(split => {
+        if (!split.isLoan || !split.loan) return;
+        
+        const loanName = split.loan;
+        
+        // If this loan doesn't exist yet, we need to figure out its type
+        // For splits in income transaction = money coming in to loan
+        // For splits in expense transaction = money going out from loan
+        if (!loans[loanName]) {
+          // Try to determine loan type from existing loan transactions
+          const existingLoan = loanTransactions.find(lt => lt.loan === loanName);
+          loans[loanName] = {
+            name: loanName,
+            loanType: existingLoan?.loanType || 'borrow',
+            balance: 0,
+            paidBack: 0,
+            received: 0,
+            transactions: []
+          };
+        }
+
+        // For split transaction:
+        // If parent is income (positive totalAmount) = money IN
+        // If parent is expense (negative totalAmount) = money OUT
+        const isIncomeParent = Number(t.totalAmount) > 0;
+        const splitAmt = Number(split.amount) || 0;
+        
+        // Calculate the signed amount for balance
+        const signedAmt = isIncomeParent ? splitAmt : -splitAmt;
+        loans[loanName].balance += signedAmt;
+
+        // Track paid back / received
+        if (loans[loanName].loanType === 'borrow' && signedAmt < 0) {
+          loans[loanName].paidBack += Math.abs(signedAmt);
+        } else if (loans[loanName].loanType === 'lend' && signedAmt > 0) {
+          loans[loanName].received += signedAmt;
+        }
+
+        // Add a virtual transaction for display
+        loans[loanName].transactions.push({
+          id: `${t.id}-split-${split.loan}`,
+          type: 'loan',
+          loan: loanName,
+          loanType: loans[loanName].loanType,
+          amount: signedAmt,
+          date: t.date,
+          memo: split.memo || `From split: ${t.payee || 'Split transaction'}`,
+          account: t.account,
+          isSplitPart: true,
+          parentId: t.id
+        });
+      });
+    });
+
+    // Sort transactions by date desc
+    Object.values(loans).forEach(loan => {
+      loan.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
     });
 
     return loans;
-  }, [transactions]);
+  }, [loanTransactions, splitTransactions]);
 
   // Separate by loan type
   const { borrowed, lent } = useMemo(() => {
@@ -70,183 +150,138 @@ const LoansTab = () => {
     Object.values(loanData).forEach(loan => {
       if (loan.loanType === 'borrow') {
         b.push(loan);
-      } else if (loan.loanType === 'lend') {
+      } else {
         l.push(loan);
       }
     });
 
-    // Sort by balance (highest first)
-    b.sort((a, b) => b.balance - a.balance);
-    l.sort((a, b) => b.balance - a.balance);
-
     return { borrowed: b, lent: l };
   }, [loanData]);
 
+  // Calculate totals
+  const totals = useMemo(() => {
+    const borrowedTotal = borrowed.reduce((sum, l) => sum + l.balance, 0);
+    const lentTotal = lent.reduce((sum, l) => sum + Math.abs(l.balance), 0);
+    return { borrowed: borrowedTotal, lent: lentTotal };
+  }, [borrowed, lent]);
+
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US').format(amount || 0);
+    return new Intl.NumberFormat('en-US').format(Math.abs(amount));
   };
 
-  const totalBorrowed = borrowed.reduce((sum, loan) => sum + loan.balance, 0);
-  const totalLent = lent.reduce((sum, loan) => sum + loan.balance, 0);
-  const netPosition = totalLent - totalBorrowed;
+  const handleLoanClick = (loan) => {
+    setSelectedLoan(loan);
+  };
 
   if (loading) return <div className="p-4 text-center">Loading loans...</div>;
 
   return (
     <div className="pb-24">
-      {/* Net Position Header */}
-      <div className="bg-gradient-to-br from-purple-600 to-indigo-600 p-6 text-white text-center shadow-sm mb-4">
-        <div className="text-sm opacity-80 uppercase tracking-wider">Net Position</div>
-        <div className={`text-3xl font-bold mt-1 ${netPosition >= 0 ? 'text-green-200' : 'text-red-200'}`}>
-          {netPosition >= 0 ? '+' : ''}{formatCurrency(netPosition)} VND
-        </div>
-        <div className="flex justify-center gap-6 mt-3 text-sm opacity-90">
-          <div>
-            <span className="opacity-70">I Owe: </span>
-            <span className="font-semibold">{formatCurrency(totalBorrowed)}</span>
+      {/* Header */}
+      <div className="bg-emerald-600 p-6 text-white">
+        <h1 className="text-xl font-bold text-center mb-4">Loans</h1>
+        
+        <div className="flex justify-around">
+          <div className="text-center">
+            <div className="text-sm opacity-80">I Borrowed</div>
+            <div className="text-2xl font-bold">
+              {totals.borrowed >= 0 ? '+' : '-'}{formatCurrency(totals.borrowed)}
+            </div>
           </div>
-          <div>
-            <span className="opacity-70">Owed to Me: </span>
-            <span className="font-semibold">{formatCurrency(totalLent)}</span>
+          <div className="text-center">
+            <div className="text-sm opacity-80">I Lent</div>
+            <div className="text-2xl font-bold">
+              -{formatCurrency(totals.lent)}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* I BORROW MONEY Section */}
-      <div className="px-4 mb-6">
-        <div className="flex justify-between items-center mb-2 px-1">
-          <span className="text-xs font-bold text-gray-500 uppercase">💰 I BORROW MONEY</span>
-          <span className="text-xs font-bold text-green-600">{formatCurrency(totalBorrowed)}</span>
-        </div>
-
-        {borrowed.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 text-center text-gray-400 text-sm">
-            No borrowed loans
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
-            {borrowed.map(loan => (
+      {/* Borrowed Section */}
+      {borrowed.length > 0 && (
+        <div className="px-4 mt-4">
+          <h2 className="text-sm font-bold text-gray-500 uppercase mb-2">
+            I Borrowed ({borrowed.length})
+          </h2>
+          <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+            {borrowed.map((loan, index) => (
               <div
                 key={loan.name}
-                onClick={() => setSelectedLoan(loan)}
-                className="p-4 hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
+                onClick={() => handleLoanClick(loan)}
+                className={`p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50 ${
+                  index !== borrowed.length - 1 ? 'border-b' : ''
+                }`}
               >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-800 flex items-center gap-2">
-                      <span>💳</span>
-                      <span>{loan.name}</span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      from {loan.payee}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-green-600">
-                      {formatCurrency(loan.balance)}
-                    </div>
-                    <div className="text-xs text-gray-400">left</div>
+                <div>
+                  <div className="font-medium text-gray-800">{loan.name}</div>
+                  <div className="text-xs text-gray-500">
+                    Paid back: {formatCurrency(loan.paidBack)}
                   </div>
                 </div>
-
-                {/* Progress Bar */}
-                <div className="mt-3">
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Paid: {formatCurrency(loan.paidAmount)}</span>
-                    <span>Total: {formatCurrency(loan.totalAmount)}</span>
+                <div className="text-right">
+                  <div className={`font-bold ${loan.balance >= 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
+                    {loan.balance >= 0 ? '+' : '-'}{formatCurrency(loan.balance)}
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-emerald-500 h-full transition-all duration-300"
-                      style={{ width: `${(loan.paidAmount / loan.totalAmount) * 100}%` }}
-                    ></div>
+                  <div className="text-xs text-gray-400">
+                    {loan.transactions.length} txn
                   </div>
                 </div>
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* I LEND MONEY Section */}
-      <div className="px-4 mb-6">
-        <div className="flex justify-between items-center mb-2 px-1">
-          <span className="text-xs font-bold text-gray-500 uppercase">💸 I LEND MONEY</span>
-          <span className="text-xs font-bold text-red-500">{formatCurrency(totalLent)}</span>
         </div>
+      )}
 
-        {lent.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 text-center text-gray-400 text-sm">
-            No lent loans
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
-            {lent.map(loan => (
+      {/* Lent Section */}
+      {lent.length > 0 && (
+        <div className="px-4 mt-4">
+          <h2 className="text-sm font-bold text-gray-500 uppercase mb-2">
+            I Lent ({lent.length})
+          </h2>
+          <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+            {lent.map((loan, index) => (
               <div
                 key={loan.name}
-                onClick={() => setSelectedLoan(loan)}
-                className="p-4 hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
+                onClick={() => handleLoanClick(loan)}
+                className={`p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50 ${
+                  index !== lent.length - 1 ? 'border-b' : ''
+                }`}
               >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-800 flex items-center gap-2">
-                      <span>💸</span>
-                      <span>{loan.name}</span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      to {loan.payee}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-red-600">
-                      {formatCurrency(loan.balance)}
-                    </div>
-                    <div className="text-xs text-gray-400">left</div>
+                <div>
+                  <div className="font-medium text-gray-800">{loan.name}</div>
+                  <div className="text-xs text-gray-500">
+                    Received: {formatCurrency(loan.received)}
                   </div>
                 </div>
-
-                {/* Progress Bar */}
-                <div className="mt-3">
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Received: {formatCurrency(loan.paidAmount)}</span>
-                    <span>Total: {formatCurrency(loan.totalAmount)}</span>
+                <div className="text-right">
+                  <div className="font-bold text-gray-900">
+                    -{formatCurrency(loan.balance)}
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-blue-500 h-full transition-all duration-300"
-                      style={{ width: `${(loan.paidAmount / loan.totalAmount) * 100}%` }}
-                    ></div>
+                  <div className="text-xs text-gray-400">
+                    {loan.transactions.length} txn
                   </div>
                 </div>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Empty State */}
       {borrowed.length === 0 && lent.length === 0 && (
-        <div className="text-center text-gray-500 py-8 px-4">
-          <div className="text-4xl mb-2">💰</div>
-          <p className="mb-4">No loan records yet</p>
-          <button
-            onClick={() => setIsAddNewLoanOpen(true)}
-            className="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600 transition-colors"
-          >
-            + Record First Loan
-          </button>
+        <div className="text-center text-gray-500 py-12 px-4">
+          <div className="text-4xl mb-3">💰</div>
+          <p className="mb-4">No loans yet</p>
         </div>
       )}
 
-      {/* Add Loan Button (Floating Top-Right) */}
-      {(borrowed.length > 0 || lent.length > 0) && (
-        <button
-          onClick={() => setIsAddNewLoanOpen(true)}
-          className="fixed top-4 right-4 md:right-[calc(50%-200px)] bg-white text-purple-600 border border-purple-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-purple-50 transition-colors z-30"
-        >
-          +
-        </button>
-      )}
+      {/* Add New Loan Button */}
+      <button
+        onClick={() => setIsAddNewLoanOpen(true)}
+        className="fixed bottom-24 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-600 z-30"
+      >
+        +
+      </button>
 
       {/* Modals */}
       <AddNewLoanModal

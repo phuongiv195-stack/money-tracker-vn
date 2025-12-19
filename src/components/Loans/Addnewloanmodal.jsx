@@ -3,7 +3,7 @@ import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 
 const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
-  const [loanType, setLoanType] = useState('borrow'); // 'borrow' or 'lend'
+  const [loanType, setLoanType] = useState('borrow');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
   const [dateInputType, setDateInputType] = useState('text');
@@ -12,7 +12,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
     name: '',
     loanName: '',
     amount: '',
-    account: 'Cash',
+    account: '',
     date: new Date().toISOString().split('T')[0],
     memo: ''
   });
@@ -26,7 +26,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
         name: '',
         loanName: '',
         amount: '',
-        account: 'Cash',
+        account: '',
         date: new Date().toISOString().split('T')[0],
         memo: ''
       });
@@ -36,7 +36,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
     }
   }, [isOpen]);
 
-  // Auto-generate loan name when name changes
+  // Auto-generate loan name
   useEffect(() => {
     if (formData.name.trim()) {
       const prefix = loanType === 'borrow' ? 'Borrow from' : 'Lend to';
@@ -51,10 +51,20 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
 
   const loadAccounts = async () => {
     try {
-      const q = query(collection(db, 'accounts'), where('userId', '==', 'test-user'));
+      const q = query(
+        collection(db, 'accounts'), 
+        where('userId', '==', 'test-user'),
+        where('isActive', '==', true)
+      );
       const snapshot = await getDocs(q);
-      const accountNames = snapshot.docs.map(d => d.data().name);
-      setAccounts(accountNames);
+      const accs = snapshot.docs
+        .map(d => d.data().name)
+        .filter(name => name);
+      setAccounts(accs);
+      // Set default account
+      if (accs.length > 0) {
+        setFormData(prev => ({ ...prev, account: accs[0] }));
+      }
     } catch (e) {
       console.error("Load accounts error:", e);
     }
@@ -87,23 +97,29 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
       alert("Please enter name!");
       return;
     }
+    if (!formData.account) {
+      alert("Please select account!");
+      return;
+    }
 
     setLoading(true);
     try {
       const amt = Number(formData.amount);
 
-      // Create initial loan transaction
+      // CORE LOGIC:
+      // Borrow = money comes IN to my account = POSITIVE amount
+      // Lend = money goes OUT from my account = NEGATIVE amount
+      const finalAmount = loanType === 'borrow' ? amt : -amt;
+
       const transactionData = {
         userId: 'test-user',
         type: 'loan',
-        loanType: loanType, // 'borrow' or 'lend'
-        direction: 'in', // First transaction is always IN (money comes in)
-        amount: amt, // Positive (money in)
-        payee: formData.name.trim(),
+        loanType: loanType,
+        amount: finalAmount,
         loan: formData.loanName.trim(),
         account: formData.account,
         date: formData.date,
-        memo: formData.memo,
+        memo: formData.memo || (loanType === 'borrow' ? 'Initial borrow' : 'Initial lend'),
         createdAt: new Date()
       };
 
@@ -131,7 +147,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           <button 
             onClick={handleSubmit} 
             disabled={loading}
-            className="text-purple-600 font-bold disabled:opacity-50"
+            className="text-emerald-600 font-bold disabled:opacity-50"
           >
             {loading ? 'SAVING...' : 'SAVE'}
           </button>
@@ -147,23 +163,35 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
                 onClick={() => setLoanType('borrow')}
                 className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
                   loanType === 'borrow'
-                    ? 'bg-green-100 text-green-700 border-2 border-green-300'
+                    ? 'bg-emerald-100 text-emerald-700 border-2 border-emerald-400'
                     : 'bg-gray-50 text-gray-500 border border-gray-200'
                 }`}
               >
-                💰 I Borrow Money
+                💰 I Borrow
               </button>
               <button
                 onClick={() => setLoanType('lend')}
                 className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
                   loanType === 'lend'
-                    ? 'bg-red-100 text-red-700 border-2 border-red-300'
+                    ? 'bg-gray-200 text-gray-800 border-2 border-gray-400'
                     : 'bg-gray-50 text-gray-500 border border-gray-200'
                 }`}
               >
-                💸 I Lend Money
+                💸 I Lend
               </button>
             </div>
+          </div>
+
+          {/* Helper text */}
+          <div className={`text-sm p-3 rounded-lg ${
+            loanType === 'borrow' 
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+              : 'bg-gray-100 text-gray-700 border border-gray-300'
+          }`}>
+            {loanType === 'borrow' 
+              ? '💰 Money comes IN → Account balance increases'
+              : '💸 Money goes OUT → Account balance decreases'
+            }
           </div>
 
           {/* Name */}
@@ -171,15 +199,15 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
             <label className="text-xs text-gray-500 uppercase font-semibold">Name</label>
             <input
               type="text"
-              placeholder={loanType === 'borrow' ? "E.g. Tej, Bank..." : "E.g. Minh, Friend..."}
+              placeholder={loanType === 'borrow' ? "E.g. Mike, Bank..." : "E.g. John, Friend..."}
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-purple-500 outline-none"
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
               autoFocus
             />
           </div>
 
-          {/* Loan Name (Auto-generated, editable) */}
+          {/* Loan Name (Auto-generated) */}
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Loan Name</label>
             <input
@@ -187,24 +215,23 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               placeholder="Auto-generated..."
               value={formData.loanName}
               onChange={(e) => setFormData({...formData, loanName: e.target.value})}
-              className="w-full p-3 bg-blue-50 rounded-lg mt-1 focus:ring-2 focus:ring-purple-500 outline-none border border-blue-200"
+              className="w-full p-3 bg-emerald-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-emerald-200"
             />
-            <div className="text-xs text-gray-500 mt-1">
-              💡 Auto-generated, but you can edit freely
-            </div>
           </div>
 
-          {/* Initial Amount */}
+          {/* Amount */}
           <div>
-            <label className="text-xs text-gray-500 uppercase font-semibold">Initial Amount</label>
+            <label className="text-xs text-gray-500 uppercase font-semibold">Amount</label>
             <input
               type="text"
               inputMode="numeric"
               placeholder="0"
               value={displayAmount}
               onChange={handleAmountChange}
-              className={`w-full text-3xl font-bold text-center p-4 rounded-lg mt-1 focus:ring-2 focus:ring-purple-500 outline-none ${
-                loanType === 'borrow' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'
+              className={`w-full text-3xl font-bold text-center p-4 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none ${
+                loanType === 'borrow' 
+                  ? 'bg-emerald-50 text-emerald-600' 
+                  : 'bg-gray-100 text-gray-800'
               }`}
             />
           </div>
@@ -213,13 +240,17 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Account</label>
             <select 
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none border border-gray-200"
               value={formData.account}
               onChange={(e) => setFormData({...formData, account: e.target.value})}
             >
-              {accounts.map(acc => (
-                <option key={acc}>{acc}</option>
-              ))}
+              {accounts.length === 0 ? (
+                <option value="">No accounts available</option>
+              ) : (
+                accounts.map(acc => (
+                  <option key={acc} value={acc}>{acc}</option>
+                ))
+              )}
             </select>
           </div>
 

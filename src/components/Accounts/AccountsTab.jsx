@@ -42,11 +42,9 @@ const AccountsTab = () => {
       const amt = Number(t.amount);
       
       if (t.type === 'transfer') {
-        // Transfer: Subtract from source, add to destination
         if (t.fromAccount) bal[t.fromAccount] = (bal[t.fromAccount] || 0) - amt;
         if (t.toAccount) bal[t.toAccount] = (bal[t.toAccount] || 0) + amt;
       } else {
-        // Income/Expense: Add/Subtract directly to account
         const acc = t.account;
         if (acc) bal[acc] = (bal[acc] || 0) + amt;
       }
@@ -60,17 +58,15 @@ const AccountsTab = () => {
     const groups = {
       'SPENDING': [],
       'SAVINGS': [],
-      'INVESTMENTS': [],
-      'LOANS': [],
-      'ASSETS': []
+      'INVESTMENTS': []
     };
 
     accounts.forEach(acc => {
-      if (!acc.isActive) return; // Skip inactive accounts
+      if (!acc.isActive) return;
+      if (!groups[acc.group]) return; // Skip LOANS group
 
       const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(acc.type);
       
-      // Calculate balance based on account type
       const balance = isMarketValue 
         ? (acc.currentValue || 0) 
         : (balances[acc.name] || 0);
@@ -97,7 +93,7 @@ const AccountsTab = () => {
   }, [accountGroups]);
 
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US').format(amount || 0);
+    return new Intl.NumberFormat('en-US').format(Math.abs(amount) || 0);
   };
 
   const handleAccountClick = (account) => {
@@ -116,13 +112,15 @@ const AccountsTab = () => {
       {/* Net Worth Header */}
       <div className="bg-emerald-600 p-6 text-white text-center shadow-sm mb-4">
         <div className="text-sm opacity-80 uppercase tracking-wider">Net Worth</div>
-        <div className="text-3xl font-bold mt-1">{formatCurrency(netWorth)} VND</div>
+        <div className={`text-3xl font-bold mt-1`}>
+          {netWorth >= 0 ? '' : '-'}{formatCurrency(netWorth)} VND
+        </div>
       </div>
 
       {/* Account Groups */}
       <div className="px-4 space-y-6">
         {Object.entries(accountGroups).map(([groupName, accountList]) => {
-          if (accountList.length === 0) return null; // Don't show empty groups
+          if (accountList.length === 0) return null;
           
           const groupTotal = accountList.reduce((sum, acc) => sum + acc.balance, 0);
 
@@ -131,13 +129,16 @@ const AccountsTab = () => {
               {/* Group Header */}
               <div className="flex justify-between items-center mb-2 px-1">
                 <span className="text-xs font-bold text-gray-500 uppercase">{groupName}</span>
-                <span className="text-xs font-bold text-gray-500">{formatCurrency(groupTotal)}</span>
+                <span className={`text-xs font-bold ${groupTotal >= 0 ? 'text-gray-700' : 'text-gray-900'}`}>
+                  {groupTotal >= 0 ? '' : '-'}{formatCurrency(groupTotal)}
+                </span>
               </div>
               
               {/* Account List */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
                 {accountList.map(acc => {
                   const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(acc.type);
+                  const isPositive = acc.balance >= 0;
                   
                   return (
                     <div 
@@ -160,8 +161,8 @@ const AccountsTab = () => {
                           )}
                         </div>
                       </div>
-                      <div className={`font-bold ${acc.balance < 0 ? 'text-red-500' : 'text-gray-900'}`}>
-                        {formatCurrency(acc.balance)}
+                      <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
+                        {isPositive ? '+' : '-'}{formatCurrency(acc.balance)}
                       </div>
                     </div>
                   );
@@ -173,7 +174,7 @@ const AccountsTab = () => {
       </div>
 
       {/* Empty State */}
-      {accounts.length === 0 && (
+      {accounts.filter(a => a.isActive && a.group !== 'LOANS').length === 0 && (
         <div className="text-center text-gray-500 py-8 px-4">
           <div className="text-4xl mb-2">🏦</div>
           <p className="mb-4">No accounts yet</p>
@@ -201,16 +202,6 @@ const AccountsTab = () => {
           +
         </button>
       )}
-
-      {/* Transfer Button (Fixed Bottom) */}
-      <div className="fixed bottom-24 left-4 md:left-[calc(50%-200px)] z-30">
-        <button 
-          className="bg-white text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full shadow-lg font-bold text-sm flex items-center gap-2 active:bg-emerald-50"
-          onClick={() => alert("Transfer feature coming soon!")}
-        >
-          <span>⇄</span> Transfer
-        </button>
-      </div>
 
       {/* Modals */}
       <AddAccountModal

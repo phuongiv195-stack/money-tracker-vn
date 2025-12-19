@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
+import { NavigationProvider } from './contexts/NavigationContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
@@ -39,8 +40,6 @@ function AppContent() {
  return (
   <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
     
-    {/* Fix Button */}
-        
     {/* Main Content */}
     <main className="max-w-md mx-auto bg-white min-h-screen shadow-lg relative pb-20">
       {renderContent()}
@@ -119,7 +118,9 @@ const NavButton = ({ active, onClick, icon, label }) => (
 function App() {
   return (
     <Router>
-      <AppContent />
+      <NavigationProvider>
+        <AppContent />
+      </NavigationProvider>
     </Router>
   );
 }

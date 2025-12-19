@@ -8,7 +8,7 @@ const ReportsTab = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   // Màu sắc cho biểu đồ (Top 5 + Others)
-  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#9ca3af'];
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#9ca3af'];
 
   useEffect(() => {
     const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
@@ -22,13 +22,13 @@ const ReportsTab = () => {
 
   // --- LOGIC TÍNH TOÁN (LOẠI TRỪ LOAN TRANSACTIONS) ---
   const { summary, categoryData, totalExpense } = useMemo(() => {
-    const monthStr = currentDate.toISOString().slice(0, 7); // "2025-12"
+    const monthStr = currentDate.toISOString().slice(0, 7);
     
-    // ⚠️ CRITICAL: Filter out loan transactions from reports
+    // Filter out loan transactions from reports
     const monthlyTrans = transactions.filter(t => 
       t.date && 
       t.date.startsWith(monthStr) &&
-      t.type !== 'loan' // ← KEY CHANGE: Exclude loan transactions
+      t.type !== 'loan'
     );
 
     let inc = 0, exp = 0;
@@ -39,7 +39,6 @@ const ReportsTab = () => {
       if (t.type === 'income') inc += amt;
       if (t.type === 'expense') {
         exp += Math.abs(amt);
-        // Gom nhóm theo Category cho biểu đồ
         if (t.category) {
           catMap[t.category] = (catMap[t.category] || 0) + Math.abs(amt);
         }
@@ -66,11 +65,11 @@ const ReportsTab = () => {
 
   // --- LOGIC VẼ BIỂU ĐỒ SVG (DONUT CHART) ---
   const renderPieChart = () => {
-    if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10">No data to display</div>;
+    if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10 text-center">No data to display</div>;
 
     let cumulativePercent = 0;
     
-    // Chỉ lấy Top 5 để vẽ, còn lại gom vào Others (để biểu đồ đẹp)
+    // Chỉ lấy Top 5, còn lại gom vào Others
     const chartData = categoryData.slice(0, 5);
     const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
@@ -81,7 +80,6 @@ const ReportsTab = () => {
       <div className="relative w-48 h-48 mx-auto my-4">
         <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
           {chartData.map((item, index) => {
-            // Tính toán độ dài cung tròn (Stroke Dasharray)
             const strokeDasharray = `${item.percent} ${100 - item.percent}`;
             const strokeDashoffset = -cumulativePercent;
             cumulativePercent += item.percent;
@@ -102,7 +100,7 @@ const ReportsTab = () => {
         {/* Số tổng ở giữa */}
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <span className="text-xs text-gray-500 font-medium">Total Expense</span>
-          <span className="text-sm font-bold text-gray-800">{formatCurrencyCompact(totalExpense)}</span>
+          <span className="text-sm font-bold text-gray-800">-{formatCurrencyCompact(totalExpense)}</span>
         </div>
       </div>
     );
@@ -115,13 +113,13 @@ const ReportsTab = () => {
     setCurrentDate(newDate);
   };
 
-  const formatCurrency = (val) => new Intl.NumberFormat('en-US').format(val);
+  const formatCurrency = (val) => new Intl.NumberFormat('en-US').format(Math.abs(val));
   
-  // Format rút gọn cho biểu đồ (VD: 1.5M, 500k)
   const formatCurrencyCompact = (val) => {
-    if (val >= 1000000) return (val / 1000000).toFixed(1) + 'M';
-    if (val >= 1000) return (val / 1000).toFixed(0) + 'k';
-    return val;
+    const absVal = Math.abs(val);
+    if (absVal >= 1000000) return (absVal / 1000000).toFixed(1) + 'M';
+    if (absVal >= 1000) return (absVal / 1000).toFixed(0) + 'k';
+    return absVal;
   };
 
   const getMonthLabel = (date) => date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -138,8 +136,8 @@ const ReportsTab = () => {
       </div>
 
       {/* Loan Exclusion Notice */}
-      <div className="mx-4 mt-4 bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs">
-        <div className="flex items-center gap-2 text-purple-700">
+      <div className="mx-4 mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
+        <div className="flex items-center gap-2 text-blue-700">
           <span>ℹ️</span>
           <div>
             <span className="font-semibold">Note:</span> Loan transactions are excluded from these reports. 
@@ -150,18 +148,18 @@ const ReportsTab = () => {
 
       {/* 2. Overview Cards */}
       <div className="p-4 grid grid-cols-3 gap-2 text-center">
-        <div className="bg-white p-2 rounded-lg shadow-sm border border-green-100">
+        <div className="bg-white p-2 rounded-lg shadow-sm border border-emerald-100">
           <div className="text-[10px] text-gray-500 uppercase">Income</div>
-          <div className="text-sm font-bold text-green-600">{formatCurrencyCompact(summary.income)}</div>
+          <div className="text-sm font-bold text-emerald-600">+{formatCurrencyCompact(summary.income)}</div>
         </div>
-        <div className="bg-white p-2 rounded-lg shadow-sm border border-red-100">
+        <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
           <div className="text-[10px] text-gray-500 uppercase">Expense</div>
-          <div className="text-sm font-bold text-red-500">{formatCurrencyCompact(summary.expense)}</div>
+          <div className="text-sm font-bold text-gray-900">-{formatCurrencyCompact(summary.expense)}</div>
         </div>
         <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-100">
           <div className="text-[10px] text-gray-500 uppercase">Net</div>
-          <div className={`text-sm font-bold ${summary.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-            {summary.net > 0 ? '+' : ''}{formatCurrencyCompact(summary.net)}
+          <div className={`text-sm font-bold ${summary.net >= 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
+            {summary.net >= 0 ? '+' : '-'}{formatCurrencyCompact(summary.net)}
           </div>
         </div>
       </div>
@@ -183,7 +181,7 @@ const ReportsTab = () => {
                 <span className="text-gray-700 truncate">{item.name}</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="font-medium text-gray-900">{formatCurrency(item.value)}</span>
+                <span className="font-medium text-gray-900">-{formatCurrency(item.value)}</span>
                 <span className="text-xs text-gray-400 w-8 text-right">{item.percent.toFixed(0)}%</span>
               </div>
             </div>
