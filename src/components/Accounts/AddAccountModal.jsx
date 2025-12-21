@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import useBackHandler from '../../hooks/useBackHandler';
 
 const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
+  useBackHandler(isOpen, onClose);
+  
   const [formData, setFormData] = useState({
     name: '',
     icon: '🏦',
@@ -183,7 +186,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
               className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
-              autoFocus
+              
             />
           </div>
 
@@ -235,8 +238,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
             </div>
           </div>
 
-          {/* Market Value Fields (Investment accounts only) */}
-          {isMarketValue && (
+          {/* Market Value Fields - CHỈ hiện khi ADD NEW (không phải edit) */}
+          {isMarketValue && !editAccount && (
             <div className="bg-blue-50 p-4 rounded-lg space-y-3 border border-blue-200">
               <div className="flex items-center gap-2 text-blue-700 mb-2">
                 <span className="text-xl">📊</span>
@@ -252,7 +255,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
                   onChange={(e) => setFormData({...formData, currentValue: e.target.value})}
                   className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
-                <div className="text-xs text-blue-600 mt-1">Giá trị thị trường hiện tại (manual update)</div>
+                <div className="text-xs text-blue-600 mt-1">Giá trị thị trường hiện tại</div>
               </div>
 
               <div>

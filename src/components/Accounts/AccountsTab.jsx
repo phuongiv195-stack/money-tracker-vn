@@ -67,9 +67,51 @@ const AccountsTab = () => {
 
       const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(acc.type);
       
-      const balance = isMarketValue 
-        ? (acc.currentValue || 0) 
-        : (balances[acc.name] || 0);
+      let balance;
+      if (isMarketValue) {
+        // Tính theo thứ tự thời gian: transactions + value updates
+        const accTransactions = transactions.filter(t => {
+          if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
+          return t.account === acc.name;
+        });
+        
+        const allEvents = [];
+        
+        // Thêm transactions - dùng createdAt để có timestamp chính xác
+        accTransactions.forEach(t => {
+          let amt = 0;
+          if (t.type === 'transfer') {
+            amt = t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
+          } else {
+            amt = Number(t.amount) || 0;
+          }
+          // Ưu tiên createdAt, fallback về date
+          const ts = t.createdAt?.seconds ? t.createdAt.seconds * 1000 : new Date(t.date).getTime();
+          allEvents.push({ type: 'transaction', amount: amt, timestamp: ts });
+        });
+        
+        // Thêm value updates
+        if (acc.valueHistory) {
+          acc.valueHistory.forEach(entry => {
+            allEvents.push({ type: 'valueUpdate', value: entry.value, timestamp: entry.timestamp });
+          });
+        }
+        
+        // Sắp xếp theo thời gian
+        allEvents.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Tính current value
+        balance = 0;
+        allEvents.forEach(event => {
+          if (event.type === 'valueUpdate') {
+            balance = event.value;
+          } else {
+            balance += event.amount;
+          }
+        });
+      } else {
+        balance = balances[acc.name] || 0;
+      }
 
       groups[acc.group].push({
         ...acc,
@@ -83,7 +125,7 @@ const AccountsTab = () => {
     });
 
     return groups;
-  }, [accounts, balances]);
+  }, [accounts, balances, transactions]);
 
   // Calculate Net Worth
   const netWorth = useMemo(() => {
@@ -154,11 +196,6 @@ const AccountsTab = () => {
                         <span className="text-xl">{acc.icon}</span>
                         <div>
                           <div className="font-medium text-gray-800">{acc.name}</div>
-                          {isMarketValue && (
-                            <div className="text-xs text-blue-600 flex items-center gap-1">
-                              📊 Manual value
-                            </div>
-                          )}
                         </div>
                       </div>
                       <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
@@ -217,13 +254,17 @@ const AccountsTab = () => {
         editAccount={editingAccount}
       />
 
-      {selectedAccount && (
-        <AccountDetail
-          account={selectedAccount}
-          transactions={transactions}
-          onClose={() => setSelectedAccount(null)}
-        />
-      )}
+      {selectedAccount && (() => {
+        const currentAccount = accounts.find(a => a.id === selectedAccount.id) || selectedAccount;
+        return (
+          <AccountDetail
+            key={`${currentAccount.id}-${currentAccount.valueHistory?.length || 0}`}
+            account={currentAccount}
+            transactions={transactions}
+            onClose={() => setSelectedAccount(null)}
+          />
+        );
+      })()}
     </div>
   );
 };

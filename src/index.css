@@ -12,6 +12,24 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Disable text selection to prevent Google Search popup on mobile */
+* {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Allow text selection in input fields */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
 /* Mobile-first responsive design */
 @media (max-width: 640px) {
   body {

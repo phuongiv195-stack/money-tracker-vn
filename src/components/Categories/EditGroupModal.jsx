@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import useBackHandler from '../../hooks/useBackHandler';
 
 const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
-  const [newName, setNewName] = useState(groupName);
+  useBackHandler(isOpen, onClose);
+  
+  const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Sync state khi groupName thay đổi
+  useEffect(() => {
+    if (groupName) {
+      setNewName(groupName);
+    }
+  }, [groupName]);
 
   const handleRename = async () => {
     if (!newName.trim()) {
@@ -88,7 +98,7 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
-              autoFocus
+              
             />
           </div>
 

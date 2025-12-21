@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import useBackHandler from '../../hooks/useBackHandler';
 
 const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }) => {
+  useBackHandler(isOpen, onClose);
+  
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -383,12 +386,11 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
   );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:w-[450px] h-[90vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
+    <div className="fixed inset-0 bg-gray-50 z-50 flex flex-col">
         
         {/* Header */}
-        <div className="flex justify-between items-center p-4 border-b">
-          <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
+        <div className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
+          <button onClick={onClose} className="text-gray-500 text-lg p-2">✕</button>
           <h2 className="font-semibold text-lg">
             {editTransaction ? 'Edit Transaction' : 'Add Transaction'}
           </h2>
@@ -404,7 +406,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
             <button 
               onClick={handleSubmit} 
               disabled={loading}
-              className="text-emerald-600 font-bold disabled:opacity-50"
+              className="text-emerald-600 font-bold disabled:opacity-50 p-2"
             >
               {loading ? '...' : 'SAVE'}
             </button>
@@ -412,7 +414,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
         </div>
 
         {/* Type Tabs */}
-        <div className="flex p-2 gap-2 bg-gray-50">
+        <div className="flex p-2 gap-2 bg-white border-b">
           {['expense', 'income', 'transfer'].map(tab => (
             <button
               key={tab}
@@ -447,7 +449,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
                 className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
                   activeTab === 'expense' ? 'text-red-500' : activeTab === 'income' ? 'text-emerald-600' : 'text-blue-600'
                 }`}
-                autoFocus
+                
               />
             </div>
             
@@ -756,7 +758,6 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 };

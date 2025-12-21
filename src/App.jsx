@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
-import { NavigationProvider } from './contexts/NavigationContext';
+import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
@@ -12,8 +12,26 @@ import LoansTab from './components/Loans/LoansTab';
 
 function AppContent() {
   const { currentUser } = useAuth();
+  const { registerCloseHandler, unregisterCloseHandler } = useNavigation();
   const [activeTab, setActiveTab] = useState('categories');
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Register back handler để về Categories khi không ở Categories
+  const backToCategories = useCallback(() => {
+    setActiveTab('categories');
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'categories') {
+      registerCloseHandler('app-tab-back', backToCategories);
+    } else {
+      unregisterCloseHandler('app-tab-back');
+    }
+    
+    return () => {
+      unregisterCloseHandler('app-tab-back');
+    };
+  }, [activeTab, registerCloseHandler, unregisterCloseHandler, backToCategories]);
 
   // Comment để dev nhanh
   // if (!currentUser) {

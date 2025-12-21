@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import useBackHandler from '../../hooks/useBackHandler';
 
 const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
+  useBackHandler(isOpen, onClose);
+  
   const [loanType, setLoanType] = useState('borrow');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -137,23 +140,22 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:w-[450px] sm:rounded-xl flex flex-col max-h-[90vh]">
-        
-        {/* Header */}
-        <div className="flex justify-between items-center p-4 border-b">
-          <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
-          <h2 className="font-semibold text-lg">Add New Loan</h2>
-          <button 
-            onClick={handleSubmit} 
-            disabled={loading}
-            className="text-emerald-600 font-bold disabled:opacity-50"
-          >
-            {loading ? 'SAVING...' : 'SAVE'}
-          </button>
-        </div>
+    <div className="fixed inset-0 bg-gray-50 z-50 flex flex-col">
+      
+      {/* Header */}
+      <div className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
+        <button onClick={onClose} className="text-gray-500 text-lg p-2">✕</button>
+        <h2 className="font-semibold text-lg">Add New Loan</h2>
+        <button 
+          onClick={handleSubmit} 
+          disabled={loading}
+          className="text-emerald-600 font-bold disabled:opacity-50 p-2"
+        >
+          {loading ? 'SAVING...' : 'SAVE'}
+        </button>
+      </div>
 
-        <div className="p-4 space-y-4 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
           
           {/* Loan Type */}
           <div>
@@ -203,7 +205,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
               className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
-              autoFocus
+              
             />
           </div>
 
@@ -273,13 +275,12 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
             <input
               type="text"
               placeholder="Notes (optional)"
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+              className="w-full p-3 bg-white rounded-lg mt-1 outline-none border border-gray-200"
               value={formData.memo}
               onChange={(e) => setFormData({...formData, memo: e.target.value})}
             />
           </div>
         </div>
-      </div>
     </div>
   );
 };

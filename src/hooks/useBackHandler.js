@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useNavigation } from '../contexts/NavigationContext';
 
 /**
@@ -9,10 +9,23 @@ import { useNavigation } from '../contexts/NavigationContext';
 const useBackHandler = (isOpen, onClose) => {
   const { registerCloseHandler, unregisterCloseHandler } = useNavigation();
   const idRef = useRef(`back-handler-${Date.now()}-${Math.random()}`);
+  const onCloseRef = useRef(onClose);
+
+  // Update ref when onClose changes
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Stable callback that reads from ref
+  const stableOnClose = useCallback(() => {
+    if (onCloseRef.current) {
+      onCloseRef.current();
+    }
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
-      registerCloseHandler(idRef.current, onClose);
+      registerCloseHandler(idRef.current, stableOnClose);
     } else {
       unregisterCloseHandler(idRef.current);
     }
@@ -20,7 +33,7 @@ const useBackHandler = (isOpen, onClose) => {
     return () => {
       unregisterCloseHandler(idRef.current);
     };
-  }, [isOpen, onClose, registerCloseHandler, unregisterCloseHandler]);
+  }, [isOpen, stableOnClose, registerCloseHandler, unregisterCloseHandler]);
 };
 
 export default useBackHandler;

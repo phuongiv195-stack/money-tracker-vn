@@ -23,6 +23,7 @@ const CategoriesTab = () => {
   // Long press state
   const longPressTriggered = useRef(false);
   const longPressTimer = useRef(null);
+  const touchStartPos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
@@ -128,18 +129,60 @@ const CategoriesTab = () => {
     setSelectedCategory({ ...cat, amount: categoryTotals[cat.name] || 0 });
   };
 
+  // Trigger haptic feedback
+  const triggerHaptic = () => {
+    if (navigator.vibrate) {
+      navigator.vibrate(50); // 50ms vibration
+    }
+  };
+
   // Long press start
-  const handleLongPressStart = (cat, type) => {
+  const handleLongPressStart = (cat, type, e) => {
     longPressTriggered.current = false;
+    
+    // Lưu vị trí touch ban đầu
+    if (e?.touches?.[0]) {
+      touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e) {
+      touchStartPos.current = { x: e.clientX, y: e.clientY };
+    }
+    
+    // Giảm xuống 400ms và trigger haptic + action cùng lúc
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true;
+      triggerHaptic();
+      
+      // Mở modal ngay lập tức sau haptic
       if (type === 'category') {
         setEditingCategory(cat);
         setIsAddModalOpen(true);
       } else if (type === 'group') {
         setEditingGroup({ name: cat, type: activeTab });
       }
-    }, 600);
+    }, 400);
+  };
+
+  // Long press move - cancel nếu di chuyển quá 10px
+  const handleLongPressMove = (e) => {
+    if (!longPressTimer.current) return;
+    
+    let currentX, currentY;
+    if (e?.touches?.[0]) {
+      currentX = e.touches[0].clientX;
+      currentY = e.touches[0].clientY;
+    } else {
+      currentX = e.clientX;
+      currentY = e.clientY;
+    }
+    
+    const deltaX = Math.abs(currentX - touchStartPos.current.x);
+    const deltaY = Math.abs(currentY - touchStartPos.current.y);
+    
+    // Nếu di chuyển quá 10px thì cancel long press
+    if (deltaX > 10 || deltaY > 10) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   };
 
   // Long press end
@@ -227,9 +270,10 @@ const CategoriesTab = () => {
           <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-100">
             <div 
               className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider cursor-pointer select-none active:bg-gray-100"
-              onTouchStart={() => handleLongPressStart(groupName, 'group')}
+              onTouchStart={(e) => handleLongPressStart(groupName, 'group', e)}
+              onTouchMove={handleLongPressMove}
               onTouchEnd={handleLongPressEnd}
-              onMouseDown={() => handleLongPressStart(groupName, 'group')}
+              onMouseDown={(e) => handleLongPressStart(groupName, 'group', e)}
               onMouseUp={handleLongPressEnd}
               onMouseLeave={handleLongPressEnd}
             >
@@ -246,9 +290,10 @@ const CategoriesTab = () => {
                   <div 
                     key={cat.id} 
                     onClick={() => handleCategoryClick(cat)}
-                    onTouchStart={() => handleLongPressStart(cat, 'category')}
+                    onTouchStart={(e) => handleLongPressStart(cat, 'category', e)}
+                    onTouchMove={handleLongPressMove}
                     onTouchEnd={handleLongPressEnd}
-                    onMouseDown={() => handleLongPressStart(cat, 'category')}
+                    onMouseDown={(e) => handleLongPressStart(cat, 'category', e)}
                     onMouseUp={handleLongPressEnd}
                     onMouseLeave={handleLongPressEnd}
                     className="p-3 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors select-none"

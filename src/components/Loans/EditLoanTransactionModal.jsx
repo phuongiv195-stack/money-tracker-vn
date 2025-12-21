@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { updateDoc, deleteDoc, doc, query, where, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import useBackHandler from '../../hooks/useBackHandler';
 
 const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }) => {
+  useBackHandler(isOpen, onClose);
+  
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
   const [dateInputType, setDateInputType] = useState('text');
@@ -170,7 +173,7 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
               className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
                 direction === 'out' ? 'text-gray-800' : 'text-emerald-600'
               }`}
-              autoFocus
+              
             />
           </div>
 

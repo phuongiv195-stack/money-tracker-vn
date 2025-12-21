@@ -3,7 +3,7 @@ import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, o
 import { db } from '../../services/firebase';
 import useBackHandler from '../../hooks/useBackHandler';
 
-const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }) => {
+const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null }) => {
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -108,20 +108,31 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
       } else {
         setIsSplitMode(false);
         setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-        setFormData(prev => ({
-          ...prev,
+        
+        // Apply prefilled values
+        const newFormData = {
           amount: '',
           payee: '',
-          category: '',
+          category: prefilledCategory?.name || '',
+          account: prefilledAccount || '',
+          fromAccount: prefilledAccount || '',
+          toAccount: '',
           date: new Date().toISOString().split('T')[0],
           memo: ''
-        }));
+        };
+        setFormData(prev => ({ ...prev, ...newFormData }));
         setDisplayAmount('');
-        setActiveTab('expense');
+        
+        // Set active tab based on prefilled category type
+        if (prefilledCategory?.type) {
+          setActiveTab(prefilledCategory.type);
+        } else {
+          setActiveTab('expense');
+        }
       }
       setDateInputType('text');
     }
-  }, [isOpen, editTransaction]);
+  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory]);
 
   const loadLoans = async () => {
     try {
@@ -456,7 +467,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
                 className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
                   activeTab === 'expense' ? 'text-red-500' : activeTab === 'income' ? 'text-emerald-600' : 'text-blue-600'
                 }`}
-                autoFocus
+                
               />
             </div>
             
