@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, query, where, onSnapshot, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import AddNewLoanModal from './AddNewLoanModal';
 import LoanDetail from './LoanDetail';
+import { useToast } from '../Toast/ToastProvider';
 
 const LoansTab = () => {
+  const toast = useToast();
+  const userId = useUserId();
   const [loanTransactions, setLoanTransactions] = useState([]);
   const [splitTransactions, setSplitTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,9 +30,10 @@ const LoansTab = () => {
 
   // Load loan transactions
   useEffect(() => {
+    if (!userId) return;
     const q = query(
       collection(db, 'transactions'),
-      where('userId', '==', 'test-user'),
+      where('userId', '==', userId),
       where('type', '==', 'loan')
     );
 
@@ -39,13 +44,14 @@ const LoansTab = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Load split transactions (may contain loan splits)
   useEffect(() => {
+    if (!userId) return;
     const q = query(
       collection(db, 'transactions'),
-      where('userId', '==', 'test-user'),
+      where('userId', '==', userId),
       where('type', '==', 'split')
     );
 
@@ -55,7 +61,7 @@ const LoansTab = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Cleanup timer
   useEffect(() => {
@@ -266,7 +272,7 @@ const LoansTab = () => {
       setActionLoan(null);
       setSuccessMessage('Loan renamed!');
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 
@@ -284,7 +290,7 @@ const LoansTab = () => {
       setActionLoan(null);
       setSuccessMessage('Loan deleted!');
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 
@@ -302,7 +308,7 @@ const LoansTab = () => {
       setActionLoan(null);
       setSuccessMessage('Loan archived!');
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 

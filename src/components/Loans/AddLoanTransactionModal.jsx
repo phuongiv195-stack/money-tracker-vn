@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
@@ -35,18 +39,35 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
   const [showCategoryList, setShowCategoryList] = useState(false);
   const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Real-time accounts listener
+  // Real-time accounts listener - SORTED by group then order
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !userId) return;
     
     const q = query(
       collection(db, 'accounts'),
-      where('userId', '==', 'test-user'),
+      where('userId', '==', userId),
       where('isActive', '==', true)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const accs = snapshot.docs.map(d => d.data().name).filter(Boolean);
+      // Define group order priority
+      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
+      
+      const accs = snapshot.docs
+        .map(d => ({ 
+          name: d.data().name, 
+          group: d.data().group,
+          order: d.data().order ?? 999 
+        }))
+        .filter(a => a.name)
+        .sort((a, b) => {
+          const groupA = groupOrder[a.group] ?? 99;
+          const groupB = groupOrder[b.group] ?? 99;
+          if (groupA !== groupB) return groupA - groupB;
+          return a.order - b.order;
+        })
+        .map(a => a.name);
+        
       setAccounts(accs);
       
       // Set default account if not set
@@ -122,7 +143,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('type', '==', 'loan')
       );
       const snapshot = await getDocs(q);
@@ -137,7 +158,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         orderBy('date', 'desc'),
         limit(50)
       );
@@ -151,7 +172,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
 
   const loadCategories = async () => {
     try {
-      const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+      const q = query(collection(db, 'categories'), where('userId', '==', userId));
       const snapshot = await getDocs(q);
       setCategorySuggestions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (e) {
@@ -247,7 +268,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
 
   const handleSubmit = async () => {
     if (!formData.amount) {
-      alert("Please enter amount!");
+      toast.error("Please enter amount!");
       return;
     }
 
@@ -258,22 +279,22 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
       for (let i = 0; i < newSplits.length; i++) {
         const s = newSplits[i];
         if (Number(s.amount) <= 0) {
-          alert(`Split #${i + 1}: Invalid amount`);
+          toast.error(`Split #${i + 1}: Invalid amount`);
           return;
         }
         if (s.isLoan && !s.loan) {
-          alert(`Split #${i + 1}: Please select loan`);
+          toast.error(`Split #${i + 1}: Please select loan`);
           return;
         }
         if (!s.isLoan && !s.category) {
-          alert(`Split #${i + 1}: Please select category`);
+          toast.error(`Split #${i + 1}: Please select category`);
           return;
         }
       }
       setSplits(newSplits);
     } else {
       if (activeTab !== 'transfer' && !formData.category) {
-        alert("Please select category!");
+        toast.error("Please select category!");
         return;
       }
     }
@@ -291,7 +312,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
         }));
         
         const transactionData = {
-          userId: 'test-user',
+          userId: userId,
           type: 'split',
           splitType: activeTab,
           totalAmount: activeTab === 'expense' ? -Math.abs(totalAmount) : Math.abs(totalAmount),
@@ -314,7 +335,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
         let finalAmount = Number(formData.amount);
 
         const transactionData = {
-          userId: 'test-user',
+          userId: userId,
           type: activeTab,
           amount: finalAmount,
           date: formData.date,
@@ -348,7 +369,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
       onClose();
     } catch (error) {
       console.error("Error saving transaction:", error);
-      alert("Error: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };
@@ -356,13 +377,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
   const handleDelete = async () => {
     if (!editTransaction) return;
     
-    if (window.confirm(`Delete this transaction?`)) {
+    const confirmed = await toast.confirm({
+      title: 'Delete Transaction',
+      message: 'Delete this transaction?',
+      confirmText: 'Delete',
+      type: 'danger'
+    });
+    
+    if (confirmed) {
       try {
         await deleteDoc(doc(db, 'transactions', editTransaction.id));
         if (onSave) onSave();
         onClose();
       } catch (error) {
-        alert("Error: " + error.message);
+        toast.error("Error: " + error.message);
       }
     }
   };

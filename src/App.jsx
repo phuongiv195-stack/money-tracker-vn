@@ -9,12 +9,48 @@ import TransactionsTab from './components/Transactions/TransactionsTab';
 import AccountsTab from './components/Accounts/AccountsTab';
 import ReportsTab from './components/Reports/ReportsTab';
 import LoansTab from './components/Loans/LoansTab';
+import SettingsTab from './components/Settings/SettingsTab';
 
 function AppContent() {
   const { currentUser } = useAuth();
   const { registerCloseHandler, unregisterCloseHandler } = useNavigation();
-  const [activeTab, setActiveTab] = useState('categories');
+  
+  // Load activeTab from localStorage, default to 'categories'
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = localStorage.getItem('activeTab');
+    return saved || 'categories';
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Check for shortcut action on app launch
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action');
+    
+    if (action === 'add-transaction') {
+      // Open Add Transaction modal
+      setIsModalOpen(true);
+      // Clean up URL
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
+  // Save activeTab to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
+  }, [activeTab]);
+
+  // Listen for openSettings event from CategoriesTab
+  useEffect(() => {
+    const handleOpenSettings = () => setActiveTab('settings');
+    const handleCloseSettings = () => setActiveTab('categories');
+    window.addEventListener('openSettings', handleOpenSettings);
+    window.addEventListener('closeSettings', handleCloseSettings);
+    return () => {
+      window.removeEventListener('openSettings', handleOpenSettings);
+      window.removeEventListener('closeSettings', handleCloseSettings);
+    };
+  }, []);
 
   // Register back handler để về Categories khi không ở Categories
   const backToCategories = useCallback(() => {
@@ -33,10 +69,10 @@ function AppContent() {
     };
   }, [activeTab, registerCloseHandler, unregisterCloseHandler, backToCategories]);
 
-  // Comment để dev nhanh
-  // if (!currentUser) {
-  //   return <Login />;
-  // }
+  // Check if user is logged in
+  if (!currentUser) {
+    return <Login />;
+  }
 
   const renderContent = () => {
     switch (activeTab) {
@@ -50,6 +86,8 @@ function AppContent() {
         return <LoansTab />;
       case 'reports':
         return <ReportsTab />;
+      case 'settings':
+        return <SettingsTab />;
       default:
         return <CategoriesTab />;
     }
@@ -63,8 +101,8 @@ function AppContent() {
       {renderContent()}
     </main>
 
-      {/* FAB Button - Hidden in Loans tab */}
-      {activeTab !== 'loans' && (
+      {/* FAB Button - Hidden in Loans and Settings tabs */}
+      {activeTab !== 'loans' && activeTab !== 'settings' && (
         <button
           onClick={() => setIsModalOpen(true)}
           className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"

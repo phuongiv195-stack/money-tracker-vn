@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import AddAccountModal from './AddAccountModal';
 import AccountDetail from './AccountDetail';
+import ReorderAccountsModal from './ReorderAccountsModal';
 
 const AccountsTab = () => {
+  const userId = useUserId();
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -15,24 +19,26 @@ const AccountsTab = () => {
 
   // Fetch Accounts from Firebase
   useEffect(() => {
-    const q = query(collection(db, 'accounts'), where('userId', '==', 'test-user'));
+    if (!userId) return;
+    const q = query(collection(db, 'accounts'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const accs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAccounts(accs);
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Fetch Transactions
   useEffect(() => {
-    const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
+    if (!userId) return;
+    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setTransactions(trans);
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   // Calculate balances for transaction-based accounts
   const balances = useMemo(() => {
@@ -69,13 +75,16 @@ const AccountsTab = () => {
       
       let balance;
       if (isMarketValue) {
-        // Tính theo thứ tự thời gian: transactions + value updates
+        // Tính theo thứ tự thời gian: startingBalance + transactions + value updates
         const accTransactions = transactions.filter(t => {
           if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
           return t.account === acc.name;
         });
         
         const allEvents = [];
+        
+        // Thêm startingBalance như event đầu tiên (nếu có)
+        const startingBalance = acc.startingBalance || 0;
         
         // Thêm transactions - dùng createdAt để có timestamp chính xác
         accTransactions.forEach(t => {
@@ -100,8 +109,8 @@ const AccountsTab = () => {
         // Sắp xếp theo thời gian
         allEvents.sort((a, b) => a.timestamp - b.timestamp);
         
-        // Tính current value
-        balance = 0;
+        // Tính current value - bắt đầu từ startingBalance
+        balance = startingBalance;
         allEvents.forEach(event => {
           if (event.type === 'valueUpdate') {
             balance = event.value;
@@ -110,7 +119,9 @@ const AccountsTab = () => {
           }
         });
       } else {
-        balance = balances[acc.name] || 0;
+        // Transaction-based account: startingBalance + transactions
+        const startingBalance = acc.startingBalance || 0;
+        balance = startingBalance + (balances[acc.name] || 0);
       }
 
       groups[acc.group].push({
@@ -119,9 +130,9 @@ const AccountsTab = () => {
       });
     });
 
-    // Sort by order within each group
+    // Sort by order within each group (use ?? to handle order = 0)
     Object.keys(groups).forEach(group => {
-      groups[group].sort((a, b) => (a.order || 999) - (b.order || 999));
+      groups[group].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
     });
 
     return groups;
@@ -227,17 +238,27 @@ const AccountsTab = () => {
         </div>
       )}
 
-      {/* Add Account Button (Floating Top-Right) */}
+      {/* Floating Buttons (Top-Right) */}
       {accounts.length > 0 && (
-        <button
-          onClick={() => {
-            setEditingAccount(null);
-            setIsAddModalOpen(true);
-          }}
-          className="fixed top-4 right-4 md:right-[calc(50%-200px)] bg-white text-emerald-600 border border-emerald-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-50 transition-colors z-30"
-        >
-          +
-        </button>
+        <div className="fixed top-4 right-4 md:right-[calc(50%-200px)] flex gap-2 z-30">
+          {/* Gear/Settings Button */}
+          <button
+            onClick={() => setIsReorderModalOpen(true)}
+            className="bg-white text-gray-600 border border-gray-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-lg hover:bg-gray-50 transition-colors"
+          >
+            ⚙️
+          </button>
+          {/* Add Account Button */}
+          <button
+            onClick={() => {
+              setEditingAccount(null);
+              setIsAddModalOpen(true);
+            }}
+            className="bg-white text-emerald-600 border border-emerald-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-50 transition-colors"
+          >
+            +
+          </button>
+        </div>
       )}
 
       {/* Modals */}
@@ -252,6 +273,13 @@ const AccountsTab = () => {
           setEditingAccount(null);
         }}
         editAccount={editingAccount}
+      />
+
+      <ReorderAccountsModal
+        isOpen={isReorderModalOpen}
+        onClose={() => setIsReorderModalOpen(false)}
+        accounts={accounts}
+        onSave={() => setIsReorderModalOpen(false)}
       />
 
       {selectedAccount && (() => {

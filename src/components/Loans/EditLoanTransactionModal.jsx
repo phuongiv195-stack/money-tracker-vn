@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { updateDoc, deleteDoc, doc, query, where, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -43,11 +47,29 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
     try {
       const q = query(
         collection(db, 'accounts'), 
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('isActive', '==', true)
       );
       const snapshot = await getDocs(q);
-      const accs = snapshot.docs.map(d => d.data().name).filter(Boolean);
+      
+      // Define group order priority
+      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
+      
+      const accs = snapshot.docs
+        .map(d => ({ 
+          name: d.data().name, 
+          group: d.data().group,
+          order: d.data().order ?? 999 
+        }))
+        .filter(a => a.name)
+        .sort((a, b) => {
+          const groupA = groupOrder[a.group] ?? 99;
+          const groupB = groupOrder[b.group] ?? 99;
+          if (groupA !== groupB) return groupA - groupB;
+          return a.order - b.order;
+        })
+        .map(a => a.name);
+        
       setAccounts(accs);
     } catch (e) {
       console.error("Load accounts error:", e);
@@ -74,7 +96,7 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
 
   const handleSubmit = async () => {
     if (!formData.amount) {
-      alert("Please enter amount!");
+      toast.error("Please enter amount!");
       return;
     }
 
@@ -94,13 +116,20 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
       onClose();
     } catch (error) {
       console.error("Error updating transaction:", error);
-      alert("Error: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Delete this transaction?')) return;
+    const confirmed = await toast.confirm({
+      title: 'Delete Transaction',
+      message: 'Delete this transaction?',
+      confirmText: 'Delete',
+      type: 'danger'
+    });
+    
+    if (!confirmed) return;
 
     setLoading(true);
     try {
@@ -109,7 +138,7 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
       onClose();
     } catch (error) {
       console.error("Error deleting transaction:", error);
-      alert("Error: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };

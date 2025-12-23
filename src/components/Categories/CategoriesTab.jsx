@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import CategoryDetail from './CategoryDetail';
 import AddCategoryModal from './AddCategoryModal';
 import EditGroupModal from './EditGroupModal';
 
 const CategoriesTab = () => {
+  const userId = useUserId();
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]); 
   const [loading, setLoading] = useState(true);
@@ -26,23 +28,25 @@ const CategoriesTab = () => {
   const touchStartPos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+    if (!userId) return;
+    const q = query(collection(db, 'categories'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCategories(cats);
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
-    const q = query(collection(db, 'transactions'), where('userId', '==', 'test-user'));
+    if (!userId) return;
+    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setTransactions(trans);
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     return () => {
@@ -201,7 +205,15 @@ const CategoriesTab = () => {
         <div className="flex justify-between items-center mb-4">
           <button onClick={() => changeMonth(-1)} className="p-2 text-gray-500 hover:bg-gray-100 rounded">←</button>
           <button className="text-gray-800 font-bold text-lg">{getMonthYearLabel(currentDate)}</button>
-          <button onClick={() => changeMonth(1)} className="p-2 text-gray-500 hover:bg-gray-100 rounded">→</button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => changeMonth(1)} className="p-2 text-gray-500 hover:bg-gray-100 rounded">→</button>
+            <button 
+              onClick={() => window.dispatchEvent(new CustomEvent('openSettings'))}
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded"
+            >
+              ⚙️
+            </button>
+          </div>
         </div>
         
         <div className="flex justify-between text-sm mb-2 text-gray-600">

@@ -4,8 +4,10 @@ import { db } from '../../services/firebase';
 import AddLoanTransactionModal from './AddLoanTransactionModal';
 import EditLoanTransactionModal from './EditLoanTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
+  const toast = useToast();
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   
@@ -64,7 +66,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       setShowEditLoan(false);
       setSuccessMessage('Loan renamed successfully!');
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 
@@ -80,7 +82,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       setShowDeleteLoan(false);
       onClose();
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 
@@ -96,7 +98,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       setShowArchiveLoan(false);
       setSuccessMessage('Loan archived!');
     } catch (err) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     }
   };
 
@@ -141,7 +143,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       setIsSelectMode(false);
       setShowDeleteConfirm(false);
     } catch (err) { 
-      alert('Error: ' + err.message); 
+      toast.error('Error: ' + err.message); 
     }
   };
 

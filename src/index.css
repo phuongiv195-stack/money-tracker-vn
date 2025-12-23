@@ -12,6 +12,53 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ========== FONT SIZE SETTINGS ========== */
+/* Normal size (default) */
+:root.font-size-normal {
+  font-size: 14px;
+}
+
+/* Large size - cho màn hình nhỏ như Pixel 8 */
+:root.font-size-large {
+  font-size: 16px;
+}
+
+/* Scale các elements theo font-size */
+:root.font-size-large .text-xs {
+  font-size: 0.8rem;
+}
+
+:root.font-size-large .text-sm {
+  font-size: 0.925rem;
+}
+
+:root.font-size-large .text-base {
+  font-size: 1.05rem;
+}
+
+:root.font-size-large .text-lg {
+  font-size: 1.175rem;
+}
+
+:root.font-size-large .text-xl {
+  font-size: 1.3rem;
+}
+
+:root.font-size-large .text-2xl {
+  font-size: 1.6rem;
+}
+
+/* Tăng size cho các text cụ thể */
+:root.font-size-large .text-\[10px\] {
+  font-size: 12px;
+}
+
+:root.font-size-large .text-\[11px\] {
+  font-size: 13px;
+}
+
+/* ========== END FONT SIZE ========== */
+
 /* Disable text selection to prevent Google Search popup on mobile */
 * {
   -webkit-user-select: none;
@@ -32,7 +79,41 @@ input, textarea, [contenteditable="true"] {
 
 /* Mobile-first responsive design */
 @media (max-width: 640px) {
-  body {
+  :root.font-size-normal body {
     font-size: 14px;
   }
+  :root.font-size-large body {
+    font-size: 16px;
+  }
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
 }

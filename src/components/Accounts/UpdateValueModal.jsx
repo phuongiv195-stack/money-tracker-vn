@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: propCurrentValue }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
   
   const [newValue, setNewValue] = useState('');
   const [displayValue, setDisplayValue] = useState('');
@@ -31,13 +33,13 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
 
   const handleSubmit = async () => {
     if (!newValue) {
-      alert('Please enter new value!');
+      toast.error('Please enter new value!');
       return;
     }
 
     const value = parseFloat(newValue);
     if (isNaN(value)) {
-      alert('Invalid value!');
+      toast.error('Invalid value!');
       return;
     }
 
@@ -61,7 +63,7 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
       onClose();
     } catch (error) {
       console.error('Error updating value:', error);
-      alert('Error: ' + error.message);
+      toast.error('Error: ' + error.message);
     }
     setLoading(false);
   };

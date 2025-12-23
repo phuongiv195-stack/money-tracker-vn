@@ -4,8 +4,10 @@ import { db } from '../../services/firebase';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
 import UpdateValueModal from './UpdateValueModal';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => {
+  const toast = useToast();
   const [isReconciling, setIsReconciling] = useState(false);
   const [showManualReconcile, setShowManualReconcile] = useState(false);
   const [reconcileBalance, setReconcileBalance] = useState('');
@@ -52,7 +54,12 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   }, [accountTransactions]);
 
   const { balance, clearedBalance, unclearedBalance } = useMemo(() => {
-    let bal = 0, cleared = 0, uncleared = 0;
+    // Add starting balance for all accounts (except loan handled separately)
+    const startingBalance = account.startingBalance || 0;
+    let bal = startingBalance;
+    let cleared = startingBalance; // Starting balance is considered cleared
+    let uncleared = 0;
+    
     accountTransactions.forEach(t => {
       let amt = 0;
       if (t.type === 'transfer') {
@@ -77,6 +84,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     
     // Gộp tất cả events (transactions + value updates) và sắp xếp theo thời gian
     const allEvents = [];
+    const startingBalance = account.startingBalance || 0;
     
     // Thêm transactions - dùng createdAt để có timestamp chính xác
     accountTransactions.forEach(t => {
@@ -111,8 +119,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     // Sắp xếp theo thời gian (cũ nhất trước)
     allEvents.sort((a, b) => a.timestamp - b.timestamp);
     
-    // Tính current value
-    let currentVal = 0;
+    // Tính current value - bắt đầu từ startingBalance
+    let currentVal = startingBalance;
     allEvents.forEach(event => {
       if (event.type === 'valueUpdate') {
         currentVal = event.value; // Set value mới
@@ -174,21 +182,21 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       setShowDeleteConfirm(false);
       setSuccessMessage(`Deleted ${selectedItems.size} transaction(s)`);
     } catch (err) { 
-      alert('Error: ' + err.message); 
+      toast.error('Error: ' + err.message); 
     }
   };
 
   const handleToggleClear = async (t, e) => {
     e.stopPropagation();
-    if (t.clearStatus === 'reconciled') { alert('🔒 Locked'); return; }
+    if (t.clearStatus === 'reconciled') { toast.warning('🔒 Locked'); return; }
     try {
       await updateDoc(doc(db, 'transactions', t.id), { clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' });
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const handleToggleValueClear = async (entryIndex, currentStatus, e) => {
     e.stopPropagation();
-    if (currentStatus === 'reconciled') { alert('🔒 Locked'); return; }
+    if (currentStatus === 'reconciled') { toast.warning('🔒 Locked'); return; }
     if (entryIndex === -1 || !account.valueHistory) return;
     
     try {
@@ -198,7 +206,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         clearStatus: currentStatus === 'cleared' ? 'uncleared' : 'cleared'
       };
       await updateDoc(doc(db, 'accounts', account.id), { valueHistory: newHistory });
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   // Quick Reconcile - khi user confirm cleared balance đúng
@@ -235,15 +243,15 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       await batch.commit();
       setIsReconciling(false);
       setSuccessMessage('Reconciled successfully!');
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const handleFinishReconcile = async (forceReconcile = false) => {
     const targetBalance = parseFloat(reconcileBalance.replace(/,/g, ''));
-    if (isNaN(targetBalance)) { alert('Enter valid balance'); return; }
+    if (isNaN(targetBalance)) { toast.error('Enter valid balance'); return; }
     const clearedTrans = accountTransactions.filter(t => t.clearStatus === 'cleared');
     const clearedValueUpdates = account.valueHistory?.filter(v => v.clearStatus === 'cleared') || [];
-    if (clearedTrans.length === 0 && clearedValueUpdates.length === 0) { alert('No cleared items'); return; }
+    if (clearedTrans.length === 0 && clearedValueUpdates.length === 0) { toast.warning('No cleared items'); return; }
     
     // Tính cleared balance
     let clearedTotal = 0;
@@ -313,22 +321,31 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       setReconcileWarning(null);
       setReconcileBalance('');
       setSuccessMessage('Reconciled successfully!');
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const handleUnreconcile = async () => {
-    if (!account.lastReconcileDate) { alert('Nothing to undo'); return; }
+    if (!account.lastReconcileDate) { toast.warning('Nothing to undo'); return; }
     const lastTime = account.lastReconcileDate.seconds * 1000;
     const toUnlock = accountTransactions.filter(t => t.clearStatus === 'reconciled' && t.reconciledAt && Math.abs(t.reconciledAt.seconds * 1000 - lastTime) < 5000);
-    if (toUnlock.length === 0) { alert('Nothing to unlock'); return; }
-    if (!window.confirm(`Unlock ${toUnlock.length} transactions?`)) return;
+    if (toUnlock.length === 0) { toast.warning('Nothing to unlock'); return; }
+    
+    const confirmed = await toast.confirm({
+      title: 'Undo Reconcile',
+      message: `Unlock ${toUnlock.length} transaction(s)?`,
+      confirmText: 'Unlock',
+      type: 'warning'
+    });
+    
+    if (!confirmed) return;
+    
     try {
       const batch = writeBatch(db);
       toUnlock.forEach(t => batch.update(doc(db, 'transactions', t.id), { clearStatus: 'cleared', reconciledAt: null }));
       batch.update(doc(db, 'accounts', account.id), { lastReconcileDate: null, lastReconcileBalance: null });
       await batch.commit();
-      alert('✅ Unlocked!');
-    } catch (err) { alert('Error: ' + err.message); }
+      toast.success('Unlocked successfully!');
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const getClearIcon = (s) => s === 'reconciled' ? '🔒' : s === 'cleared' ? '✓' : '○';
@@ -371,26 +388,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           <div className="text-3xl font-bold mt-1">{(isMarketValue ? calculatedCurrentValue : balance) >= 0 ? '+' : '-'}{formatCurrency(isMarketValue ? calculatedCurrentValue : balance)}</div>
         </div>
         
-        {/* Investment account: show P/L and Update button */}
+        {/* Investment account: show Update button only */}
         {isMarketValue && (
           <>
-            {account.costBasis > 0 && (
-              <div className="flex justify-center gap-6 mt-3 pt-3 border-t border-white/20 text-sm">
-                <div className="text-center">
-                  <div className="opacity-70">Cost Basis</div>
-                  <div className="font-medium">{formatCurrency(account.costBasis)}</div>
-                </div>
-                <div className="text-center">
-                  <div className="opacity-70">P/L</div>
-                  <div className={`font-medium ${(calculatedCurrentValue - account.costBasis) >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                    {(calculatedCurrentValue - account.costBasis) >= 0 ? '+' : '-'}{formatCurrency(calculatedCurrentValue - account.costBasis)}
-                    <span className="text-xs ml-1">
-                      ({((calculatedCurrentValue - account.costBasis) / account.costBasis * 100).toFixed(1)}%)
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
             <div className="mt-3 flex justify-center gap-2">
               <button 
                 onClick={() => setIsUpdateValueOpen(true)} 
@@ -565,6 +565,23 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             });
           }
           
+          // Thêm Starting Balance cho tất cả accounts trừ loan
+          if (account.type !== 'loan' && (account.startingBalance || 0) !== 0 && account.createdAt) {
+            const createdDate = account.createdAt.seconds 
+              ? new Date(account.createdAt.seconds * 1000) 
+              : new Date(account.createdAt);
+            const dateStr = createdDate.toISOString().split('T')[0];
+            allItems.push({
+              type: 'startingBalance',
+              data: { 
+                amount: account.startingBalance,
+                date: dateStr
+              },
+              timestamp: 0, // Always oldest - always at bottom
+              date: dateStr
+            });
+          }
+          
           // Sắp xếp theo timestamp mới nhất trước
           allItems.sort((a, b) => b.timestamp - a.timestamp);
           
@@ -584,7 +601,19 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               <div className="text-xs text-gray-400 mb-2 ml-1">{formatDateLabel(date)}</div>
               <div className="bg-white rounded-lg shadow-sm border overflow-hidden divide-y divide-gray-50">
                 {items.map((item, index) => {
-                  if (item.type === 'valueUpdate') {
+                  if (item.type === 'startingBalance') {
+                    return (
+                      <div key="starting-balance" className="p-3 flex justify-between items-center bg-emerald-50/50">
+                        <div>
+                          <div className="font-medium text-emerald-700">💵 Starting Balance</div>
+                          <div className="text-xs text-emerald-500">Initial account balance</div>
+                        </div>
+                        <div className="font-bold text-emerald-600">
+                          +{formatCurrency(item.data.amount)}
+                        </div>
+                      </div>
+                    );
+                  } else if (item.type === 'valueUpdate') {
                     const entry = item.data;
                     const entryIndex = account.valueHistory?.findIndex(v => v.timestamp === entry.timestamp);
                     const d = new Date(entry.date);

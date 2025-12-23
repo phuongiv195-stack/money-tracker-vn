@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [formData, setFormData] = useState({
     name: '',
@@ -12,9 +16,11 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
     type: 'bank',
     group: 'SPENDING',
     currentValue: '',
-    costBasis: ''
+    costBasis: '',
+    startingBalance: ''
   });
   const [loading, setLoading] = useState(false);
+  const [displayStartingBalance, setDisplayStartingBalance] = useState('');
 
   // Account type configurations
   const accountTypes = {
@@ -38,8 +44,11 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
 
   const allIcons = ['💵', '🏦', '💰', '🐷', '📈', '💎', '🏠', '🚗', '💸', '💳', '🏪', '🛒', '💼', '🎯', '⭐'];
 
-  // Check if account is market-value type
+  // Check if account is market-value type (for Update Value feature)
   const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(formData.type);
+  
+  // Check if account needs starting balance (all except loan)
+  const needsStartingBalance = formData.type !== 'loan';
 
   useEffect(() => {
     if (isOpen) {
@@ -50,8 +59,14 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           type: editAccount.type,
           group: editAccount.group,
           currentValue: editAccount.currentValue || '',
-          costBasis: editAccount.costBasis || ''
+          costBasis: editAccount.costBasis || '',
+          startingBalance: editAccount.startingBalance || ''
         });
+        setDisplayStartingBalance(
+          editAccount.startingBalance 
+            ? Number(editAccount.startingBalance).toLocaleString('en-US')
+            : ''
+        );
       } else {
         setFormData({
           name: '',
@@ -59,8 +74,10 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           type: 'bank',
           group: 'SPENDING',
           currentValue: '',
-          costBasis: ''
+          costBasis: '',
+          startingBalance: ''
         });
+        setDisplayStartingBalance('');
       }
     }
   }, [isOpen, editAccount]);
@@ -86,20 +103,14 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
-      alert("Vui lòng nhập tên account!");
-      return;
-    }
-
-    // Validate market-value accounts
-    if (isMarketValue && !formData.currentValue) {
-      alert("Investment accounts cần nhập Current Value!");
+      toast.error("Please enter account name!");
       return;
     }
 
     setLoading(true);
     try {
       const accountData = {
-        userId: 'test-user',
+        userId: userId,
         name: formData.name.trim(),
         icon: formData.icon,
         type: formData.type,
@@ -108,11 +119,16 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
         updatedAt: new Date()
       };
 
-      // Add market-value specific fields
+      // Add market-value specific fields (for Update Value feature)
       if (isMarketValue) {
-        accountData.currentValue = parseFloat(formData.currentValue) || 0;
+        accountData.currentValue = parseFloat(formData.currentValue) || parseFloat(formData.startingBalance) || 0;
         accountData.costBasis = parseFloat(formData.costBasis) || 0;
         accountData.lastValueUpdate = new Date();
+      }
+
+      // Add starting balance for all accounts except loan
+      if (needsStartingBalance) {
+        accountData.startingBalance = parseFloat(formData.startingBalance) || 0;
       }
 
       if (editAccount) {
@@ -127,7 +143,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
       onClose();
     } catch (error) {
       console.error("Error saving account:", error);
-      alert("Lỗi khi lưu: " + error.message);
+      toast.error("Error saving: " + error.message);
     }
     setLoading(false);
   };
@@ -135,13 +151,20 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   const handleDelete = async () => {
     if (!editAccount) return;
     
-    if (window.confirm(`Xóa account "${editAccount.name}"?\n\nCảnh báo: Các transactions liên quan sẽ bị mất link!`)) {
+    const confirmed = await toast.confirm({
+      title: 'Delete Account',
+      message: `Delete "${editAccount.name}"?\n\nWarning: Related transactions will lose their link!`,
+      confirmText: 'Delete',
+      type: 'danger'
+    });
+    
+    if (confirmed) {
       try {
         await deleteDoc(doc(db, 'accounts', editAccount.id));
         if (onSave) onSave();
         onClose();
       } catch (error) {
-        alert("Lỗi khi xóa: " + error.message);
+        toast.error("Error deleting: " + error.message);
       }
     }
   };
@@ -149,8 +172,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:w-[450px] sm:rounded-xl flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 sm:flex sm:items-center sm:justify-center">
+      <div className="bg-white w-full h-full sm:w-[450px] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
         
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b">
@@ -238,48 +261,33 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
             </div>
           </div>
 
-          {/* Market Value Fields - CHỈ hiện khi ADD NEW (không phải edit) */}
-          {isMarketValue && !editAccount && (
-            <div className="bg-blue-50 p-4 rounded-lg space-y-3 border border-blue-200">
-              <div className="flex items-center gap-2 text-blue-700 mb-2">
-                <span className="text-xl">📊</span>
-                <span className="font-semibold text-sm">Investment Account</span>
+          {/* Starting Balance - For all accounts except loan */}
+          {needsStartingBalance && (
+            <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
+              <div className="flex items-center gap-2 text-emerald-700 mb-2">
+                <span className="text-xl">💵</span>
+                <span className="font-semibold text-sm">Starting Balance</span>
               </div>
               
               <div>
-                <label className="text-xs text-blue-600 font-semibold uppercase">Current Value *</label>
+                <label className="text-xs text-emerald-600 font-semibold uppercase">Current Balance</label>
                 <input
-                  type="number"
-                  placeholder="300000000"
-                  value={formData.currentValue}
-                  onChange={(e) => setFormData({...formData, currentValue: e.target.value})}
-                  className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={displayStartingBalance}
+                  onChange={(e) => {
+                    const rawValue = e.target.value.replace(/,/g, '');
+                    if (rawValue === '' || /^\d*$/.test(rawValue)) {
+                      setFormData({...formData, startingBalance: rawValue});
+                      setDisplayStartingBalance(rawValue ? Number(rawValue).toLocaleString('en-US') : '');
+                    }
+                  }}
+                  className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-right text-lg font-semibold"
                 />
-                <div className="text-xs text-blue-600 mt-1">Giá trị thị trường hiện tại</div>
-              </div>
-
-              <div>
-                <label className="text-xs text-blue-600 font-semibold uppercase">Cost Basis (Optional)</label>
-                <input
-                  type="number"
-                  placeholder="250000000"
-                  value={formData.costBasis}
-                  onChange={(e) => setFormData({...formData, costBasis: e.target.value})}
-                  className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-                <div className="text-xs text-blue-600 mt-1">Tổng số tiền đã đầu tư</div>
-              </div>
-            </div>
-          )}
-
-          {/* Transaction-based Note */}
-          {!isMarketValue && (
-            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200">
-              <div className="flex items-center gap-2 text-emerald-700">
-                <span className="text-lg">ℹ️</span>
-                <span className="text-xs font-medium">
-                  Balance sẽ được tính tự động từ transactions
-                </span>
+                <div className="text-xs text-emerald-600 mt-1">
+                  Enter your current account balance. Leave as 0 if starting fresh.
+                </div>
               </div>
             </div>
           )}

@@ -13,6 +13,12 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+// Hook tiện lợi để lấy userId
+export function useUserId() {
+  const { currentUser } = useAuth();
+  return currentUser?.uid || null;
+}
+
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);

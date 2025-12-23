@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot, orderBy, limit, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import AddTransactionModal from './AddTransactionModal';
 
 const TransactionsTab = () => {
+  const userId = useUserId();
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -25,10 +27,11 @@ const TransactionsTab = () => {
   const [successMessage, setSuccessMessage] = useState(null);
 
   useEffect(() => {
+    if (!userId) return;
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         orderBy('date', 'desc'),
         limit(200)
       );
@@ -51,27 +54,29 @@ const TransactionsTab = () => {
       setError("Query error: " + err.message);
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
+    if (!userId) return;
     const q = query(
       collection(db, 'accounts'),
-      where('userId', '==', 'test-user'),
+      where('userId', '==', userId),
       where('isActive', '==', true)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setAccounts(snapshot.docs.map(doc => doc.data().name).filter(Boolean));
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
-    const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+    if (!userId) return;
+    const q = query(collection(db, 'categories'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setCategories(snapshot.docs.map(doc => doc.data().name).filter(Boolean));
     });
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {

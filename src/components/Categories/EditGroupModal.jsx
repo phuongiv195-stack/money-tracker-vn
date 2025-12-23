@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,7 +22,7 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
 
   const handleRename = async () => {
     if (!newName.trim()) {
-      alert("Vui lòng nhập tên group!");
+      toast.error("Please enter group name!");
       return;
     }
 
@@ -32,7 +36,7 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
       // Tìm tất cả categories trong group này
       const q = query(
         collection(db, 'categories'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('group', '==', groupName),
         where('type', '==', groupType)
       );
@@ -47,21 +51,26 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
       if (onSave) onSave();
       onClose();
     } catch (error) {
-      alert("Lỗi khi đổi tên: " + error.message);
+      toast.error("Error renaming: " + error.message);
     }
     setLoading(false);
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`Xóa group "${groupName}" và TẤT CẢ categories bên trong?`)) {
-      return;
-    }
+    const confirmed = await toast.confirm({
+      title: 'Delete Group',
+      message: `Delete "${groupName}" and ALL categories inside?`,
+      confirmText: 'Delete All',
+      type: 'danger'
+    });
+    
+    if (!confirmed) return;
 
     setLoading(true);
     try {
       const q = query(
         collection(db, 'categories'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('group', '==', groupName),
         where('type', '==', groupType)
       );
@@ -76,7 +85,7 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
       if (onSave) onSave();
       onClose();
     } catch (error) {
-      alert("Lỗi khi xóa: " + error.message);
+      toast.error("Error deleting: " + error.message);
     }
     setLoading(false);
   };

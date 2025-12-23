@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null }) => {
+  const toast = useToast();
+  const userId = useUserId();
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -21,7 +25,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     fromAccount: '',
     toAccount: '',
     date: new Date().toISOString().split('T')[0],
-    memo: ''
+    memo: '',
+    spendingType: 'need' // default, will be set from category
   });
 
   const [splits, setSplits] = useState([
@@ -31,31 +36,49 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const [accounts, setAccounts] = useState([]);
   const [loans, setLoans] = useState([]);
   const [payeeSuggestions, setPayeeSuggestions] = useState([]);
+  const [payeeToCategoryMap, setPayeeToCategoryMap] = useState({});
   const [categorySuggestions, setCategorySuggestions] = useState([]);
   const [showPayeeList, setShowPayeeList] = useState(false);
   const [showCategoryList, setShowCategoryList] = useState(false);
   const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Real-time accounts listener - EXCLUDE loan type accounts
+  // Real-time accounts listener - EXCLUDE loan type accounts, SORTED by group then order
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !userId) return;
     
     const q = query(
       collection(db, 'accounts'),
-      where('userId', '==', 'test-user'),
+      where('userId', '==', userId),
       where('isActive', '==', true)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const loanTypes = ['loan'];
+      
+      // Define group order priority
+      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
+      
       const accs = snapshot.docs
-        .map(d => ({ name: d.data().name, type: d.data().type }))
+        .map(d => ({ 
+          name: d.data().name, 
+          type: d.data().type, 
+          group: d.data().group,
+          order: d.data().order ?? 999 
+        }))
         .filter(a => a.name && !loanTypes.includes(a.type))
+        // Sort by group first, then by order within group
+        .sort((a, b) => {
+          const groupA = groupOrder[a.group] ?? 99;
+          const groupB = groupOrder[b.group] ?? 99;
+          if (groupA !== groupB) return groupA - groupB;
+          return a.order - b.order;
+        })
         .map(a => a.name);
       
       setAccounts(accs);
       
-      if (accs.length > 0 && !formData.account) {
+      // Only set default account if no account is selected AND no prefilledAccount
+      if (accs.length > 0 && !formData.account && !prefilledAccount) {
         setFormData(prev => ({
           ...prev,
           account: accs[0],
@@ -66,7 +89,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     });
     
     return () => unsubscribe();
-  }, [isOpen]);
+  }, [isOpen, prefilledAccount]);
 
   useEffect(() => {
     if (isOpen) {
@@ -87,7 +110,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             fromAccount: '',
             toAccount: '',
             date: editTransaction.date || new Date().toISOString().split('T')[0],
-            memo: ''
+            memo: '',
+            spendingType: 'need'
           });
           setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
         } else {
@@ -101,7 +125,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             fromAccount: editTransaction.fromAccount || '',
             toAccount: editTransaction.toAccount || '',
             date: editTransaction.date || new Date().toISOString().split('T')[0],
-            memo: editTransaction.memo || ''
+            memo: editTransaction.memo || '',
+            spendingType: editTransaction.spendingType || 'need'
           });
           setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
         }
@@ -109,8 +134,16 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         setIsSplitMode(false);
         setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
         
-        // Apply prefilled values
-        const newFormData = {
+        // Set active tab FIRST based on prefilled category type
+        // This ensures the category filter works correctly
+        if (prefilledCategory?.type) {
+          setActiveTab(prefilledCategory.type);
+        } else {
+          setActiveTab('expense');
+        }
+        
+        // Apply prefilled values - only override fields that have prefilled values
+        setFormData({
           amount: '',
           payee: '',
           category: prefilledCategory?.name || '',
@@ -118,27 +151,21 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           fromAccount: prefilledAccount || '',
           toAccount: '',
           date: new Date().toISOString().split('T')[0],
-          memo: ''
-        };
-        setFormData(prev => ({ ...prev, ...newFormData }));
+          memo: '',
+          spendingType: prefilledCategory?.spendingType || 'need'
+        });
         setDisplayAmount('');
-        
-        // Set active tab based on prefilled category type
-        if (prefilledCategory?.type) {
-          setActiveTab(prefilledCategory.type);
-        } else {
-          setActiveTab('expense');
-        }
       }
       setDateInputType('text');
     }
   }, [isOpen, editTransaction, prefilledAccount, prefilledCategory]);
 
   const loadLoans = async () => {
+    if (!userId) return;
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('type', '==', 'loan')
       );
       const snapshot = await getDocs(q);
@@ -150,14 +177,26 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   };
 
   const loadPayees = async () => {
+    if (!userId) return;
     try {
       const q = query(
         collection(db, 'transactions'),
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         orderBy('date', 'desc'),
-        limit(50)
+        limit(100)
       );
       const snapshot = await getDocs(q);
+      
+      // Build payee -> category mapping (most recent category for each payee)
+      const payeeCategoryMap = {};
+      snapshot.docs.forEach(d => {
+        const data = d.data();
+        if (data.payee && data.category && !payeeCategoryMap[data.payee]) {
+          payeeCategoryMap[data.payee] = data.category;
+        }
+      });
+      setPayeeToCategoryMap(payeeCategoryMap);
+      
       const payees = [...new Set(snapshot.docs.map(d => d.data().payee).filter(Boolean))];
       setPayeeSuggestions(payees);
     } catch (e) {
@@ -166,8 +205,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   };
 
   const loadCategories = async () => {
+    if (!userId) return;
     try {
-      const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+      const q = query(collection(db, 'categories'), where('userId', '==', userId));
       const snapshot = await getDocs(q);
       setCategorySuggestions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (e) {
@@ -239,6 +279,17 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     }
   };
 
+  // Handle category selection - also sets default spendingType from category
+  const handleCategorySelect = (categoryName) => {
+    const selectedCategory = categorySuggestions.find(c => c.name === categoryName);
+    setFormData({
+      ...formData, 
+      category: categoryName,
+      spendingType: selectedCategory?.spendingType || formData.spendingType
+    });
+    setShowCategoryList(false);
+  };
+
   const enableSplitMode = () => {
     setIsSplitMode(true);
     setSplits([
@@ -263,7 +314,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
   const handleSubmit = async () => {
     if (!formData.amount) {
-      alert("Please enter amount!");
+      toast.error("Please enter amount!");
       return;
     }
 
@@ -274,22 +325,22 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       for (let i = 0; i < newSplits.length; i++) {
         const s = newSplits[i];
         if (Number(s.amount) <= 0) {
-          alert(`Split #${i + 1}: Invalid amount`);
+          toast.error(`Split #${i + 1}: Invalid amount`);
           return;
         }
         if (s.isLoan && !s.loan) {
-          alert(`Split #${i + 1}: Please select loan`);
+          toast.error(`Split #${i + 1}: Please select loan`);
           return;
         }
         if (!s.isLoan && !s.category) {
-          alert(`Split #${i + 1}: Please select category`);
+          toast.error(`Split #${i + 1}: Please select category`);
           return;
         }
       }
       setSplits(newSplits);
     } else {
       if (activeTab !== 'transfer' && !formData.category) {
-        alert("Please select category!");
+        toast.error("Please select category!");
         return;
       }
     }
@@ -307,7 +358,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         }));
         
         const transactionData = {
-          userId: 'test-user',
+          userId: userId,
           type: 'split',
           splitType: activeTab,
           totalAmount: activeTab === 'expense' ? -Math.abs(totalAmount) : Math.abs(totalAmount),
@@ -330,7 +381,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         let finalAmount = Number(formData.amount);
 
         const transactionData = {
-          userId: 'test-user',
+          userId: userId,
           type: activeTab,
           amount: finalAmount,
           date: formData.date,
@@ -351,6 +402,11 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           transactionData.payee = formData.payee;
           transactionData.category = formData.category;
           transactionData.account = formData.account;
+          
+          // Save spendingType only for expense transactions
+          if (activeTab === 'expense') {
+            transactionData.spendingType = formData.spendingType;
+          }
         }
 
         if (editTransaction) {
@@ -364,7 +420,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       onClose();
     } catch (error) {
       console.error("Error saving transaction:", error);
-      alert("Error: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };
@@ -372,13 +428,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const handleDelete = async () => {
     if (!editTransaction) return;
     
-    if (window.confirm(`Delete this transaction?`)) {
+    const confirmed = await toast.confirm({
+      title: 'Delete Transaction',
+      message: 'Delete this transaction?',
+      confirmText: 'Delete',
+      type: 'danger'
+    });
+    
+    if (confirmed) {
       try {
         await deleteDoc(doc(db, 'transactions', editTransaction.id));
         if (onSave) onSave();
         onClose();
       } catch (error) {
-        alert("Error: " + error.message);
+        toast.error("Error: " + error.message);
       }
     }
   };
@@ -402,7 +465,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 sm:flex sm:items-center sm:justify-center">
       {/* Full screen on mobile, centered card on desktop */}
       <div className="bg-white w-full h-full sm:w-[450px] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
         
@@ -509,11 +572,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                         key={idx} 
                         className="p-2 hover:bg-gray-100 cursor-pointer text-sm"
                         onClick={() => {
-                          setFormData({...formData, payee});
+                          // Auto-fill category if payee has been used before
+                          const autoCategory = payeeToCategoryMap[payee];
+                          if (autoCategory && !formData.category) {
+                            setFormData({...formData, payee, category: autoCategory});
+                          } else {
+                            setFormData({...formData, payee});
+                          }
                           setShowPayeeList(false);
                         }}
                       >
                         {payee}
+                        {payeeToCategoryMap[payee] && (
+                          <span className="text-xs text-gray-400 ml-2">→ {payeeToCategoryMap[payee]}</span>
+                        )}
                       </div>
                     ))}
                 </div>
@@ -684,10 +756,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                       <div 
                         key={cat.id} 
                         className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
-                        onClick={() => {
-                          setFormData({...formData, category: cat.name});
-                          setShowCategoryList(false);
-                        }}
+                        onClick={() => handleCategorySelect(cat.name)}
                       >
                         <span className="text-xl">{cat.icon}</span>
                         <span>{cat.name}</span>
@@ -696,6 +765,52 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                     ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Want/Need Toggle - Only for Expense in non-split mode */}
+          {!isSplitMode && activeTab === 'expense' && formData.category && (
+            <div>
+              <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Spending Type</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFormData({...formData, spendingType: 'need'})}
+                  className={`flex-1 py-2.5 rounded-lg font-medium transition-all ${
+                    formData.spendingType === 'need'
+                      ? 'bg-blue-100 text-blue-700 border-2 border-blue-400'
+                      : 'bg-gray-50 text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  <span className="mr-1">🎯</span> Need
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({...formData, spendingType: 'want'})}
+                  className={`flex-1 py-2.5 rounded-lg font-medium transition-all ${
+                    formData.spendingType === 'want'
+                      ? 'bg-purple-100 text-purple-700 border-2 border-purple-400'
+                      : 'bg-gray-50 text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  <span className="mr-1">✨</span> Want
+                </button>
+              </div>
+              {/* Show default from category hint */}
+              {(() => {
+                const selectedCat = categorySuggestions.find(c => c.name === formData.category);
+                const defaultType = selectedCat?.spendingType || 'need';
+                const isOverridden = formData.spendingType !== defaultType;
+                return (
+                  <div className="text-xs text-gray-400 mt-1.5 text-center">
+                    {isOverridden ? (
+                      <><span className={formData.spendingType === 'want' ? 'text-purple-600' : 'text-blue-600'}>Overridden</span> • Category default: {defaultType === 'need' ? '🎯 Need' : '✨ Want'}</>
+                    ) : (
+                      <>Default from category: <span className={defaultType === 'need' ? 'text-blue-600' : 'text-purple-600'}>{defaultType === 'need' ? '🎯 Need' : '✨ Want'}</span></>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

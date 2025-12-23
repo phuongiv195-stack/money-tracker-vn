@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [loanType, setLoanType] = useState('borrow');
   const [loading, setLoading] = useState(false);
@@ -56,13 +60,29 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
     try {
       const q = query(
         collection(db, 'accounts'), 
-        where('userId', '==', 'test-user'),
+        where('userId', '==', userId),
         where('isActive', '==', true)
       );
       const snapshot = await getDocs(q);
+      
+      // Define group order priority
+      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
+      
       const accs = snapshot.docs
-        .map(d => d.data().name)
-        .filter(name => name);
+        .map(d => ({ 
+          name: d.data().name, 
+          group: d.data().group,
+          order: d.data().order ?? 999 
+        }))
+        .filter(a => a.name)
+        .sort((a, b) => {
+          const groupA = groupOrder[a.group] ?? 99;
+          const groupB = groupOrder[b.group] ?? 99;
+          if (groupA !== groupB) return groupA - groupB;
+          return a.order - b.order;
+        })
+        .map(a => a.name);
+        
       setAccounts(accs);
       // Set default account
       if (accs.length > 0) {
@@ -93,15 +113,15 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
 
   const handleSubmit = async () => {
     if (!formData.amount) {
-      alert("Please enter amount!");
+      toast.error("Please enter amount!");
       return;
     }
     if (!formData.loanName.trim()) {
-      alert("Please enter name!");
+      toast.error("Please enter name!");
       return;
     }
     if (!formData.account) {
-      alert("Please select account!");
+      toast.error("Please select account!");
       return;
     }
 
@@ -115,7 +135,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
       const finalAmount = loanType === 'borrow' ? amt : -amt;
 
       const transactionData = {
-        userId: 'test-user',
+        userId: userId,
         type: 'loan',
         loanType: loanType,
         amount: finalAmount,
@@ -132,7 +152,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
       onClose();
     } catch (error) {
       console.error("Error saving loan:", error);
-      alert("Error: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };

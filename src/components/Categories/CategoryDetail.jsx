@@ -22,7 +22,11 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
 
   // Handler để mở Add Transaction với category prefilled
   const handleAddTransaction = () => {
-    setPrefilledCategory({ name: category.name, type: category.type });
+    setPrefilledCategory({ 
+      name: category.name, 
+      type: category.type,
+      spendingType: category.spendingType || 'need'
+    });
     setEditingTransaction(null);
     setIsModalOpen(true);
   };

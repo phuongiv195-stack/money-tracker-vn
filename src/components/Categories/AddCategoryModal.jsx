@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import { useToast } from '../Toast/ToastProvider';
 
 const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', editCategory = null }) => {
   useBackHandler(isOpen, onClose);
+  const toast = useToast();
+  const userId = useUserId();
   
   const [formData, setFormData] = useState({
     name: '',
     icon: '📦',
     type: defaultType,
-    group: ''
+    group: '',
+    spendingType: 'need' // default spending type for expense categories
   });
   const [loading, setLoading] = useState(false);
   const [existingGroups, setExistingGroups] = useState([]);
@@ -29,14 +34,16 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
           name: editCategory.name,
           icon: editCategory.icon,
           type: editCategory.type,
-          group: editCategory.group || ''
+          group: editCategory.group || '',
+          spendingType: editCategory.spendingType || 'need'
         });
       } else {
         setFormData({
           name: '',
           icon: '📦',
           type: defaultType,
-          group: ''
+          group: '',
+          spendingType: 'need'
         });
       }
     }
@@ -44,7 +51,7 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
 
   const loadGroups = async () => {
     try {
-      const q = query(collection(db, 'categories'), where('userId', '==', 'test-user'));
+      const q = query(collection(db, 'categories'), where('userId', '==', userId));
       const snapshot = await getDocs(q);
       const groups = [...new Set(snapshot.docs.map(d => d.data().group).filter(Boolean))];
       setExistingGroups(groups);
@@ -59,28 +66,34 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
-      alert("Vui lòng nhập tên category!");
+      toast.error("Please enter category name!");
       return;
     }
     if (!formData.group.trim()) {
-      alert("Vui lòng nhập Group!");
+      toast.error("Please enter Group!");
       return;
     }
 
     setLoading(true);
     try {
       const categoryData = {
-        userId: 'test-user',
+        userId: userId,
         name: formData.name.trim(),
         icon: formData.icon,
         type: formData.type,
         group: formData.group.trim(),
-        createdAt: editCategory ? editCategory.createdAt : new Date()
+        spendingType: formData.type === 'expense' ? formData.spendingType : null
       };
 
+      // Only set createdAt for new categories, or if editing and it exists
       if (editCategory) {
+        // Keep existing createdAt if it exists, otherwise set new one
+        if (editCategory.createdAt) {
+          categoryData.createdAt = editCategory.createdAt;
+        }
         await updateDoc(doc(db, 'categories', editCategory.id), categoryData);
       } else {
+        categoryData.createdAt = new Date();
         await addDoc(collection(db, 'categories'), categoryData);
       }
 
@@ -91,11 +104,12 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
         name: '',
         icon: '📦',
         type: defaultType,
-        group: ''
+        group: '',
+        spendingType: 'need'
       });
     } catch (error) {
       console.error("Error saving category:", error);
-      alert("Lỗi khi lưu: " + error.message);
+      toast.error("Error saving: " + error.message);
     }
     setLoading(false);
   };
@@ -103,13 +117,20 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
   const handleDelete = async () => {
     if (!editCategory) return;
     
-    if (window.confirm(`Xóa category "${editCategory.name}"?`)) {
+    const confirmed = await toast.confirm({
+      title: 'Delete Category',
+      message: `Delete "${editCategory.name}"?`,
+      confirmText: 'Delete',
+      type: 'danger'
+    });
+    
+    if (confirmed) {
       try {
         await deleteDoc(doc(db, 'categories', editCategory.id));
         if (onSave) onSave();
         onClose();
       } catch (error) {
-        alert("Lỗi khi xóa: " + error.message);
+        toast.error("Error deleting: " + error.message);
       }
     }
   };
@@ -119,8 +140,8 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
   const currentIcons = formData.type === 'expense' ? expenseIcons : incomeIcons;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:w-[450px] sm:rounded-xl flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 sm:flex sm:items-center sm:justify-center">
+      <div className="bg-white w-full h-full sm:w-[450px] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
         
         <div className="flex justify-between items-center p-4 border-b">
           <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
@@ -189,6 +210,35 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
           {/* Icon Picker */}
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Icon</label>
+            
+            {/* Custom Icon Input */}
+            <div className="flex gap-2 mb-3">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  placeholder="Type or paste emoji..."
+                  value={formData.icon}
+                  onChange={(e) => {
+                    // Get the last character/emoji entered
+                    const value = e.target.value;
+                    // Take only the last emoji (handles paste of multiple)
+                    const emojis = [...value];
+                    const lastEmoji = emojis[emojis.length - 1] || '📦';
+                    setFormData({...formData, icon: lastEmoji});
+                  }}
+                  className="w-full p-3 bg-gray-50 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-center text-2xl"
+                />
+              </div>
+              <div className={`w-14 h-14 flex items-center justify-center text-3xl rounded-lg ${
+                formData.icon ? 'bg-emerald-100 ring-2 ring-emerald-500' : 'bg-gray-100'
+              }`}>
+                {formData.icon || '📦'}
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-400 text-center mb-2">Or choose from presets:</div>
+            
+            {/* Preset Icons Grid */}
             <div className="grid grid-cols-9 gap-2">
               {currentIcons.map(icon => (
                 <button
@@ -205,6 +255,43 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
               ))}
             </div>
           </div>
+
+          {/* Want/Need Toggle - Only for Expense categories */}
+          {formData.type === 'expense' && (
+            <div>
+              <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Default Spending Type</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setFormData({...formData, spendingType: 'need'})}
+                  className={`flex-1 py-3 rounded-lg font-medium transition-all ${
+                    formData.spendingType === 'need'
+                      ? 'bg-blue-100 text-blue-700 border-2 border-blue-400'
+                      : 'bg-gray-50 text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <span>🎯</span>
+                    <span>Need</span>
+                  </div>
+                  <div className="text-xs opacity-70 mt-0.5">Essential</div>
+                </button>
+                <button
+                  onClick={() => setFormData({...formData, spendingType: 'want'})}
+                  className={`flex-1 py-3 rounded-lg font-medium transition-all ${
+                    formData.spendingType === 'want'
+                      ? 'bg-purple-100 text-purple-700 border-2 border-purple-400'
+                      : 'bg-gray-50 text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <span>✨</span>
+                    <span>Want</span>
+                  </div>
+                  <div className="text-xs opacity-70 mt-0.5">Optional</div>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Group - Autocomplete */}
           <div className="relative">
