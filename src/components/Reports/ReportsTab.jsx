@@ -203,20 +203,23 @@ const ReportsTab = () => {
     const { categoryData, expense } = currentMonthSummary;
     if (expense === 0) return <div className="w-24 h-24 rounded-full bg-emerald-100 flex items-center justify-center"></div>;
 
-    let cumulativePercent = 0;
     const chartData = categoryData.slice(0, 5);
     const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / expense) * 100 });
     }
 
+    // Circle circumference: 2 * PI * r = 2 * 3.14159 * 40 ≈ 251.3
+    const circumference = 2 * Math.PI * 40;
+    let cumulativeOffset = 0;
+
     return (
       <div className="relative w-24 h-24">
         <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
           {chartData.map((item, index) => {
-            const strokeDasharray = `${item.percent} ${100 - item.percent}`;
-            const strokeDashoffset = -cumulativePercent;
-            cumulativePercent += item.percent;
+            const segmentLength = (item.percent / 100) * circumference;
+            const offset = cumulativeOffset;
+            cumulativeOffset += segmentLength;
             return (
               <circle
                 key={index}
@@ -224,8 +227,8 @@ const ReportsTab = () => {
                 fill="transparent"
                 stroke={COLORS[index % COLORS.length]}
                 strokeWidth="20"
-                strokeDasharray={strokeDasharray}
-                strokeDashoffset={strokeDashoffset}
+                strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                strokeDashoffset={-offset}
               />
             );
           })}
@@ -287,21 +290,30 @@ const ReportsTab = () => {
 
     if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10 text-center">No data</div>;
 
-    let cumulativePercent = 0;
     const chartData = categoryData.slice(0, 5);
     const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalExpense) * 100 });
     }
 
+    // Circle circumference: 2 * PI * r = 2 * 3.14159 * 40 ≈ 251.3
+    const circumference = 2 * Math.PI * 40;
+    let cumulativeOffset = 0;
+
     return (
       <>
-        <div className="relative w-48 h-48 mx-auto my-4">
+        {/* Total - outside chart */}
+        <div className="text-center mb-2">
+          <span className="text-sm text-gray-500">Total Spending</span>
+          <div className="text-xl font-bold text-red-600">-{formatCurrency(totalExpense)}</div>
+        </div>
+
+        <div className="relative w-48 h-48 mx-auto">
           <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
             {chartData.map((item, index) => {
-              const strokeDasharray = `${item.percent} ${100 - item.percent}`;
-              const strokeDashoffset = -cumulativePercent;
-              cumulativePercent += item.percent;
+              const segmentLength = (item.percent / 100) * circumference;
+              const offset = cumulativeOffset;
+              cumulativeOffset += segmentLength;
               return (
                 <circle
                   key={index}
@@ -309,21 +321,17 @@ const ReportsTab = () => {
                   fill="transparent"
                   stroke={COLORS[index % COLORS.length]}
                   strokeWidth="20"
-                  strokeDasharray={strokeDasharray}
-                  strokeDashoffset={strokeDashoffset}
+                  strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                  strokeDashoffset={-offset}
                 />
               );
             })}
           </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-xs text-gray-500">Total</span>
-            <span className="text-sm font-bold text-gray-800">-{formatCurrencyCompact(totalExpense)}</span>
-          </div>
         </div>
         
-        {/* Legend */}
+        {/* Legend - use chartData to match pie segments */}
         <div className="space-y-2 mt-4">
-          {categoryData.map((item, index) => (
+          {chartData.map((item, index) => (
             <div key={item.name} className="flex items-center justify-between text-sm">
               <div className="flex items-center gap-2 flex-1">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>

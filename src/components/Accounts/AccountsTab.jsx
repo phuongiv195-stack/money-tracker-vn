@@ -39,6 +39,7 @@ const AccountsTab = () => {
         // Tính: startingBalance + tất cả transactions (bao gồm unrealized_gain)
         const accTransactions = transactions.filter(t => {
           if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
+          if (t.type === 'split') return t.account === acc.name;
           return t.account === acc.name;
         });
         
@@ -48,7 +49,11 @@ const AccountsTab = () => {
         balance = startingBalance;
         accTransactions.forEach(t => {
           if (t.type === 'transfer') {
-            balance += t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
+            const amt = Math.abs(Number(t.amount) || 0);
+            balance += t.fromAccount === acc.name ? -amt : amt;
+          } else if (t.type === 'split') {
+            // Split transactions use totalAmount
+            balance += Number(t.totalAmount) || 0;
           } else {
             // Bao gồm unrealized_gain, expense, income...
             balance += Number(t.amount) || 0;

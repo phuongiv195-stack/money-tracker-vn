@@ -81,7 +81,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     accountTransactions.forEach(t => {
       let amt = 0;
       if (t.type === 'transfer') {
-        amt = t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
+        const transferAmt = Math.abs(Number(t.amount) || 0);
+        amt = t.fromAccount === account.name ? -transferAmt : transferAmt;
       } else if (t.type === 'split') {
         amt = Number(t.totalAmount) || 0;
       } else {
@@ -106,7 +107,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     let currentVal = startingBalance;
     accountTransactions.forEach(t => {
       if (t.type === 'transfer') {
-        currentVal += t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
+        const transferAmt = Math.abs(Number(t.amount) || 0);
+        currentVal += t.fromAccount === account.name ? -transferAmt : transferAmt;
       } else if (t.type === 'split') {
         currentVal += Number(t.totalAmount) || 0;
       } else {

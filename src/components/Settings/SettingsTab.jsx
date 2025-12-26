@@ -7,7 +7,6 @@ export default function SettingsTab() {
   const { currentUser, logout } = useAuth();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Track online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -51,7 +50,6 @@ export default function SettingsTab() {
           </button>
           <h1 className="text-lg font-semibold">Settings</h1>
         </div>
-        {/* Online/Offline indicator */}
         <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
           isOnline ? 'bg-emerald-600' : 'bg-orange-500'
         }`}>
@@ -142,7 +140,7 @@ export default function SettingsTab() {
 
         {/* Info */}
         <p className="text-center text-gray-400 text-sm mt-6">
-          Money Tracker v1.2.4
+          Money Tracker v1.2.5
         </p>
       </div>
     </div>

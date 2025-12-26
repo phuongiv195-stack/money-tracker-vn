@@ -339,7 +339,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         onClose={() => setIsAddTransactionOpen(false)}
         onSave={() => {
           setIsAddTransactionOpen(false);
-          onClose(); // Close LoanDetail to refresh data
+          // Data will auto-refresh via Firebase listener, no need to close LoanDetail
         }}
         loan={loan}
       />
@@ -350,7 +350,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         onClose={() => setEditingTransaction(null)}
         onSave={() => {
           setEditingTransaction(null);
-          onClose(); // Close LoanDetail to refresh data
+          // Data will auto-refresh via Firebase listener, no need to close LoanDetail
         }}
         transaction={editingTransaction}
         loan={loan}

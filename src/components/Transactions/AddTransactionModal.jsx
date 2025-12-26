@@ -61,88 +61,111 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const [showCategoryList, setShowCategoryList] = useState(false);
   const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Set default accounts when accounts change or modal opens
+  // Initialize form when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    if (editTransaction) {
+      // Editing existing transaction
+      if (editTransaction.type === 'split') {
+        setIsSplitMode(true);
+        setActiveTab(editTransaction.splitType || 'expense');
+        setSplits(editTransaction.splits || []);
+        setFormData({
+          amount: Math.abs(editTransaction.totalAmount).toString(),
+          payee: editTransaction.payee || '',
+          category: '',
+          account: editTransaction.account || (accounts.length > 0 ? accounts[0] : ''),
+          fromAccount: '',
+          toAccount: '',
+          date: editTransaction.date || getLocalToday(),
+          memo: '',
+          spendingType: 'need'
+        });
+        setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
+      } else {
+        setIsSplitMode(false);
+        setActiveTab(editTransaction.type);
+        setFormData({
+          amount: Math.abs(editTransaction.amount).toString(),
+          payee: editTransaction.payee || '',
+          category: editTransaction.category || '',
+          account: editTransaction.account || (accounts.length > 0 ? accounts[0] : ''),
+          fromAccount: editTransaction.fromAccount || (accounts.length > 0 ? accounts[0] : ''),
+          toAccount: editTransaction.toAccount || (accounts.length > 1 ? accounts[1] : accounts[0] || ''),
+          date: editTransaction.date || getLocalToday(),
+          memo: editTransaction.memo || '',
+          spendingType: editTransaction.spendingType || 'need'
+        });
+        setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
+      }
+    } else {
+      // New transaction
+      setIsSplitMode(false);
+      setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
+      
+      if (prefilledCategory?.type) {
+        setActiveTab(prefilledCategory.type);
+      } else {
+        setActiveTab('expense');
+      }
+      
+      // Determine default account
+      let defaultAccount = '';
+      if (prefilledAccount && accounts.includes(prefilledAccount)) {
+        defaultAccount = prefilledAccount;
+      } else if (accounts.length > 0) {
+        defaultAccount = accounts[0];
+      }
+      
+      // Determine toAccount for transfers
+      let defaultToAccount = '';
+      if (accounts.length > 1) {
+        defaultToAccount = accounts.filter(a => a !== defaultAccount)[0] || accounts[0];
+      } else if (accounts.length === 1) {
+        defaultToAccount = accounts[0];
+      }
+      
+      setFormData({
+        amount: '',
+        payee: '',
+        category: prefilledCategory?.name || '',
+        account: defaultAccount,
+        fromAccount: defaultAccount,
+        toAccount: defaultToAccount,
+        date: getLocalToday(),
+        memo: '',
+        spendingType: prefilledCategory?.spendingType || 'need'
+      });
+      setDisplayAmount('');
+    }
+  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory, accounts]);
+
+  // Update account when accounts load (if current account is empty/invalid)
   useEffect(() => {
     if (!isOpen || accounts.length === 0) return;
     
-    if (!prefilledAccount) {
-      if (!formData.account) {
-        setFormData(prev => ({
-          ...prev,
-          account: accounts[0],
-          fromAccount: accounts[0],
-          toAccount: accounts[1] || accounts[0]
-        }));
+    setFormData(prev => {
+      const needsUpdate = !prev.account || !accounts.includes(prev.account);
+      const needsFromUpdate = !prev.fromAccount || !accounts.includes(prev.fromAccount);
+      const needsToUpdate = !prev.toAccount || !accounts.includes(prev.toAccount);
+      
+      if (!needsUpdate && !needsFromUpdate && !needsToUpdate) {
+        return prev; // No changes needed
       }
-    } else {
-      const otherAccounts = accounts.filter(a => a !== prefilledAccount);
-      setFormData(prev => ({
+      
+      const newAccount = needsUpdate ? (prefilledAccount && accounts.includes(prefilledAccount) ? prefilledAccount : accounts[0]) : prev.account;
+      const newFromAccount = needsFromUpdate ? newAccount : prev.fromAccount;
+      const newToAccount = needsToUpdate ? (accounts.filter(a => a !== newFromAccount)[0] || accounts[0]) : prev.toAccount;
+      
+      return {
         ...prev,
-        toAccount: prev.toAccount || otherAccounts[0] || accounts[0]
-      }));
-    }
+        account: newAccount,
+        fromAccount: newFromAccount,
+        toAccount: newToAccount
+      };
+    });
   }, [isOpen, accounts, prefilledAccount]);
-
-  useEffect(() => {
-    if (isOpen) {
-      if (editTransaction) {
-        if (editTransaction.type === 'split') {
-          setIsSplitMode(true);
-          setActiveTab(editTransaction.splitType || 'expense');
-          setSplits(editTransaction.splits || []);
-          setFormData({
-            amount: Math.abs(editTransaction.totalAmount).toString(),
-            payee: editTransaction.payee || '',
-            category: '',
-            account: editTransaction.account || '',
-            fromAccount: '',
-            toAccount: '',
-            date: editTransaction.date || getLocalToday(),
-            memo: '',
-            spendingType: 'need'
-          });
-          setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
-        } else {
-          setIsSplitMode(false);
-          setActiveTab(editTransaction.type);
-          setFormData({
-            amount: Math.abs(editTransaction.amount).toString(),
-            payee: editTransaction.payee || '',
-            category: editTransaction.category || '',
-            account: editTransaction.account || '',
-            fromAccount: editTransaction.fromAccount || '',
-            toAccount: editTransaction.toAccount || '',
-            date: editTransaction.date || getLocalToday(),
-            memo: editTransaction.memo || '',
-            spendingType: editTransaction.spendingType || 'need'
-          });
-          setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
-        }
-      } else {
-        setIsSplitMode(false);
-        setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-        
-        if (prefilledCategory?.type) {
-          setActiveTab(prefilledCategory.type);
-        } else {
-          setActiveTab('expense');
-        }
-        
-        setFormData({
-          amount: '',
-          payee: '',
-          category: prefilledCategory?.name || '',
-          account: prefilledAccount || '',
-          fromAccount: prefilledAccount || '',
-          toAccount: '',
-          date: getLocalToday(),
-          memo: '',
-          spendingType: prefilledCategory?.spendingType || 'need'
-        });
-        setDisplayAmount('');
-      }
-    }
-  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory]);
 
   const formatDateForDisplay = (isoDate) => {
     if (!isoDate) return '';
@@ -259,6 +282,19 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       }
       if (formData.fromAccount === formData.toAccount) {
         toast.error("From and To accounts must be different!");
+        return;
+      }
+    } else {
+      // Validate account for non-transfer transactions
+      // Account dropdown only shows valid accounts, so just check if selected
+      if (!formData.account) {
+        // Try to use first account if available
+        if (accounts.length > 0) {
+          setFormData(prev => ({ ...prev, account: accounts[0] }));
+          toast.error("Please select account!");
+        } else {
+          toast.error("No accounts available. Please create an account first!");
+        }
         return;
       }
     }
@@ -798,16 +834,22 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
             <div className="relative mt-1">
+              {/* Hidden native date input */}
               <input 
                 type="date" 
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                className="absolute inset-0 opacity-0 cursor-pointer z-10"
                 value={formData.date}
                 onChange={(e) => setFormData({...formData, date: e.target.value})}
               />
-              <div className="w-full p-3 bg-gray-50 rounded-lg flex items-center justify-between">
-                <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
-                <span className="text-gray-400">📅</span>
+              {/* Display formatted date */}
+              <div className="w-full p-3 pr-10 bg-gray-50 rounded-lg text-gray-800 cursor-pointer">
+                {formData.date ? new Date(formData.date + 'T00:00:00').toLocaleDateString('en-GB', { 
+                  day: 'numeric', 
+                  month: 'short', 
+                  year: 'numeric' 
+                }) : 'Select date'}
               </div>
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">📅</span>
             </div>
           </div>
 

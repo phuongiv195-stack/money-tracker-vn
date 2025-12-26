@@ -5,9 +5,8 @@ import { useUserId } from './AuthContext';
 
 const DataContext = createContext(null);
 
-// Configuration
-const TRANSACTIONS_LIMIT = 500; // Increased for better coverage
-const TRANSACTIONS_INITIAL_LIMIT = 100; // Initial load for faster first paint
+// Configuration - reduced for faster loading
+const TRANSACTIONS_LIMIT = 200;
 
 export const DataProvider = ({ children }) => {
   const userId = useUserId();
@@ -38,7 +37,7 @@ export const DataProvider = ({ children }) => {
   // FIREBASE LISTENERS - Single source of truth
   // ============================================
 
-  // Transactions listener
+  // Transactions listener - simplified query for speed
   useEffect(() => {
     if (!userId) {
       setTransactions([]);
@@ -49,10 +48,10 @@ export const DataProvider = ({ children }) => {
     setLoading(prev => ({ ...prev, transactions: true }));
     setErrors(prev => ({ ...prev, transactions: null }));
 
+    // Simple query without orderBy (faster, no index needed)
     const q = query(
       collection(db, 'transactions'),
       where('userId', '==', userId),
-      orderBy('date', 'desc'),
       limit(TRANSACTIONS_LIMIT)
     );
 
@@ -63,6 +62,15 @@ export const DataProvider = ({ children }) => {
           id: doc.id,
           ...doc.data()
         }));
+        // Sort by date (desc), then by createdAt (desc) for same-day transactions
+        trans.sort((a, b) => {
+          const dateCompare = (b.date || '').localeCompare(a.date || '');
+          if (dateCompare !== 0) return dateCompare;
+          // Same date - sort by createdAt (newest first)
+          const aTime = a.createdAt?.toMillis?.() || a.createdAt?.getTime?.() || 0;
+          const bTime = b.createdAt?.toMillis?.() || b.createdAt?.getTime?.() || 0;
+          return bTime - aTime;
+        });
         setTransactions(trans);
         setLoading(prev => ({ ...prev, transactions: false }));
       },
@@ -255,16 +263,23 @@ export const DataProvider = ({ children }) => {
     const balances = {};
     
     transactions.forEach(t => {
-      const amt = Number(t.amount) || 0;
-      
       if (t.type === 'transfer') {
+        const amt = Math.abs(Number(t.amount) || 0);
         if (t.fromAccount) {
           balances[t.fromAccount] = (balances[t.fromAccount] || 0) - amt;
         }
         if (t.toAccount) {
           balances[t.toAccount] = (balances[t.toAccount] || 0) + amt;
         }
+      } else if (t.type === 'split') {
+        // Split transactions use totalAmount
+        const amt = Number(t.totalAmount) || 0;
+        if (t.account) {
+          balances[t.account] = (balances[t.account] || 0) + amt;
+        }
       } else if (t.account) {
+        // Regular transactions (expense, income, loan, unrealized_gain)
+        const amt = Number(t.amount) || 0;
         balances[t.account] = (balances[t.account] || 0) + amt;
       }
     });

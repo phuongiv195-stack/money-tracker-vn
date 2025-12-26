@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
+import AddTransactionModal from '../Transactions/AddTransactionModal';
 
 const DesktopReports = ({ onBack }) => {
   const userId = useUserId();
@@ -17,6 +18,12 @@ const DesktopReports = ({ onBack }) => {
   
   // Expand/collapse state
   const [expandedGroups, setExpandedGroups] = useState({});
+
+  // Tooltip state
+  const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, transactions: [], category: '', month: '' });
+  
+  // Edit transaction modal
+  const [editTransaction, setEditTransaction] = useState(null);
 
   // Fetch transactions
   useEffect(() => {
@@ -128,8 +135,12 @@ const DesktopReports = ({ onBack }) => {
 
       // Apply want/need filter
       if (wantNeedFilter !== 'all') {
-        const transWantNeed = t.wantNeed || 'need';
-        if (transWantNeed !== wantNeedFilter) return;
+        // For regular expense transactions
+        if (t.type === 'expense') {
+          const transSpendingType = t.spendingType || 'need';
+          if (transSpendingType !== wantNeedFilter) return;
+        }
+        // For split transactions, we'll filter individual splits below
       }
 
       const processCategory = (category, amount, type, group) => {
@@ -155,6 +166,11 @@ const DesktopReports = ({ onBack }) => {
       } else if (t.type === 'split' && t.splits) {
         t.splits.forEach(s => {
           if (s.isLoan) return;
+          // Apply want/need filter for split items
+          if (wantNeedFilter !== 'all' && t.splitType === 'expense') {
+            const splitSpendingType = s.spendingType || 'need';
+            if (splitSpendingType !== wantNeedFilter) return;
+          }
           const cat = categories.find(c => c.name === s.category);
           const type = t.splitType || 'expense';
           processCategory(s.category || 'Uncategorized', s.amount, type, cat?.group);
@@ -217,6 +233,85 @@ const DesktopReports = ({ onBack }) => {
   const formatCurrency = (val) => {
     if (val === 0 || val === undefined) return '';
     return new Intl.NumberFormat('en-US').format(Math.round(val));
+  };
+
+  // Get transactions for a specific category and month
+  const getTransactionsForCell = (category, monthKey, type) => {
+    return transactions.filter(t => {
+      if (!t.date) return false;
+      const transMonth = t.date.slice(0, 7);
+      if (transMonth !== monthKey) return false;
+      
+      // Apply want/need filter
+      if (wantNeedFilter !== 'all' && type === 'expense') {
+        if (t.type === 'expense') {
+          const transSpendingType = t.spendingType || 'need';
+          if (transSpendingType !== wantNeedFilter) return false;
+        }
+      }
+      
+      if (t.type === type && t.category === category) {
+        return true;
+      }
+      
+      // Check split transactions
+      if (t.type === 'split' && t.splitType === type && t.splits) {
+        return t.splits.some(s => !s.isLoan && s.category === category);
+      }
+      
+      return false;
+    }).map(t => {
+      // For split transactions, calculate only the amount for this category
+      if (t.type === 'split' && t.splits) {
+        const relevantSplits = t.splits.filter(s => !s.isLoan && s.category === category);
+        const splitAmount = relevantSplits.reduce((sum, s) => sum + Math.abs(s.amount), 0);
+        return { ...t, displayAmount: splitAmount, isSplit: true };
+      }
+      return { ...t, displayAmount: Math.abs(t.amount) };
+    });
+  };
+
+  // Handle cell hover
+  const handleCellHover = (e, category, monthKey, type, amount) => {
+    if (!amount) return;
+    const trans = getTransactionsForCell(category, monthKey, type);
+    if (trans.length === 0) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    // Position tooltip to the left of the cell, aligned with top
+    setTooltip({
+      show: true,
+      x: rect.left - 320, // Position to the left of the cell
+      y: rect.top - 10,   // Align with cell top
+      transactions: trans,
+      category,
+      month: monthKey,
+      type,
+      total: amount // Store total for display
+    });
+  };
+
+  // Handle cell leave
+  const handleCellLeave = () => {
+    // Delay hiding to allow clicking on tooltip
+    setTimeout(() => {
+      setTooltip(prev => prev.show ? { ...prev, show: false } : prev);
+    }, 200);
+  };
+
+  // AmountCell component with hover
+  const AmountCell = ({ amount, category, monthKey, type, className = '' }) => {
+    if (!amount) return <td className={`py-1.5 px-4 text-right ${className}`}></td>;
+    
+    return (
+      <td 
+        className={`py-1.5 px-4 text-right cursor-pointer hover:bg-yellow-50 transition-colors ${className}`}
+        onMouseEnter={(e) => handleCellHover(e, category, monthKey, type, amount)}
+        onMouseLeave={handleCellLeave}
+      >
+        {formatCurrency(amount)}
+      </td>
+    );
   };
 
   // Toggle group expand/collapse
@@ -450,9 +545,14 @@ const DesktopReports = ({ onBack }) => {
                           {cat.name}
                         </td>
                         {reportData.months.map(m => (
-                          <td key={m.key} className="py-1.5 px-4 text-right text-gray-600">
-                            {formatCurrency(cat.months[m.key])}
-                          </td>
+                          <AmountCell 
+                            key={m.key}
+                            amount={cat.months[m.key]} 
+                            category={cat.name} 
+                            monthKey={m.key} 
+                            type="income"
+                            className="text-gray-600"
+                          />
                         ))}
                         <td className="py-1.5 px-4 text-right text-gray-700 bg-gray-100/50">
                           {formatCurrency(cat.total)}
@@ -512,9 +612,14 @@ const DesktopReports = ({ onBack }) => {
                           {cat.name}
                         </td>
                         {reportData.months.map(m => (
-                          <td key={m.key} className="py-1.5 px-4 text-right text-gray-600">
-                            {formatCurrency(cat.months[m.key])}
-                          </td>
+                          <AmountCell 
+                            key={m.key}
+                            amount={cat.months[m.key]} 
+                            category={cat.name} 
+                            monthKey={m.key} 
+                            type="expense"
+                            className="text-gray-600"
+                          />
                         ))}
                         <td className="py-1.5 px-4 text-right text-gray-700 bg-gray-100/50">
                           {formatCurrency(cat.total)}
@@ -573,6 +678,78 @@ const DesktopReports = ({ onBack }) => {
           )}
         </div>
       </div>
+
+      {/* Tooltip for transaction details */}
+      {tooltip.show && tooltip.transactions.length > 0 && (
+        <div 
+          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-50 w-80"
+          style={{ 
+            left: Math.max(10, tooltip.x), 
+            top: Math.max(10, Math.min(tooltip.y, window.innerHeight - 350))
+          }}
+          onMouseEnter={() => setTooltip(prev => ({ ...prev, show: true }))}
+          onMouseLeave={() => setTooltip(prev => ({ ...prev, show: false }))}
+        >
+          {/* Header with category and total */}
+          <div className={`px-3 py-2 rounded-t-lg ${tooltip.type === 'income' ? 'bg-emerald-50 border-b border-emerald-200' : 'bg-red-50 border-b border-red-200'}`}>
+            <div className="flex justify-between items-start">
+              <div>
+                <div className={`font-semibold ${tooltip.type === 'income' ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {tooltip.category}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {new Date(tooltip.month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </div>
+              </div>
+              <div className={`font-bold text-lg ${tooltip.type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
+                {tooltip.type === 'expense' ? '-' : ''}{formatCurrency(tooltip.total)}
+              </div>
+            </div>
+          </div>
+          
+          {/* Transaction list */}
+          <div className="max-h-60 overflow-y-auto">
+            {tooltip.transactions.map((t, idx) => (
+              <div 
+                key={t.id + '-' + idx}
+                className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
+                onClick={() => {
+                  setEditTransaction(t);
+                  setTooltip({ ...tooltip, show: false });
+                }}
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-gray-800 truncate">
+                      {t.payee || t.memo || 'No description'}
+                      {t.isSplit && <span className="ml-1 text-xs text-purple-600">(split)</span>}
+                    </div>
+                    <div className="text-xs text-gray-400">{t.date}</div>
+                  </div>
+                  <div className="font-medium ml-2 text-gray-700">
+                    {formatCurrency(t.displayAmount)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          {/* Footer */}
+          <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-500 rounded-b-lg text-center">
+            Click to edit transaction
+          </div>
+        </div>
+      )}
+
+      {/* Edit Transaction Modal */}
+      {editTransaction && (
+        <AddTransactionModal
+          isOpen={!!editTransaction}
+          onClose={() => setEditTransaction(null)}
+          editTransaction={editTransaction}
+          onSave={() => setEditTransaction(null)}
+        />
+      )}
     </div>
   );
 };

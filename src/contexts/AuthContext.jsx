@@ -51,9 +51,22 @@ export function AuthProvider({ children }) {
     logout
   };
 
+  // Show loading screen while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-emerald-500 flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="text-5xl mb-4">💰</div>
+          <div className="text-xl font-semibold mb-2">Money Tracker</div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
