@@ -9,6 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       workbox: {
         cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
       },
       manifest: {
         name: 'Money Tracker VN',
@@ -28,6 +30,15 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
+          }
+        ],
+        shortcuts: [
+          {
+            name: 'Add Transaction',
+            short_name: 'Add',
+            description: 'Quickly add a new transaction',
+            url: '/?action=add-transaction',
+            icons: [{ src: '/icon-96.png', sizes: '96x96', type: 'image/png' }]
           }
         ]
       }

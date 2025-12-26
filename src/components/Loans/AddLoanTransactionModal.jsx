@@ -1,56 +1,70 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
-const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }) => {
+const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
   useBackHandler(isOpen, onClose);
   const toast = useToast();
   const userId = useUserId();
   
-  const [activeTab, setActiveTab] = useState('expense');
+  // Helper to get today's date in local timezone
+  const getLocalToday = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  const formatDateForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  
+  // For I Lend: 'lend_more' (money out) or 'receive' (money in)
+  // For I Borrow: 'borrow_more' (money in) or 'pay' (money out)
+  const [transactionType, setTransactionType] = useState(null);
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
-  const [dateInputType, setDateInputType] = useState('text');
-  const [isSplitMode, setIsSplitMode] = useState(false);
   
   const [formData, setFormData] = useState({
     amount: '',
-    payee: '',
-    category: '',
     account: '',
-    fromAccount: '',
-    toAccount: '',
-    date: new Date().toISOString().split('T')[0],
-    memo: ''
+    date: getLocalToday(),
+    note: ''
   });
 
-  const [splits, setSplits] = useState([
-    { amount: '', category: '', loan: '', memo: '', isLoan: false }
-  ]);
-
   const [accounts, setAccounts] = useState([]);
-  const [loans, setLoans] = useState([]);
-  const [payeeSuggestions, setPayeeSuggestions] = useState([]);
-  const [categorySuggestions, setCategorySuggestions] = useState([]);
-  const [showPayeeList, setShowPayeeList] = useState(false);
-  const [showCategoryList, setShowCategoryList] = useState(false);
-  const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Real-time accounts listener - SORTED by group then order
+  const isBorrow = loan?.loanType === 'borrow';
+
   useEffect(() => {
-    if (!isOpen || !userId) return;
-    
-    const q = query(
-      collection(db, 'accounts'),
-      where('userId', '==', userId),
-      where('isActive', '==', true)
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Define group order priority
+    if (isOpen && loan) {
+      loadAccounts();
+      setFormData({
+        amount: '',
+        account: '',
+        date: getLocalToday(),
+        note: ''
+      });
+      setDisplayAmount('');
+      setTransactionType(null);
+    }
+  }, [isOpen, loan]);
+
+  const loadAccounts = async () => {
+    try {
+      const q = query(
+        collection(db, 'accounts'), 
+        where('userId', '==', userId),
+        where('isActive', '==', true)
+      );
+      const snapshot = await getDocs(q);
+      
       const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
       
       const accs = snapshot.docs
@@ -69,121 +83,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
         .map(a => a.name);
         
       setAccounts(accs);
-      
-      // Set default account if not set
-      if (accs.length > 0 && !formData.account) {
-        setFormData(prev => ({
-          ...prev,
-          account: accs[0],
-          fromAccount: accs[0],
-          toAccount: accs[1] || accs[0]
-        }));
+      if (accs.length > 0) {
+        setFormData(prev => ({ ...prev, account: accs[0] }));
       }
-    });
-    
-    return () => unsubscribe();
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen) {
-      loadPayees();
-      loadCategories();
-      loadLoans();
-      
-      if (editTransaction) {
-        if (editTransaction.type === 'split') {
-          setIsSplitMode(true);
-          setActiveTab(editTransaction.splitType || 'expense');
-          setSplits(editTransaction.splits || []);
-          setFormData({
-            amount: Math.abs(editTransaction.totalAmount).toString(),
-            payee: editTransaction.payee || '',
-            category: '',
-            account: editTransaction.account || '',
-            fromAccount: '',
-            toAccount: '',
-            date: editTransaction.date || new Date().toISOString().split('T')[0],
-            memo: ''
-          });
-          setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
-        } else {
-          setIsSplitMode(false);
-          setActiveTab(editTransaction.type);
-          setFormData({
-            amount: Math.abs(editTransaction.amount).toString(),
-            payee: editTransaction.payee || '',
-            category: editTransaction.category || '',
-            account: editTransaction.account || '',
-            fromAccount: editTransaction.fromAccount || '',
-            toAccount: editTransaction.toAccount || '',
-            date: editTransaction.date || new Date().toISOString().split('T')[0],
-            memo: editTransaction.memo || ''
-          });
-          setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
-        }
-      } else {
-        setIsSplitMode(false);
-        setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-        setFormData(prev => ({
-          ...prev,
-          amount: '',
-          payee: '',
-          category: '',
-          date: new Date().toISOString().split('T')[0],
-          memo: ''
-        }));
-        setDisplayAmount('');
-        setActiveTab('expense');
-      }
-      setDateInputType('text');
-    }
-  }, [isOpen, editTransaction]);
-
-  const loadLoans = async () => {
-    try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', userId),
-        where('type', '==', 'loan')
-      );
-      const snapshot = await getDocs(q);
-      const loanNames = [...new Set(snapshot.docs.map(d => d.data().loan).filter(Boolean))];
-      setLoans(loanNames);
     } catch (e) {
-      console.error("Load loans error:", e);
+      console.error("Load accounts error:", e);
     }
-  };
-
-  const loadPayees = async () => {
-    try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', userId),
-        orderBy('date', 'desc'),
-        limit(50)
-      );
-      const snapshot = await getDocs(q);
-      const payees = [...new Set(snapshot.docs.map(d => d.data().payee).filter(Boolean))];
-      setPayeeSuggestions(payees);
-    } catch (e) {
-      console.error("Load payees error:", e);
-    }
-  };
-
-  const loadCategories = async () => {
-    try {
-      const q = query(collection(db, 'categories'), where('userId', '==', userId));
-      const snapshot = await getDocs(q);
-      setCategorySuggestions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (e) {
-      console.error("Load categories error:", e);
-    }
-  };
-
-  const formatDateForDisplay = (isoDate) => {
-    if (!isoDate) return '';
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   const handleAmountChange = (e) => {
@@ -198,173 +103,68 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
     }
   };
 
-  const handleSplitAmountChange = (index, value) => {
-    const rawValue = value.replace(/,/g, '');
-    if (!isNaN(rawValue) || rawValue === '') {
-      const newSplits = [...splits];
-      newSplits[index].amount = rawValue;
-      setSplits(newSplits);
-    }
-  };
-
-  const toggleSplitLoan = (index) => {
-    const newSplits = [...splits];
-    newSplits[index].isLoan = !newSplits[index].isLoan;
-    newSplits[index].category = '';
-    newSplits[index].loan = '';
-    setSplits(newSplits);
-  };
-
-  const handleSplitCategoryChange = (index, category) => {
-    const newSplits = [...splits];
-    newSplits[index].category = category;
-    setSplits(newSplits);
-    setActiveSplitIndex(null);
-  };
-
-  const handleSplitLoanChange = (index, loan) => {
-    const newSplits = [...splits];
-    newSplits[index].loan = loan;
-    setSplits(newSplits);
-  };
-
-  const handleSplitMemoChange = (index, memo) => {
-    const newSplits = [...splits];
-    newSplits[index].memo = memo;
-    setSplits(newSplits);
-  };
-
-  const addSplitLine = () => {
-    setSplits([...splits, { amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-  };
-
-  const removeSplitLine = (index) => {
-    if (splits.length > 1) {
-      setSplits(splits.filter((_, i) => i !== index));
-    }
-  };
-
-  const enableSplitMode = () => {
-    setIsSplitMode(true);
-    setSplits([
-      { amount: '', category: '', loan: '', memo: '', isLoan: false },
-      { amount: '', category: '', loan: '', memo: '', isLoan: false }
-    ]);
-  };
-
-  const disableSplitMode = () => {
-    setIsSplitMode(false);
-    setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-  };
-
-  const getUsedAmount = () => {
-    return splits.slice(0, -1).reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
-  };
-
-  const getRemainingAmount = () => {
-    const total = Number(formData.amount) || 0;
-    return total - getUsedAmount();
-  };
-
   const handleSubmit = async () => {
-    if (!formData.amount) {
+    if (!formData.amount || Number(formData.amount) <= 0) {
       toast.error("Please enter amount!");
       return;
     }
-
-    if (isSplitMode) {
-      const newSplits = [...splits];
-      newSplits[newSplits.length - 1].amount = getRemainingAmount().toString();
-      
-      for (let i = 0; i < newSplits.length; i++) {
-        const s = newSplits[i];
-        if (Number(s.amount) <= 0) {
-          toast.error(`Split #${i + 1}: Invalid amount`);
-          return;
-        }
-        if (s.isLoan && !s.loan) {
-          toast.error(`Split #${i + 1}: Please select loan`);
-          return;
-        }
-        if (!s.isLoan && !s.category) {
-          toast.error(`Split #${i + 1}: Please select category`);
-          return;
-        }
-      }
-      setSplits(newSplits);
-    } else {
-      if (activeTab !== 'transfer' && !formData.category) {
-        toast.error("Please select category!");
-        return;
-      }
+    if (!formData.account) {
+      toast.error("Please select account!");
+      return;
+    }
+    if (!transactionType) {
+      toast.error("Please select transaction type!");
+      return;
     }
 
     setLoading(true);
     try {
-      if (isSplitMode) {
-        const totalAmount = Number(formData.amount);
-        const finalSplits = splits.map((s, i) => ({
-          amount: i === splits.length - 1 ? getRemainingAmount() : Number(s.amount),
-          category: s.category || null,
-          loan: s.loan || null,
-          isLoan: s.isLoan,
-          memo: s.memo || null
-        }));
-        
-        const transactionData = {
-          userId: userId,
-          type: 'split',
-          splitType: activeTab,
-          totalAmount: activeTab === 'expense' ? -Math.abs(totalAmount) : Math.abs(totalAmount),
-          account: formData.account,
-          payee: formData.payee,
-          date: formData.date,
-          splits: finalSplits
-        };
-
-        if (!editTransaction) {
-          transactionData.createdAt = new Date();
+      const amt = Number(formData.amount);
+      
+      // Determine the sign based on transaction type
+      // For BORROW loan:
+      //   - borrow_more: money IN = positive (increases what I owe)
+      //   - pay: money OUT = negative (decreases what I owe)
+      // For LEND loan:
+      //   - lend_more: money OUT = negative (increases what they owe me)
+      //   - receive: money IN = positive (decreases what they owe me)
+      
+      let finalAmount;
+      let memo;
+      
+      if (isBorrow) {
+        if (transactionType === 'borrow_more') {
+          finalAmount = amt; // positive = money in
+          memo = formData.note || 'Borrowed more';
+        } else { // pay
+          finalAmount = -amt; // negative = money out
+          memo = formData.note || 'Payment';
         }
-
-        if (editTransaction) {
-          await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
-        } else {
-          await addDoc(collection(db, 'transactions'), transactionData);
-        }
-      } else {
-        let finalAmount = Number(formData.amount);
-
-        const transactionData = {
-          userId: userId,
-          type: activeTab,
-          amount: finalAmount,
-          date: formData.date,
-          memo: formData.memo
-        };
-
-        if (!editTransaction) {
-          transactionData.createdAt = new Date();
-        }
-
-        if (activeTab === 'transfer') {
-          transactionData.fromAccount = formData.fromAccount;
-          transactionData.toAccount = formData.toAccount;
-        } else {
-          if (activeTab === 'expense') transactionData.amount = -Math.abs(finalAmount);
-          else transactionData.amount = Math.abs(finalAmount);
-
-          transactionData.payee = formData.payee;
-          transactionData.category = formData.category;
-          transactionData.account = formData.account;
-        }
-
-        if (editTransaction) {
-          await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
-        } else {
-          await addDoc(collection(db, 'transactions'), transactionData);
+      } else { // lend
+        if (transactionType === 'lend_more') {
+          finalAmount = -amt; // negative = money out
+          memo = formData.note || 'Lent more';
+        } else { // receive
+          finalAmount = amt; // positive = money in
+          memo = formData.note || 'Received payment';
         }
       }
 
+      const transactionData = {
+        userId: userId,
+        type: 'loan',
+        loanType: loan.loanType,
+        amount: finalAmount,
+        loan: loan.name,
+        account: formData.account,
+        date: formData.date,
+        memo: memo,
+        createdAt: new Date()
+      };
+
+      await addDoc(collection(db, 'transactions'), transactionData);
+
+      toast.success('Transaction added!');
       if (onSave) onSave();
       onClose();
     } catch (error) {
@@ -374,382 +174,171 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
     setLoading(false);
   };
 
-  const handleDelete = async () => {
-    if (!editTransaction) return;
+  if (!isOpen || !loan) return null;
+
+  // Render transaction type buttons based on loan type
+  const renderTypeButtons = () => {
+    if (isBorrow) {
+      // I Borrow: Borrow more (money in) or Pay (money out)
+      return (
+        <div className="flex gap-3">
+          <button
+            onClick={() => setTransactionType('borrow_more')}
+            className={`flex-1 py-4 rounded-xl font-medium transition-all ${
+              transactionType === 'borrow_more'
+                ? 'bg-emerald-100 text-emerald-700 border-2 border-emerald-400'
+                : 'bg-gray-50 text-gray-500 border border-gray-200'
+            }`}
+          >
+            <div className="text-2xl mb-1">💰</div>
+            <div className="font-bold">Borrow More</div>
+            <div className="text-xs opacity-70">Money in</div>
+          </button>
+          <button
+            onClick={() => setTransactionType('pay')}
+            className={`flex-1 py-4 rounded-xl font-medium transition-all ${
+              transactionType === 'pay'
+                ? 'bg-red-100 text-red-700 border-2 border-red-400'
+                : 'bg-gray-50 text-gray-500 border border-gray-200'
+            }`}
+          >
+            <div className="text-2xl mb-1">💸</div>
+            <div className="font-bold">Pay</div>
+            <div className="text-xs opacity-70">Money out</div>
+          </button>
+        </div>
+      );
+    } else {
+      // I Lend: Lend more (money out) or Receive (money in)
+      return (
+        <div className="flex gap-3">
+          <button
+            onClick={() => setTransactionType('lend_more')}
+            className={`flex-1 py-4 rounded-xl font-medium transition-all ${
+              transactionType === 'lend_more'
+                ? 'bg-red-100 text-red-700 border-2 border-red-400'
+                : 'bg-gray-50 text-gray-500 border border-gray-200'
+            }`}
+          >
+            <div className="text-2xl mb-1">💸</div>
+            <div className="font-bold">Lend More</div>
+            <div className="text-xs opacity-70">Money out</div>
+          </button>
+          <button
+            onClick={() => setTransactionType('receive')}
+            className={`flex-1 py-4 rounded-xl font-medium transition-all ${
+              transactionType === 'receive'
+                ? 'bg-emerald-100 text-emerald-700 border-2 border-emerald-400'
+                : 'bg-gray-50 text-gray-500 border border-gray-200'
+            }`}
+          >
+            <div className="text-2xl mb-1">💰</div>
+            <div className="font-bold">Receive</div>
+            <div className="text-xs opacity-70">Money in</div>
+          </button>
+        </div>
+      );
+    }
+  };
+
+  // Get helper text based on selection
+  const getHelperText = () => {
+    if (!transactionType) return null;
     
-    const confirmed = await toast.confirm({
-      title: 'Delete Transaction',
-      message: 'Delete this transaction?',
-      confirmText: 'Delete',
-      type: 'danger'
-    });
-    
-    if (confirmed) {
-      try {
-        await deleteDoc(doc(db, 'transactions', editTransaction.id));
-        if (onSave) onSave();
-        onClose();
-      } catch (error) {
-        toast.error("Error: " + error.message);
+    if (isBorrow) {
+      if (transactionType === 'borrow_more') {
+        return { text: '💰 Borrow more → Your debt increases', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+      } else {
+        return { text: '💸 Pay back → Your debt decreases', color: 'bg-red-50 text-red-700 border-red-200' };
+      }
+    } else {
+      if (transactionType === 'lend_more') {
+        return { text: '💸 Lend more → They owe you more', color: 'bg-red-50 text-red-700 border-red-200' };
+      } else {
+        return { text: '💰 Receive payment → They owe you less', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
       }
     }
   };
 
-  if (!isOpen) return null;
-
-  const filteredCategories = categorySuggestions.filter(cat => {
-    if (activeTab === 'income') return cat.type === 'income';
-    if (activeTab === 'expense') return cat.type === 'expense';
-    return true;
-  });
-
-  // Split icon SVG
-  const SplitIcon = () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 3l-4 4-4-4" />
-      <path d="M12 7v6" />
-      <path d="M8 21l4-4 4 4" />
-      <path d="M12 17v-4" />
-    </svg>
-  );
+  const helper = getHelperText();
 
   return (
     <div className="fixed inset-0 bg-gray-50 z-50 flex flex-col">
+      
+      {/* Header */}
+      <div className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
+        <button onClick={onClose} className="text-gray-500 text-lg p-2">✕</button>
+        <div className="text-center">
+          <h2 className="font-semibold text-lg">Add Transaction</h2>
+          <div className="text-xs text-gray-500">{loan.name}</div>
+        </div>
+        <div className="w-10"></div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         
-        {/* Header */}
-        <div className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
-          <button onClick={onClose} className="text-gray-500 text-lg p-2">✕</button>
-          <h2 className="font-semibold text-lg">
-            {editTransaction ? 'Edit Transaction' : 'Add Transaction'}
-          </h2>
-          <div className="flex items-center gap-2">
-            {editTransaction && (
-              <button 
-                onClick={handleDelete}
-                className="text-red-500 text-xl hover:bg-red-50 w-8 h-8 rounded-lg flex items-center justify-center"
-              >
-                🗑️
-              </button>
-            )}
-            <button 
-              onClick={handleSubmit} 
-              disabled={loading}
-              className="text-emerald-600 font-bold disabled:opacity-50 p-2"
-            >
-              {loading ? '...' : 'SAVE'}
-            </button>
+        {/* Loan Info Banner */}
+        <div className={`p-4 rounded-xl ${isBorrow ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-100 border border-gray-300'}`}>
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-xs text-gray-500 uppercase font-semibold">
+                {isBorrow ? 'I Borrowed from' : 'I Lent to'}
+              </div>
+              <div className="font-bold text-lg">{loan.name}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-500 uppercase font-semibold">Balance</div>
+              <div className={`font-bold text-lg ${Math.abs(loan.balance) === 0 ? 'text-emerald-600' : 'text-gray-800'}`}>
+                {new Intl.NumberFormat('en-US').format(Math.abs(loan.balance))}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Type Tabs */}
-        <div className="flex p-2 gap-2 bg-white border-b">
-          {['expense', 'income', 'transfer'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab);
-                if (tab === 'transfer') disableSplitMode();
-              }}
-              className={`flex-1 py-2 rounded-lg capitalize font-medium transition-colors ${
-                activeTab === tab 
-                  ? (tab === 'expense' ? 'bg-red-100 text-red-700 border border-red-300' 
-                    : tab === 'income' ? 'bg-emerald-100 text-emerald-700 border border-emerald-400' 
-                    : 'bg-blue-100 text-blue-700 border border-blue-400')
-                  : 'bg-white text-gray-500 border border-gray-200'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+        {/* Transaction Type Selection */}
+        <div>
+          <label className="text-xs text-gray-500 uppercase font-semibold mb-3 block">
+            What do you want to do?
+          </label>
+          {renderTypeButtons()}
         </div>
 
-        <div className="p-4 space-y-4 overflow-y-auto flex-1">
-          
-          {/* Amount + Split Button */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1 text-center py-2">
+        {/* Helper text */}
+        {helper && (
+          <div className={`text-sm p-3 rounded-lg border ${helper.color}`}>
+            {helper.text}
+          </div>
+        )}
+
+        {/* Amount */}
+        {transactionType && (
+          <>
+            <div>
+              <label className="text-xs text-gray-500 uppercase font-semibold">Amount</label>
               <input
                 type="text"
                 inputMode="numeric"
                 placeholder="0"
                 value={displayAmount}
                 onChange={handleAmountChange}
-                className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
-                  activeTab === 'expense' ? 'text-red-500' : activeTab === 'income' ? 'text-emerald-600' : 'text-blue-600'
+                className={`w-full text-3xl font-bold text-center p-4 rounded-lg mt-1 focus:ring-2 outline-none border-2 ${
+                  transactionType === 'borrow_more' || transactionType === 'receive'
+                    ? 'bg-emerald-50 text-emerald-600 border-emerald-300 focus:ring-emerald-500'
+                    : 'bg-red-50 text-red-600 border-red-300 focus:ring-red-500'
                 }`}
-                
               />
             </div>
-            
-            {activeTab !== 'transfer' && (
-              <button
-                onClick={isSplitMode ? disableSplitMode : enableSplitMode}
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
-                  isSplitMode 
-                    ? 'bg-emerald-500 text-white'
-                    : 'bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100'
-                }`}
-                title={isSplitMode ? 'Cancel Split' : 'Split Transaction'}
-              >
-                <SplitIcon />
-              </button>
-            )}
-          </div>
 
-          {/* Payee */}
-          {activeTab !== 'transfer' && (
-            <div className="relative">
-              <label className="text-xs text-gray-500 uppercase font-semibold">Payee</label>
-              <input
-                type="text"
-                placeholder="Who?"
-                value={formData.payee}
-                onChange={(e) => setFormData({...formData, payee: e.target.value})}
-                onFocus={() => setShowPayeeList(true)}
-                onBlur={() => setTimeout(() => setShowPayeeList(false), 200)}
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              />
-              {showPayeeList && payeeSuggestions.length > 0 && (
-                <div className="absolute z-10 w-full bg-white shadow-lg max-h-32 overflow-y-auto rounded-lg mt-1 border">
-                  {payeeSuggestions
-                    .filter(p => p.toLowerCase().includes(formData.payee.toLowerCase()))
-                    .slice(0, 5)
-                    .map((payee, idx) => (
-                      <div 
-                        key={idx} 
-                        className="p-2 hover:bg-gray-100 cursor-pointer text-sm"
-                        onClick={() => {
-                          setFormData({...formData, payee});
-                          setShowPayeeList(false);
-                        }}
-                      >
-                        {payee}
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SPLIT MODE */}
-          {isSplitMode && (
-            <div className="space-y-3">
-              {splits.map((split, index) => {
-                const isLastSplit = index === splits.length - 1;
-                const splitAmount = isLastSplit ? getRemainingAmount() : Number(split.amount) || 0;
-                
-                return (
-                  <div 
-                    key={index} 
-                    className="p-3 rounded-xl bg-emerald-50 border border-emerald-200"
-                  >
-                    {/* Split Header */}
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-emerald-700">
-                        SPLIT #{index + 1}
-                      </span>
-                      {splits.length > 2 && (
-                        <button
-                          onClick={() => removeSplitLine(index)}
-                          className="text-gray-400 hover:text-red-500 text-sm"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Amount */}
-                    <div className="mb-2">
-                      {isLastSplit ? (
-                        <div className="text-2xl font-bold text-center p-2 rounded-lg bg-emerald-100 text-emerald-700">
-                          {splitAmount.toLocaleString()}
-                          <span className="text-xs ml-1 opacity-70">(auto)</span>
-                        </div>
-                      ) : (
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="Amount"
-                          value={split.amount ? Number(split.amount).toLocaleString() : ''}
-                          onChange={(e) => handleSplitAmountChange(index, e.target.value)}
-                          className="w-full p-2 text-xl font-bold text-center bg-white rounded-lg border border-emerald-200"
-                        />
-                      )}
-                    </div>
-
-                    {/* Category or Loan Toggle */}
-                    <div className="flex gap-2 mb-2">
-                      <button
-                        onClick={() => { if (split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-1.5 text-xs rounded-lg font-medium ${
-                          !split.isLoan 
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-white text-gray-500 border border-gray-200'
-                        }`}
-                      >
-                        Category
-                      </button>
-                      <button
-                        onClick={() => { if (!split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-1.5 text-xs rounded-lg font-medium ${
-                          split.isLoan 
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-white text-gray-500 border border-gray-200'
-                        }`}
-                      >
-                        Loan
-                      </button>
-                    </div>
-
-                    {/* Category or Loan Selector */}
-                    {split.isLoan ? (
-                      <select
-                        value={split.loan}
-                        onChange={(e) => handleSplitLoanChange(index, e.target.value)}
-                        className="w-full p-2 bg-white rounded-lg border border-emerald-200 text-sm"
-                      >
-                        <option value="">Select loan...</option>
-                        {loans.map(loan => (
-                          <option key={loan} value={loan}>{loan}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Select category..."
-                          value={split.category}
-                          onChange={(e) => {
-                            const newSplits = [...splits];
-                            newSplits[index].category = e.target.value;
-                            setSplits(newSplits);
-                          }}
-                          onFocus={() => setActiveSplitIndex(index)}
-                          onBlur={() => setTimeout(() => setActiveSplitIndex(null), 200)}
-                          className="w-full p-2 bg-white rounded-lg border border-emerald-200 text-sm"
-                        />
-                        {activeSplitIndex === index && (
-                          <div className="absolute z-30 w-full bg-white shadow-xl max-h-32 overflow-y-auto rounded-lg mt-1 border border-gray-200">
-                            {filteredCategories
-                              .filter(cat => cat.name.toLowerCase().includes(split.category.toLowerCase()))
-                              .map(cat => (
-                                <div
-                                  key={cat.id}
-                                  onClick={() => handleSplitCategoryChange(index, cat.name)}
-                                  className="p-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-sm"
-                                >
-                                  <span>{cat.icon}</span>
-                                  <span>{cat.name}</span>
-                                </div>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Memo */}
-                    <input
-                      type="text"
-                      placeholder="Memo (optional)"
-                      value={split.memo}
-                      onChange={(e) => handleSplitMemoChange(index, e.target.value)}
-                      className="w-full p-2 bg-white rounded-lg border border-emerald-200 text-sm mt-2"
-                    />
-                  </div>
-                );
-              })}
-
-              {/* Add Split Button */}
-              <button
-                onClick={addSplitLine}
-                className="w-full py-2 border-2 border-dashed border-emerald-300 rounded-xl font-medium text-emerald-600 hover:bg-emerald-50"
-              >
-                + Add Split
-              </button>
-            </div>
-          )}
-
-          {/* Normal Mode - Category */}
-          {!isSplitMode && activeTab !== 'transfer' && (
-            <div className="relative">
-              <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
-              <input
-                type="text"
-                placeholder="Select category..."
-                value={formData.category}
-                onChange={(e) => {
-                  setFormData({...formData, category: e.target.value});
-                  setShowCategoryList(true);
-                }}
-                onFocus={() => setShowCategoryList(true)}
-                onBlur={() => setTimeout(() => setShowCategoryList(false), 200)}
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              />
-              
-              {showCategoryList && (
-                <div className="absolute z-20 w-full bg-white shadow-xl max-h-48 overflow-y-auto rounded-lg mt-1 border border-gray-200">
-                  {filteredCategories
-                    .filter(cat => cat.name.toLowerCase().includes(formData.category.toLowerCase()))
-                    .map(cat => (
-                      <div 
-                        key={cat.id} 
-                        className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
-                        onClick={() => {
-                          setFormData({...formData, category: cat.name});
-                          setShowCategoryList(false);
-                        }}
-                      >
-                        <span className="text-xl">{cat.icon}</span>
-                        <span>{cat.name}</span>
-                        <span className="text-xs text-gray-400 ml-auto">{cat.group}</span>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Transfer Fields */}
-          {activeTab === 'transfer' && (
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold">From</label>
-                <select 
-                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-                  value={formData.fromAccount}
-                  onChange={(e) => setFormData({...formData, fromAccount: e.target.value})}
-                >
-                  {accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold">To</label>
-                <select 
-                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-                  value={formData.toAccount}
-                  onChange={(e) => setFormData({...formData, toAccount: e.target.value})}
-                >
-                  {accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Account */}
-          {activeTab !== 'transfer' && (
+            {/* Account */}
             <div>
               <label className="text-xs text-gray-500 uppercase font-semibold">Account</label>
               <select 
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                className="w-full p-3 bg-gray-100 rounded-lg mt-1 outline-none border border-gray-200"
                 value={formData.account}
                 onChange={(e) => setFormData({...formData, account: e.target.value})}
               >
                 {accounts.length === 0 ? (
-                  <option value="">Loading...</option>
+                  <option value="">No accounts available</option>
                 ) : (
                   accounts.map(acc => (
                     <option key={acc} value={acc}>{acc}</option>
@@ -757,37 +346,53 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null }
                 )}
               </select>
             </div>
-          )}
 
-          {/* Date */}
-          <div>
-            <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
-            <input 
-              type={dateInputType} 
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={dateInputType === 'text' ? formatDateForDisplay(formData.date) : formData.date}
-              onChange={(e) => setFormData({...formData, date: e.target.value})}
-              onFocus={() => setDateInputType('date')} 
-              onBlur={() => setDateInputType('text')}  
-            />
-          </div>
-
-          {/* Memo - Only for normal mode */}
-          {!isSplitMode && (
+            {/* Date */}
             <div>
-              <label className="text-xs text-gray-500 uppercase font-semibold">Memo</label>
+              <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
+              <div className="relative mt-1">
+                <input 
+                  type="date" 
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  value={formData.date}
+                  onChange={(e) => setFormData({...formData, date: e.target.value})}
+                />
+                <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between">
+                  <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
+                  <span className="text-gray-400">📅</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Note */}
+            <div>
+              <label className="text-xs text-gray-500 uppercase font-semibold">Note</label>
               <input
                 type="text"
-                placeholder="Notes (optional)"
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-                value={formData.memo}
-                onChange={(e) => setFormData({...formData, memo: e.target.value})}
+                placeholder="Optional note..."
+                className="w-full p-3 bg-gray-100 rounded-lg mt-1 outline-none border border-gray-200"
+                value={formData.note}
+                onChange={(e) => setFormData({...formData, note: e.target.value})}
               />
             </div>
-          )}
+          </>
+        )}
+      </div>
+
+      {/* Fixed Bottom Bar - only show when form is visible */}
+      {transactionType && (
+        <div className="p-4 mb-20 border-t bg-white flex justify-end">
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Saving...' : 'SAVE'}
+          </button>
         </div>
+      )}
     </div>
   );
 };
 
-export default AddTransactionModal;
+export default AddLoanTransactionModal;

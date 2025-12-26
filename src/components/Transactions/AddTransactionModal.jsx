@@ -1,21 +1,38 @@
-import React, { useState, useEffect } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
+import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
 const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null }) => {
   const toast = useToast();
   const userId = useUserId();
+  const { 
+    accountNames, 
+    categories, 
+    loanNames,
+    payeeSuggestions: cachedPayeeSuggestions, 
+    payeeToCategoryMap: cachedPayeeToCategoryMap 
+  } = useData();
+  
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
-  const [dateInputType, setDateInputType] = useState('text');
   const [isSplitMode, setIsSplitMode] = useState(false);
   
   // Register back handler for hardware back button
   useBackHandler(isOpen, onClose);
+  
+  // Helper to get today's date in local timezone (YYYY-MM-DD format)
+  const getLocalToday = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   
   const [formData, setFormData] = useState({
     amount: '',
@@ -24,79 +41,50 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     account: '',
     fromAccount: '',
     toAccount: '',
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalToday(),
     memo: '',
-    spendingType: 'need' // default, will be set from category
+    spendingType: 'need'
   });
 
   const [splits, setSplits] = useState([
     { amount: '', category: '', loan: '', memo: '', isLoan: false }
   ]);
 
-  const [accounts, setAccounts] = useState([]);
-  const [loans, setLoans] = useState([]);
-  const [payeeSuggestions, setPayeeSuggestions] = useState([]);
-  const [payeeToCategoryMap, setPayeeToCategoryMap] = useState({});
-  const [categorySuggestions, setCategorySuggestions] = useState([]);
+  // Use cached data from DataContext
+  const accounts = accountNames;
+  const loans = loanNames;
+  const payeeSuggestions = cachedPayeeSuggestions;
+  const payeeToCategoryMap = cachedPayeeToCategoryMap;
+  const categorySuggestions = categories;
+  
   const [showPayeeList, setShowPayeeList] = useState(false);
   const [showCategoryList, setShowCategoryList] = useState(false);
   const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Real-time accounts listener - EXCLUDE loan type accounts, SORTED by group then order
+  // Set default accounts when accounts change or modal opens
   useEffect(() => {
-    if (!isOpen || !userId) return;
+    if (!isOpen || accounts.length === 0) return;
     
-    const q = query(
-      collection(db, 'accounts'),
-      where('userId', '==', userId),
-      where('isActive', '==', true)
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loanTypes = ['loan'];
-      
-      // Define group order priority
-      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2 };
-      
-      const accs = snapshot.docs
-        .map(d => ({ 
-          name: d.data().name, 
-          type: d.data().type, 
-          group: d.data().group,
-          order: d.data().order ?? 999 
-        }))
-        .filter(a => a.name && !loanTypes.includes(a.type))
-        // Sort by group first, then by order within group
-        .sort((a, b) => {
-          const groupA = groupOrder[a.group] ?? 99;
-          const groupB = groupOrder[b.group] ?? 99;
-          if (groupA !== groupB) return groupA - groupB;
-          return a.order - b.order;
-        })
-        .map(a => a.name);
-      
-      setAccounts(accs);
-      
-      // Only set default account if no account is selected AND no prefilledAccount
-      if (accs.length > 0 && !formData.account && !prefilledAccount) {
+    if (!prefilledAccount) {
+      if (!formData.account) {
         setFormData(prev => ({
           ...prev,
-          account: accs[0],
-          fromAccount: accs[0],
-          toAccount: accs[1] || accs[0]
+          account: accounts[0],
+          fromAccount: accounts[0],
+          toAccount: accounts[1] || accounts[0]
         }));
       }
-    });
-    
-    return () => unsubscribe();
-  }, [isOpen, prefilledAccount]);
+    } else {
+      const otherAccounts = accounts.filter(a => a !== prefilledAccount);
+      setFormData(prev => ({
+        ...prev,
+        toAccount: prev.toAccount || otherAccounts[0] || accounts[0]
+      }));
+    }
+  }, [isOpen, accounts, prefilledAccount]);
 
   useEffect(() => {
     if (isOpen) {
-      loadPayees();
-      loadCategories();
-      loadLoans();
-      
       if (editTransaction) {
         if (editTransaction.type === 'split') {
           setIsSplitMode(true);
@@ -109,7 +97,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             account: editTransaction.account || '',
             fromAccount: '',
             toAccount: '',
-            date: editTransaction.date || new Date().toISOString().split('T')[0],
+            date: editTransaction.date || getLocalToday(),
             memo: '',
             spendingType: 'need'
           });
@@ -124,7 +112,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             account: editTransaction.account || '',
             fromAccount: editTransaction.fromAccount || '',
             toAccount: editTransaction.toAccount || '',
-            date: editTransaction.date || new Date().toISOString().split('T')[0],
+            date: editTransaction.date || getLocalToday(),
             memo: editTransaction.memo || '',
             spendingType: editTransaction.spendingType || 'need'
           });
@@ -134,15 +122,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         setIsSplitMode(false);
         setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
         
-        // Set active tab FIRST based on prefilled category type
-        // This ensures the category filter works correctly
         if (prefilledCategory?.type) {
           setActiveTab(prefilledCategory.type);
         } else {
           setActiveTab('expense');
         }
         
-        // Apply prefilled values - only override fields that have prefilled values
         setFormData({
           amount: '',
           payee: '',
@@ -150,70 +135,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           account: prefilledAccount || '',
           fromAccount: prefilledAccount || '',
           toAccount: '',
-          date: new Date().toISOString().split('T')[0],
+          date: getLocalToday(),
           memo: '',
           spendingType: prefilledCategory?.spendingType || 'need'
         });
         setDisplayAmount('');
       }
-      setDateInputType('text');
     }
   }, [isOpen, editTransaction, prefilledAccount, prefilledCategory]);
-
-  const loadLoans = async () => {
-    if (!userId) return;
-    try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', userId),
-        where('type', '==', 'loan')
-      );
-      const snapshot = await getDocs(q);
-      const loanNames = [...new Set(snapshot.docs.map(d => d.data().loan).filter(Boolean))];
-      setLoans(loanNames);
-    } catch (e) {
-      console.error("Load loans error:", e);
-    }
-  };
-
-  const loadPayees = async () => {
-    if (!userId) return;
-    try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', userId),
-        orderBy('date', 'desc'),
-        limit(100)
-      );
-      const snapshot = await getDocs(q);
-      
-      // Build payee -> category mapping (most recent category for each payee)
-      const payeeCategoryMap = {};
-      snapshot.docs.forEach(d => {
-        const data = d.data();
-        if (data.payee && data.category && !payeeCategoryMap[data.payee]) {
-          payeeCategoryMap[data.payee] = data.category;
-        }
-      });
-      setPayeeToCategoryMap(payeeCategoryMap);
-      
-      const payees = [...new Set(snapshot.docs.map(d => d.data().payee).filter(Boolean))];
-      setPayeeSuggestions(payees);
-    } catch (e) {
-      console.error("Load payees error:", e);
-    }
-  };
-
-  const loadCategories = async () => {
-    if (!userId) return;
-    try {
-      const q = query(collection(db, 'categories'), where('userId', '==', userId));
-      const snapshot = await getDocs(q);
-      setCategorySuggestions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (e) {
-      console.error("Load categories error:", e);
-    }
-  };
 
   const formatDateForDisplay = (isoDate) => {
     if (!isoDate) return '';
@@ -316,6 +245,22 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     if (!formData.amount) {
       toast.error("Please enter amount!");
       return;
+    }
+
+    // Validate transfer accounts
+    if (activeTab === 'transfer') {
+      if (!formData.fromAccount) {
+        toast.error("Please select From account!");
+        return;
+      }
+      if (!formData.toAccount) {
+        toast.error("Please select To account!");
+        return;
+      }
+      if (formData.fromAccount === formData.toAccount) {
+        toast.error("From and To accounts must be different!");
+        return;
+      }
     }
 
     if (isSplitMode) {
@@ -456,11 +401,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
   // Split icon SVG
   const SplitIcon = () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 3l-4 4-4-4" />
-      <path d="M12 7v6" />
-      <path d="M8 21l4-4 4 4" />
-      <path d="M12 17v-4" />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22v-10" />
+      <path d="M12 12C12 8 8 5 4 3" />
+      <path d="M12 12C12 8 16 5 20 3" />
+      <polyline points="6 6 4 3 1 5" />
+      <polyline points="18 6 20 3 23 5" />
     </svg>
   );
 
@@ -475,23 +421,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           <h2 className="font-semibold text-lg">
             {editTransaction ? 'Edit Transaction' : 'Add Transaction'}
           </h2>
-          <div className="flex items-center gap-2">
-            {editTransaction && (
-              <button 
-                onClick={handleDelete}
-                className="text-red-500 text-xl hover:bg-red-50 w-8 h-8 rounded-lg flex items-center justify-center"
-              >
-                🗑️
-              </button>
-            )}
-            <button 
-              onClick={handleSubmit} 
-              disabled={loading}
-              className="text-emerald-600 font-bold disabled:opacity-50 p-2"
-            >
-              {loading ? '...' : 'SAVE'}
-            </button>
-          </div>
+          <div className="w-10"></div>
         </div>
 
         {/* Type Tabs */}
@@ -867,14 +797,18 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           {/* Date */}
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
-            <input 
-              type={dateInputType} 
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={dateInputType === 'text' ? formatDateForDisplay(formData.date) : formData.date}
-              onChange={(e) => setFormData({...formData, date: e.target.value})}
-              onFocus={() => setDateInputType('date')} 
-              onBlur={() => setDateInputType('text')}  
-            />
+            <div className="relative mt-1">
+              <input 
+                type="date" 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                value={formData.date}
+                onChange={(e) => setFormData({...formData, date: e.target.value})}
+              />
+              <div className="w-full p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
+                <span className="text-gray-400">📅</span>
+              </div>
+            </div>
           </div>
 
           {/* Memo - Only for normal mode */}
@@ -890,6 +824,26 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
               />
             </div>
           )}
+        </div>
+
+        {/* Fixed Bottom Bar */}
+        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
+          {editTransaction && (
+            <button 
+              onClick={handleDelete}
+              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
+            >
+              🗑️ Delete
+            </button>
+          )}
+          <div className="flex-1"></div>
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Saving...' : 'SAVE'}
+          </button>
         </div>
       </div>
     </div>

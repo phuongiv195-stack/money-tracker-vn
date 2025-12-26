@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
@@ -10,21 +10,6 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   const toast = useToast();
   const userId = useUserId();
   
-  // Helper to get today's date in local timezone
-  const getLocalToday = () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-  
-  const formatDateForDisplay = (isoDate) => {
-    if (!isoDate) return '';
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  };
-  
   const [formData, setFormData] = useState({
     name: '',
     icon: '🏦',
@@ -32,8 +17,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
     group: 'SPENDING',
     currentValue: '',
     costBasis: '',
-    startingBalance: '',
-    startingBalanceDate: getLocalToday()
+    startingBalance: ''
   });
   const [loading, setLoading] = useState(false);
   const [displayStartingBalance, setDisplayStartingBalance] = useState('');
@@ -66,31 +50,9 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   // Check if account needs starting balance (all except loan)
   const needsStartingBalance = formData.type !== 'loan';
 
-  // Helper to format date to YYYY-MM-DD in local timezone
-  const formatToLocalDateString = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
   useEffect(() => {
     if (isOpen) {
       if (editAccount) {
-        // Get startingBalanceDate
-        let sbDateStr = getLocalToday();
-        if (editAccount.startingBalanceDate) {
-          const sbDate = editAccount.startingBalanceDate.seconds 
-            ? new Date(editAccount.startingBalanceDate.seconds * 1000)
-            : new Date(editAccount.startingBalanceDate);
-          sbDateStr = formatToLocalDateString(sbDate);
-        } else if (editAccount.createdAt) {
-          const createdDate = editAccount.createdAt.seconds 
-            ? new Date(editAccount.createdAt.seconds * 1000)
-            : new Date(editAccount.createdAt);
-          sbDateStr = formatToLocalDateString(createdDate);
-        }
-        
         setFormData({
           name: editAccount.name,
           icon: editAccount.icon,
@@ -98,8 +60,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           group: editAccount.group,
           currentValue: editAccount.currentValue || '',
           costBasis: editAccount.costBasis || '',
-          startingBalance: editAccount.startingBalance || '',
-          startingBalanceDate: sbDateStr
+          startingBalance: editAccount.startingBalance || ''
         });
         setDisplayStartingBalance(
           editAccount.startingBalance 
@@ -114,8 +75,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           group: 'SPENDING',
           currentValue: '',
           costBasis: '',
-          startingBalance: '',
-          startingBalanceDate: getLocalToday()
+          startingBalance: ''
         });
         setDisplayStartingBalance('');
       }
@@ -169,64 +129,9 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
       // Add starting balance for all accounts except loan
       if (needsStartingBalance) {
         accountData.startingBalance = parseFloat(formData.startingBalance) || 0;
-        accountData.startingBalanceDate = new Date(formData.startingBalanceDate);
       }
 
       if (editAccount) {
-        const oldName = editAccount.name;
-        const newName = formData.name.trim();
-        
-        // If name changed, update all transactions with old account name
-        if (oldName !== newName) {
-          const updatePromises = [];
-          
-          // Update transactions where account = oldName
-          const accountQuery = query(
-            collection(db, 'transactions'),
-            where('userId', '==', userId),
-            where('account', '==', oldName)
-          );
-          const accountSnapshot = await getDocs(accountQuery);
-          accountSnapshot.docs.forEach(transDoc => {
-            updatePromises.push(
-              updateDoc(doc(db, 'transactions', transDoc.id), { account: newName })
-            );
-          });
-          
-          // Update transfers where fromAccount = oldName
-          const fromQuery = query(
-            collection(db, 'transactions'),
-            where('userId', '==', userId),
-            where('fromAccount', '==', oldName)
-          );
-          const fromSnapshot = await getDocs(fromQuery);
-          fromSnapshot.docs.forEach(transDoc => {
-            updatePromises.push(
-              updateDoc(doc(db, 'transactions', transDoc.id), { fromAccount: newName })
-            );
-          });
-          
-          // Update transfers where toAccount = oldName
-          const toQuery = query(
-            collection(db, 'transactions'),
-            where('userId', '==', userId),
-            where('toAccount', '==', oldName)
-          );
-          const toSnapshot = await getDocs(toQuery);
-          toSnapshot.docs.forEach(transDoc => {
-            updatePromises.push(
-              updateDoc(doc(db, 'transactions', transDoc.id), { toAccount: newName })
-            );
-          });
-          
-          await Promise.all(updatePromises);
-          
-          const totalUpdated = accountSnapshot.size + fromSnapshot.size + toSnapshot.size;
-          if (totalUpdated > 0) {
-            toast.success(`Updated ${totalUpdated} transactions`);
-          }
-        }
-        
         await updateDoc(doc(db, 'accounts', editAccount.id), accountData);
       } else {
         accountData.createdAt = new Date();
@@ -274,7 +179,23 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
         <div className="flex justify-between items-center p-4 border-b">
           <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">{editAccount ? 'Edit Account' : 'Add Account'}</h2>
-          <div className="w-8"></div>
+          <div className="flex items-center gap-2">
+            {editAccount && (
+              <button 
+                onClick={handleDelete}
+                className="text-red-500 text-xl hover:bg-red-50 w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+              >
+                🗑️
+              </button>
+            )}
+            <button 
+              onClick={handleSubmit} 
+              disabled={loading}
+              className="text-emerald-600 font-bold disabled:opacity-50"
+            >
+              {loading ? 'SAVING...' : 'SAVE'}
+            </button>
+          </div>
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto">
@@ -348,42 +269,23 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
                 <span className="font-semibold text-sm">Starting Balance</span>
               </div>
               
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-emerald-600 font-semibold uppercase">Amount</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="0"
-                    value={displayStartingBalance}
-                    onChange={(e) => {
-                      const rawValue = e.target.value.replace(/,/g, '');
-                      if (rawValue === '' || /^\d*$/.test(rawValue)) {
-                        setFormData({...formData, startingBalance: rawValue});
-                        setDisplayStartingBalance(rawValue ? Number(rawValue).toLocaleString('en-US') : '');
-                      }
-                    }}
-                    className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-lg font-semibold"
-                  />
-                </div>
-                
-                <div>
-                  <label className="text-xs text-emerald-600 font-semibold uppercase">Date</label>
-                  <div className="relative mt-1">
-                    <input
-                      type="date"
-                      value={formData.startingBalanceDate}
-                      onChange={(e) => setFormData({...formData, startingBalanceDate: e.target.value})}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <div className="w-full p-3 bg-white rounded-lg flex items-center justify-between">
-                      <span className="text-gray-800">{formatDateForDisplay(formData.startingBalanceDate)}</span>
-                      <span className="text-gray-400">📅</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="text-xs text-emerald-600">
+              <div>
+                <label className="text-xs text-emerald-600 font-semibold uppercase">Current Balance</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={displayStartingBalance}
+                  onChange={(e) => {
+                    const rawValue = e.target.value.replace(/,/g, '');
+                    if (rawValue === '' || /^\d*$/.test(rawValue)) {
+                      setFormData({...formData, startingBalance: rawValue});
+                      setDisplayStartingBalance(rawValue ? Number(rawValue).toLocaleString('en-US') : '');
+                    }
+                  }}
+                  className="w-full p-3 bg-white rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-right text-lg font-semibold"
+                />
+                <div className="text-xs text-emerald-600 mt-1">
                   Enter your current account balance. Leave as 0 if starting fresh.
                 </div>
               </div>
@@ -411,26 +313,6 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
               )}
             </div>
           </div>
-        </div>
-
-        {/* Fixed Bottom Bar */}
-        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
-          {editAccount && (
-            <button 
-              onClick={handleDelete}
-              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
-            >
-              🗑️ Delete
-            </button>
-          )}
-          <div className="flex-1"></div>
-          <button 
-            onClick={handleSubmit} 
-            disabled={loading}
-            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : 'SAVE'}
-          </button>
         </div>
       </div>
     </div>

@@ -21,7 +21,7 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
   const [existingGroups, setExistingGroups] = useState([]);
   const [showGroupSuggestions, setShowGroupSuggestions] = useState(false);
 
-  const expenseIcons = ['🍔', '🚗', '🏠', '💊', '👕', '🎮', '✈️', '📱', '💇', '🎬', '📚', '🐶', '⚡', '💳', '🛒', '🎁', '🍺', '☕', '🏋️', '🎓', '🚌', '🍕'];
+  const expenseIcons = ['🍔', '🚗', '🏠', '💊', '👕', '🎮', '✈️', '📱', '💇', '🎬', '📚', '🐶', '⚡', '💳', '🛒', '🎁', '🍺', '☕', '🏋️', '🎓', '🚌', '🍕', '🏸'];
   const incomeIcons = ['💰', '💵', '💼', '🎁', '📈', '🏆', '💎', '🌟', '🎯', '💸'];
 
   // Load existing groups
@@ -85,12 +85,56 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
         spendingType: formData.type === 'expense' ? formData.spendingType : null
       };
 
-      // Only set createdAt for new categories, or if editing and it exists
       if (editCategory) {
-        // Keep existing createdAt if it exists, otherwise set new one
+        // Keep existing createdAt if it exists
         if (editCategory.createdAt) {
           categoryData.createdAt = editCategory.createdAt;
         }
+        
+        const oldName = editCategory.name;
+        const newName = formData.name.trim();
+        
+        // If name changed, update all transactions with old category name
+        if (oldName !== newName) {
+          const transQuery = query(
+            collection(db, 'transactions'),
+            where('userId', '==', userId),
+            where('category', '==', oldName)
+          );
+          const transSnapshot = await getDocs(transQuery);
+          
+          // Update each transaction
+          const updatePromises = transSnapshot.docs.map(transDoc => 
+            updateDoc(doc(db, 'transactions', transDoc.id), { category: newName })
+          );
+          
+          // Also update split transactions that contain this category
+          const splitQuery = query(
+            collection(db, 'transactions'),
+            where('userId', '==', userId),
+            where('type', '==', 'split')
+          );
+          const splitSnapshot = await getDocs(splitQuery);
+          
+          splitSnapshot.docs.forEach(splitDoc => {
+            const data = splitDoc.data();
+            if (data.splits && data.splits.some(s => s.category === oldName)) {
+              const updatedSplits = data.splits.map(s => 
+                s.category === oldName ? { ...s, category: newName } : s
+              );
+              updatePromises.push(
+                updateDoc(doc(db, 'transactions', splitDoc.id), { splits: updatedSplits })
+              );
+            }
+          });
+          
+          await Promise.all(updatePromises);
+          
+          if (transSnapshot.size > 0 || splitSnapshot.size > 0) {
+            toast.success(`Updated ${transSnapshot.size} transactions`);
+          }
+        }
+        
         await updateDoc(doc(db, 'categories', editCategory.id), categoryData);
       } else {
         categoryData.createdAt = new Date();
@@ -146,23 +190,7 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
         <div className="flex justify-between items-center p-4 border-b">
           <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">{editCategory ? 'Edit Category' : 'Add Category'}</h2>
-          <div className="flex items-center gap-2">
-            {editCategory && (
-              <button 
-                onClick={handleDelete}
-                className="text-red-500 text-xl hover:bg-red-50 w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-              >
-                🗑️
-              </button>
-            )}
-            <button 
-              onClick={handleSubmit} 
-              disabled={loading}
-              className="text-emerald-600 font-bold disabled:opacity-50"
-            >
-              {loading ? 'SAVING...' : 'SAVE'}
-            </button>
-          </div>
+          <div className="w-8"></div>
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto">
@@ -345,6 +373,26 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Fixed Bottom Bar */}
+        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
+          {editCategory && (
+            <button 
+              onClick={handleDelete}
+              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
+            >
+              🗑️ Delete
+            </button>
+          )}
+          <div className="flex-1"></div>
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Saving...' : 'SAVE'}
+          </button>
         </div>
       </div>
     </div>

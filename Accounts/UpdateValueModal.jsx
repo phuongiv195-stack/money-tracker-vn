@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
@@ -24,33 +24,15 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
   };
 
   const handleValueChange = (e) => {
-    let raw = e.target.value.replace(/,/g, '');
-    
-    // Allow negative sign at the beginning
-    if (raw === '-') {
-      setNewValue('-');
-      setDisplayValue('-');
-      return;
-    }
-    
-    // Check if it's a valid number (including negative)
-    if (raw === '' || /^-?\d*\.?\d*$/.test(raw)) {
+    const raw = e.target.value.replace(/,/g, '');
+    if (raw === '' || !isNaN(raw)) {
       setNewValue(raw);
-      if (raw === '' || raw === '-') {
-        setDisplayValue(raw);
-      } else {
-        const num = parseFloat(raw);
-        if (!isNaN(num)) {
-          // Keep negative sign and format
-          const isNegative = raw.startsWith('-');
-          setDisplayValue((isNegative ? '-' : '') + formatNumber(Math.abs(num)));
-        }
-      }
+      setDisplayValue(raw ? formatNumber(raw) : '');
     }
   };
 
   const handleSubmit = async () => {
-    if (!newValue || newValue === '-') {
+    if (!newValue) {
       toast.error('Please enter new value!');
       return;
     }
@@ -64,33 +46,18 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
     setLoading(true);
     try {
       const now = new Date();
-      const previousValue = propCurrentValue || 0;
-      const gainLoss = value - previousValue;
-      
-      // Update currentValue on account (không cần lưu valueHistory nữa)
+      const historyEntry = {
+        value: value,
+        previousValue: propCurrentValue || 0,
+        date: now.toISOString(),
+        timestamp: now.getTime()
+      };
+
       await updateDoc(doc(db, 'accounts', account.id), {
         currentValue: value,
-        lastValueUpdate: now
+        lastValueUpdate: now,
+        valueHistory: arrayUnion(historyEntry)
       });
-
-      // Create Unrealized Gain/Loss transaction if there's a change
-      if (gainLoss !== 0) {
-        const getLocalToday = () => {
-          const year = now.getFullYear();
-          const month = String(now.getMonth() + 1).padStart(2, '0');
-          const day = String(now.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        };
-
-        await addDoc(collection(db, 'transactions'), {
-          userId: account.userId,
-          type: 'unrealized_gain',
-          amount: gainLoss,
-          account: account.name,
-          date: getLocalToday(),
-          createdAt: now
-        });
-      }
 
       if (onSave) onSave();
       onClose();
@@ -106,16 +73,7 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
   const currentValue = propCurrentValue || 0;
   const newValueNum = parseFloat(newValue) || 0;
   const change = newValueNum - currentValue;
-  
-  // Fix percentage calculation
-  // If currentValue is 0 or negative, use absolute value for meaningful %
-  let changePercent = 0;
-  if (currentValue !== 0) {
-    changePercent = ((change / Math.abs(currentValue)) * 100).toFixed(2);
-  } else if (newValueNum !== 0) {
-    // If starting from 0, show 100% gain/loss based on new value
-    changePercent = newValueNum > 0 ? '100.00' : '-100.00';
-  }
+  const changePercent = currentValue > 0 ? ((change / currentValue) * 100).toFixed(2) : 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -127,7 +85,7 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
           <h2 className="font-semibold text-lg">Update Value</h2>
           <button 
             onClick={handleSubmit} 
-            disabled={loading || !newValue || newValue === '-'}
+            disabled={loading || !newValue}
             className="text-emerald-600 font-bold disabled:opacity-50"
           >
             {loading ? '...' : 'SAVE'}
@@ -146,16 +104,16 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
           <div>
             <input
               type="text"
-              inputMode="text"
+              inputMode="numeric"
               placeholder="Enter new value..."
               value={displayValue}
               onChange={handleValueChange}
-              className="w-full p-4 bg-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-2xl font-bold text-center"
-              autoFocus
+              className="w-full p-4 bg-gray-50 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-2xl font-bold text-center"
+              
             />
-            {newValue && newValue !== '-' && (
+            {newValue && (
               <div className={`text-center mt-2 text-sm font-medium ${change >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {change >= 0 ? '↑' : '↓'} {change >= 0 ? '+' : ''}{formatNumber(change)} ({change >= 0 ? '+' : ''}{changePercent}%)
+                {change >= 0 ? '↑' : '↓'} {change >= 0 ? '+' : ''}{formatNumber(change)} ({changePercent}%)
               </div>
             )}
           </div>

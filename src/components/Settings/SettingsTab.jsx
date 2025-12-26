@@ -1,9 +1,25 @@
+import { useState, useEffect } from 'react';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function SettingsTab() {
   const { settings, updateFontSize } = useSettings();
   const { currentUser, logout } = useAuth();
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const fontSizeOptions = [
     { value: 'normal', label: 'Normal', description: 'For larger screens' },
@@ -25,14 +41,23 @@ export default function SettingsTab() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-emerald-500 text-white px-4 py-4 flex items-center gap-3">
-        <button 
-          onClick={handleBack}
-          className="p-1 hover:bg-emerald-600 rounded transition-colors"
-        >
-          ← 
-        </button>
-        <h1 className="text-lg font-semibold">Settings</h1>
+      <div className="bg-emerald-500 text-white px-4 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleBack}
+            className="p-1 hover:bg-emerald-600 rounded transition-colors"
+          >
+            ← 
+          </button>
+          <h1 className="text-lg font-semibold">Settings</h1>
+        </div>
+        {/* Online/Offline indicator */}
+        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+          isOnline ? 'bg-emerald-600' : 'bg-orange-500'
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-300' : 'bg-orange-300'} animate-pulse`}></div>
+          {isOnline ? 'Online' : 'Offline'}
+        </div>
       </div>
 
       {/* Settings List */}
@@ -59,7 +84,7 @@ export default function SettingsTab() {
         </div>
 
         {/* Font Size Section */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
           <div className="px-4 py-3 border-b border-gray-100">
             <h2 className="font-medium text-gray-800">Font Size</h2>
             <p className="text-sm text-gray-500 mt-0.5">
@@ -93,7 +118,7 @@ export default function SettingsTab() {
         </div>
 
         {/* Preview Section */}
-        <div className="mt-4 bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100">
             <h2 className="font-medium text-gray-800">Preview</h2>
           </div>
@@ -117,7 +142,7 @@ export default function SettingsTab() {
 
         {/* Info */}
         <p className="text-center text-gray-400 text-sm mt-6">
-          Settings are saved on this device only
+          Money Tracker v1.2.4
         </p>
       </div>
     </div>

@@ -198,26 +198,30 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
               ⋮
             </button>
             {showMenu && (
-              <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[140px] z-50">
-                <button 
-                  onClick={() => { setShowMenu(false); setEditLoanName(loan.name); setShowEditLoan(true); }}
-                  className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
-                >
-                  ✏️ Rename
-                </button>
-                <button 
-                  onClick={() => { setShowMenu(false); setShowArchiveLoan(true); }}
-                  className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
-                >
-                  📦 Archive
-                </button>
-                <button 
-                  onClick={() => { setShowMenu(false); setShowDeleteLoan(true); }}
-                  className="w-full text-left px-4 py-2 hover:bg-gray-50 text-red-600"
-                >
-                  🗑️ Delete
-                </button>
-              </div>
+              <>
+                {/* Backdrop để đóng menu khi click outside */}
+                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[140px] z-50">
+                  <button 
+                    onClick={() => { setShowMenu(false); setEditLoanName(loan.name); setShowEditLoan(true); }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
+                  >
+                    ✏️ Rename
+                  </button>
+                  <button 
+                    onClick={() => { setShowMenu(false); setShowArchiveLoan(true); }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
+                  >
+                    📦 Archive
+                  </button>
+                  <button 
+                    onClick={() => { setShowMenu(false); setShowDeleteLoan(true); }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-red-600"
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -239,6 +243,24 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
           )}
         </div>
       </div>
+
+      {/* Archive banner when balance = 0 */}
+      {Math.abs(loan.balance) === 0 && (
+        <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-bold text-amber-800">🎉 Loan Settled!</div>
+              <div className="text-sm text-amber-600">Balance is zero. You can archive this loan.</div>
+            </div>
+            <button
+              onClick={() => setShowArchiveLoan(true)}
+              className="bg-amber-500 text-white px-4 py-2 rounded-lg font-medium text-sm hover:bg-amber-600"
+            >
+              Archive
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* FAB Add Transaction Button */}
       {!isSelectMode && (

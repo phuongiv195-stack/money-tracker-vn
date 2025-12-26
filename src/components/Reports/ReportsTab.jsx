@@ -1,36 +1,30 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../../services/firebase';
-import { useUserId } from '../../contexts/AuthContext';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
+import DesktopReports from './DesktopReports';
 
 const ReportsTab = () => {
-  const userId = useUserId();
-  const [transactions, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { transactions, isLoading } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
   
   // Detail view state
   const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | null
   const [dateRange, setDateRange] = useState('this-month');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
 
+  // Check screen size - only show desktop reports on large screens
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Register back handler
   useBackHandler(!!detailView, () => setDetailView(null));
 
   // Colors for pie chart
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#9ca3af'];
-
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => doc.data());
-      setTransactions(trans);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [userId]);
 
   // Get date range based on selection
   const getDateRangeMonths = () => {
@@ -39,6 +33,8 @@ const ReportsTab = () => {
     const currentMonth = now.getMonth();
     
     switch (dateRange) {
+      case 'today':
+        return [{ year: currentYear, month: currentMonth, isToday: true }];
       case 'this-month':
         return [{ year: currentYear, month: currentMonth }];
       case 'last-month':
@@ -128,12 +124,17 @@ const ReportsTab = () => {
   // Monthly data for detail view
   const monthlyData = useMemo(() => {
     const months = getDateRangeMonths();
+    const today = new Date().toISOString().split('T')[0];
     
-    return months.map(({ year, month }) => {
+    return months.map(({ year, month, isToday }) => {
       const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
-      const monthlyTrans = transactions.filter(t => 
-        t.date && t.date.startsWith(monthStr) && t.type !== 'loan'
-      );
+      const monthlyTrans = transactions.filter(t => {
+        if (!t.date || t.type === 'loan') return false;
+        if (isToday) {
+          return t.date === today;
+        }
+        return t.date.startsWith(monthStr);
+      });
 
       let income = 0, expense = 0;
       const catMap = {};
@@ -388,6 +389,7 @@ const ReportsTab = () => {
         onChange={(e) => setDateRange(e.target.value)}
         className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm"
       >
+        <option value="today">Today</option>
         <option value="this-month">This Month</option>
         <option value="last-month">Last Month</option>
         <option value="last-3-months">Last 3 Months</option>
@@ -466,10 +468,15 @@ const ReportsTab = () => {
     );
   };
 
-  if (loading) return <div className="p-4 text-center">Loading reports...</div>;
+  if (isLoading) return <div className="p-4 text-center">Loading reports...</div>;
 
-  // Detail View - Full Screen
-  if (detailView) {
+  // Desktop Detailed Reports - Full Screen
+  if (detailView === 'desktop-detail' && isDesktop) {
+    return <DesktopReports onBack={() => setDetailView(null)} />;
+  }
+
+  // Detail View - Full Screen (Mobile)
+  if (detailView === 'spending' || detailView === 'income-expense') {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col">
         {/* Header */}
@@ -584,6 +591,58 @@ const ReportsTab = () => {
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Detailed Reports - Desktop Only */}
+        <div 
+          onClick={() => {
+            if (isDesktop) {
+              setDetailView('desktop-detail');
+            }
+          }}
+          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl flex items-center justify-center p-2">
+              {/* Custom Report Icon SVG */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                {/* Paper background */}
+                <rect x="8" y="4" width="40" height="52" rx="3" fill="#E8EEF4" stroke="#1E3A5F" strokeWidth="2.5"/>
+                {/* Pie chart */}
+                <circle cx="22" cy="18" r="8" fill="#3B82F6" stroke="#1E3A5F" strokeWidth="1.5"/>
+                <path d="M22 18 L22 10 A8 8 0 0 1 28.9 14.1 Z" fill="#F59E0B"/>
+                <path d="M22 18 L28.9 14.1 A8 8 0 0 1 26.5 25.2 Z" fill="#10B981"/>
+                {/* Lines */}
+                <line x1="34" y1="12" x2="44" y2="12" stroke="#1E3A5F" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="34" y1="18" x2="44" y2="18" stroke="#1E3A5F" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="34" y1="24" x2="44" y2="24" stroke="#1E3A5F" strokeWidth="2" strokeLinecap="round"/>
+                {/* Bar chart */}
+                <rect x="14" y="40" width="5" height="10" fill="#3B82F6" rx="1"/>
+                <rect x="22" y="36" width="5" height="14" fill="#3B82F6" rx="1"/>
+                <rect x="30" y="32" width="5" height="18" fill="#3B82F6" rx="1"/>
+                <rect x="38" y="38" width="5" height="12" fill="#3B82F6" rx="1"/>
+                {/* Pencil */}
+                <rect x="42" y="20" width="8" height="32" rx="2" fill="#F472B6" stroke="#1E3A5F" strokeWidth="1.5" transform="rotate(30 46 36)"/>
+                <polygon points="58,52 54,58 52,52" fill="#F472B6" stroke="#1E3A5F" strokeWidth="1" transform="rotate(30 55 55)"/>
+                <ellipse cx="49" cy="27" rx="2" ry="1" fill="white" transform="rotate(30 49 27)"/>
+                <ellipse cx="51" cy="32" rx="2" ry="1" fill="white" transform="rotate(30 51 32)"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Detailed Reports</h3>
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Desktop Only</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Full spreadsheet view with monthly breakdown, export to CSV
+              </p>
+              {!isDesktop && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                </p>
+              )}
             </div>
           </div>
         </div>

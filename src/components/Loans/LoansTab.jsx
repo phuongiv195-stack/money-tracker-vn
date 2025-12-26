@@ -1,67 +1,31 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { collection, query, where, onSnapshot, writeBatch, doc } from 'firebase/firestore';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { writeBatch, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useUserId } from '../../contexts/AuthContext';
+import { useData } from '../../contexts/DataContext';
 import AddNewLoanModal from './AddNewLoanModal';
 import LoanDetail from './LoanDetail';
 import { useToast } from '../Toast/ToastProvider';
 
 const LoansTab = () => {
   const toast = useToast();
-  const userId = useUserId();
-  const [loanTransactions, setLoanTransactions] = useState([]);
-  const [splitTransactions, setSplitTransactions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { loanTransactions, splitTransactions, isLoading } = useData();
+  
   const [isAddNewLoanOpen, setIsAddNewLoanOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
 
   // Long press & action state
-  const [actionLoan, setActionLoan] = useState(null); // loan being edited/deleted/archived
+  const [actionLoan, setActionLoan] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [editLoanName, setEditLoanName] = useState('');
   const [successMessage, setSuccessMessage] = useState(null);
+  const [showArchivedLoans, setShowArchivedLoans] = useState(false);
 
   // Long press refs
   const longPressTriggered = useRef(false);
   const longPressTimer = useRef(null);
   const touchStartPos = useRef({ x: 0, y: 0 });
-
-  // Load loan transactions
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(
-      collection(db, 'transactions'),
-      where('userId', '==', userId),
-      where('type', '==', 'loan')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLoanTransactions(trans);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [userId]);
-
-  // Load split transactions (may contain loan splits)
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(
-      collection(db, 'transactions'),
-      where('userId', '==', userId),
-      where('type', '==', 'split')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSplitTransactions(trans);
-    });
-
-    return () => unsubscribe();
-  }, [userId]);
 
   // Cleanup timer
   useEffect(() => {
@@ -160,6 +124,53 @@ const LoansTab = () => {
     return loans;
   }, [loanTransactions, splitTransactions]);
 
+  // Calculate ARCHIVED loan data
+  const archivedLoanData = useMemo(() => {
+    const loans = {};
+
+    // Process archived loan transactions
+    loanTransactions.forEach(t => {
+      if (!t.archived) return; // Only archived
+      
+      const loanName = t.loan;
+      if (!loanName) return;
+
+      if (!loans[loanName]) {
+        loans[loanName] = {
+          name: loanName,
+          loanType: t.loanType,
+          balance: 0,
+          paidBack: 0,
+          received: 0,
+          transactions: []
+        };
+      }
+
+      const amt = Number(t.amount);
+      loans[loanName].balance += amt;
+      
+      if (t.loanType === 'borrow' && amt < 0) {
+        loans[loanName].paidBack += Math.abs(amt);
+      } else if (t.loanType === 'lend' && amt > 0) {
+        loans[loanName].received += amt;
+      }
+
+      loans[loanName].transactions.push(t);
+    });
+
+    // Sort transactions by date desc
+    Object.values(loans).forEach(loan => {
+      loan.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+
+    return loans;
+  }, [loanTransactions]);
+
+  // Get archived loans as array
+  const archivedLoans = useMemo(() => {
+    return Object.values(archivedLoanData);
+  }, [archivedLoanData]);
+
   // Separate by loan type
   const { borrowed, lent } = useMemo(() => {
     const b = [];
@@ -185,6 +196,14 @@ const LoansTab = () => {
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US').format(Math.abs(amount));
+  };
+
+  // Helper để format balance (tránh hiển thị -0)
+  const formatBalance = (amount, showSign = true) => {
+    if (amount === 0) return '0';
+    const formatted = formatCurrency(amount);
+    if (!showSign) return formatted;
+    return amount >= 0 ? `+${formatted}` : `-${formatted}`;
   };
 
   // Long press handlers
@@ -312,6 +331,21 @@ const LoansTab = () => {
     }
   };
 
+  const handleRestoreLoan = async (loan) => {
+    try {
+      const batch = writeBatch(db);
+      loan.transactions.forEach(t => {
+        if (!t.isSplitPart) {
+          batch.update(doc(db, 'transactions', t.id), { archived: false });
+        }
+      });
+      await batch.commit();
+      toast.success('Loan restored!');
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    }
+  };
+
   // Render loan item
   const LoanItem = ({ loan, index, total, isBorrow }) => (
     <div
@@ -332,7 +366,7 @@ const LoansTab = () => {
       </div>
       <div className="text-right">
         <div className={`font-bold ${isBorrow ? (loan.balance >= 0 ? 'text-emerald-600' : 'text-gray-900') : 'text-gray-900'}`}>
-          {isBorrow ? (loan.balance >= 0 ? '+' : '-') : '-'}{formatCurrency(loan.balance)}
+          {loan.balance === 0 ? '0' : (isBorrow ? formatBalance(loan.balance) : `-${formatCurrency(loan.balance)}`)}
         </div>
         <div className="text-xs text-gray-400">
           {loan.transactions.length} txn
@@ -341,25 +375,34 @@ const LoansTab = () => {
     </div>
   );
 
-  if (loading) return <div className="p-4 text-center">Loading loans...</div>;
+  if (isLoading) return <div className="p-4 text-center">Loading loans...</div>;
 
   return (
     <div className="pb-24">
       {/* Header */}
       <div className="bg-emerald-600 p-6 text-white">
-        <h1 className="text-xl font-bold text-center mb-4">Loans</h1>
+        <div className="flex justify-between items-center mb-4">
+          <div></div>
+          <h1 className="text-xl font-bold">Loans</h1>
+          <button
+            onClick={() => setIsAddNewLoanOpen(true)}
+            className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1 text-sm font-medium"
+          >
+            + New
+          </button>
+        </div>
         
         <div className="flex justify-around">
           <div className="text-center">
             <div className="text-sm opacity-80">I Borrowed</div>
             <div className="text-2xl font-bold">
-              {totals.borrowed >= 0 ? '+' : '-'}{formatCurrency(totals.borrowed)}
+              {formatBalance(totals.borrowed)}
             </div>
           </div>
           <div className="text-center">
             <div className="text-sm opacity-80">I Lent</div>
             <div className="text-2xl font-bold">
-              -{formatCurrency(totals.lent)}
+              {totals.lent === 0 ? '0' : `-${formatCurrency(totals.lent)}`}
             </div>
           </div>
         </div>
@@ -397,21 +440,59 @@ const LoansTab = () => {
         </div>
       )}
 
+      {/* Archived Loans Section */}
+      {archivedLoans.length > 0 && (
+        <div className="px-4 mt-4 mb-4">
+          <button
+            onClick={() => setShowArchivedLoans(!showArchivedLoans)}
+            className="w-full flex items-center justify-between text-sm font-bold text-gray-400 uppercase mb-2 py-2"
+          >
+            <span>📦 Archived Loans ({archivedLoans.length})</span>
+            <span className="text-lg">{showArchivedLoans ? '▲' : '▼'}</span>
+          </button>
+          
+          {showArchivedLoans && (
+            <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+              {archivedLoans.map((loan, index) => (
+                <div
+                  key={loan.name}
+                  className={`p-4 flex justify-between items-center ${index !== archivedLoans.length - 1 ? 'border-b border-gray-200' : ''}`}
+                >
+                  <div>
+                    <div className="font-medium text-gray-600">{loan.name}</div>
+                    <div className="text-xs text-gray-400">
+                      {loan.loanType === 'borrow' ? 'Borrowed' : 'Lent'} • {loan.transactions.length} txn
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-bold text-gray-500">
+                        {loan.balance === 0 ? '0' : formatBalance(loan.balance)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRestoreLoan(loan)}
+                      className="px-3 py-1 bg-emerald-100 text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-200"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Empty State */}
-      {borrowed.length === 0 && lent.length === 0 && (
+      {borrowed.length === 0 && lent.length === 0 && archivedLoans.length === 0 && (
         <div className="text-center text-gray-500 py-12 px-4">
           <div className="text-4xl mb-3">💰</div>
           <p className="mb-4">No loans yet</p>
         </div>
       )}
 
-      {/* Add New Loan Button */}
-      <button
-        onClick={() => setIsAddNewLoanOpen(true)}
-        className="fixed bottom-24 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-600 z-30"
-      >
-        +
-      </button>
+      {/* Add New Loan Button - in header area, not FAB */}
 
       {/* Modals */}
       <AddNewLoanModal

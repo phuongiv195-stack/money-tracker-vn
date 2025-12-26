@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { writeBatch, doc } from 'firebase/firestore';
+import { writeBatch, doc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
@@ -142,6 +142,27 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
     }
   };
 
+  const handleDuplicateSelected = async () => {
+    if (selectedItems.size === 0) return;
+    try {
+      const selectedTransactions = history.filter(t => selectedItems.has(t.id));
+      
+      for (const t of selectedTransactions) {
+        const { id, isSplitTransaction, ...transactionData } = t;
+        await addDoc(collection(db, 'transactions'), {
+          ...transactionData,
+          createdAt: new Date()
+        });
+      }
+      
+      setSuccessMessage(`Duplicated ${selectedItems.size} transaction(s)`);
+      setSelectedItems(new Set());
+      setIsSelectMode(false);
+    } catch (err) { 
+      alert('Error: ' + err.message); 
+    }
+  };
+
   const exitSelectMode = () => {
     setIsSelectMode(false);
     setSelectedItems(new Set());
@@ -168,10 +189,11 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
   // Split icon
   const SplitIcon = () => (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600 inline-block mr-1">
-      <path d="M16 3l-4 4-4-4" />
-      <path d="M12 7v6" />
-      <path d="M8 21l4-4 4 4" />
-      <path d="M12 17v-4" />
+      <path d="M12 22v-10" />
+      <path d="M12 12C12 8 8 5 4 3" />
+      <path d="M12 12C12 8 16 5 20 3" />
+      <polyline points="6 6 4 3 1 5" />
+      <polyline points="18 6 20 3 23 5" />
     </svg>
   );
 
@@ -184,6 +206,7 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
           <div className="font-bold text-lg text-white">{selectedItems.size} selected</div>
           <div className="flex gap-2">
             <button onClick={handleSelectAll} className="text-white text-sm px-3 py-1 bg-white/20 rounded-lg">All</button>
+            <button onClick={handleDuplicateSelected} className="text-white text-sm px-3 py-1 bg-emerald-500 rounded-lg">📋</button>
             <button onClick={() => setShowDeleteConfirm(true)} className="text-white text-sm px-3 py-1 bg-red-500 rounded-lg">🗑️</button>
           </div>
         </div>

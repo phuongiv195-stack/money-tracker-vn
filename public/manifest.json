@@ -1,7 +1,7 @@
 {
-  "name": "Money Tracker",
-  "short_name": "Money",
-  "description": "Personal Finance Manager",
+  "name": "Money Tracker VN",
+  "short_name": "PD Rich",
+  "description": "Personal finance management app",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -29,7 +29,7 @@
       "url": "/?action=add-transaction",
       "icons": [
         {
-          "src": "/icons/add-icon-96.png",
+          "src": "/icons/icon-96.png",
           "sizes": "96x96",
           "type": "image/png"
         }

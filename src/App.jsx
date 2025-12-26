@@ -1,15 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
+import { DataProvider, useData } from './contexts/DataContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
-import TransactionsTab from './components/Transactions/TransactionsTab';
-import AccountsTab from './components/Accounts/AccountsTab';
-import ReportsTab from './components/Reports/ReportsTab';
-import LoansTab from './components/Loans/LoansTab';
-import SettingsTab from './components/Settings/SettingsTab';
+
+// Lazy load tabs that aren't shown on initial load
+const TransactionsTab = lazy(() => import('./components/Transactions/TransactionsTab'));
+const AccountsTab = lazy(() => import('./components/Accounts/AccountsTab'));
+const ReportsTab = lazy(() => import('./components/Reports/ReportsTab'));
+const LoansTab = lazy(() => import('./components/Loans/LoansTab'));
+const SettingsTab = lazy(() => import('./components/Settings/SettingsTab'));
+
+// Loading fallback component
+const TabLoader = () => (
+  <div className="flex items-center justify-center h-64">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500 mx-auto mb-2"></div>
+      <div className="text-gray-500 text-sm">Loading...</div>
+    </div>
+  </div>
+);
 
 function AppContent() {
   const { currentUser } = useAuth();
@@ -22,15 +35,15 @@ function AppContent() {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Check for shortcut action on app launch
+  // Check URL for PWA shortcut action (Add Transaction)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const action = urlParams.get('action');
     
     if (action === 'add-transaction') {
-      // Open Add Transaction modal
+      // Open Add Transaction modal immediately
       setIsModalOpen(true);
-      // Clean up URL
+      // Clean up URL without reload
       window.history.replaceState({}, '', '/');
     }
   }, []);
@@ -79,15 +92,35 @@ function AppContent() {
       case 'categories':
         return <CategoriesTab />;
       case 'transactions':
-        return <TransactionsTab />;
+        return (
+          <Suspense fallback={<TabLoader />}>
+            <TransactionsTab />
+          </Suspense>
+        );
       case 'accounts':
-        return <AccountsTab />;
+        return (
+          <Suspense fallback={<TabLoader />}>
+            <AccountsTab />
+          </Suspense>
+        );
       case 'loans':
-        return <LoansTab />;
+        return (
+          <Suspense fallback={<TabLoader />}>
+            <LoansTab />
+          </Suspense>
+        );
       case 'reports':
-        return <ReportsTab />;
+        return (
+          <Suspense fallback={<TabLoader />}>
+            <ReportsTab />
+          </Suspense>
+        );
       case 'settings':
-        return <SettingsTab />;
+        return (
+          <Suspense fallback={<TabLoader />}>
+            <SettingsTab />
+          </Suspense>
+        );
       default:
         return <CategoriesTab />;
     }
@@ -111,39 +144,39 @@ function AppContent() {
         </button>
       )}
 
-      {/* Bottom Navigation - 5 TABS */}
+      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20">
         <div className="max-w-md mx-auto flex justify-around">
-          <NavButton 
-            active={activeTab === 'categories'} 
-            onClick={() => setActiveTab('categories')}
-            icon="📊" 
-            label="Categories" 
-          />
-          <NavButton 
-            active={activeTab === 'transactions'} 
-            onClick={() => setActiveTab('transactions')}
-            icon="📝" 
-            label="Transactions" 
-          />
-          <NavButton 
-            active={activeTab === 'accounts'} 
-            onClick={() => setActiveTab('accounts')}
-            icon="🏦" 
-            label="Accounts" 
-          />
-          <NavButton 
-            active={activeTab === 'loans'} 
-            onClick={() => setActiveTab('loans')}
-            icon="💰" 
-            label="Loans" 
-          />
-          <NavButton 
-            active={activeTab === 'reports'} 
-            onClick={() => setActiveTab('reports')}
-            icon="📈" 
-            label="Reports" 
-          />
+         <NavButton 
+  active={activeTab === 'categories'} 
+  onClick={() => setActiveTab('categories')}
+  icon="/icons/cat.png" 
+  label="Categories" 
+/>
+<NavButton 
+  active={activeTab === 'transactions'} 
+  onClick={() => setActiveTab('transactions')}
+  icon="/icons/trans.png" 
+  label="Trans." 
+/>
+<NavButton 
+  active={activeTab === 'accounts'} 
+  onClick={() => setActiveTab('accounts')}
+  icon="/icons/acc.png" 
+  label="Accounts" 
+/>
+<NavButton 
+  active={activeTab === 'loans'} 
+  onClick={() => setActiveTab('loans')}
+  icon="/icons/loan.png" 
+  label="Loans" 
+/>
+<NavButton 
+  active={activeTab === 'reports'} 
+  onClick={() => setActiveTab('reports')}
+  icon="/icons/rep.png" 
+  label="Reports" 
+/>
         </div>
       </nav>
 
@@ -162,12 +195,18 @@ function AppContent() {
 const NavButton = ({ active, onClick, icon, label }) => (
   <button 
     onClick={onClick}
-    className={`flex-1 py-3 flex flex-col items-center justify-center transition-colors ${
-      active ? 'text-emerald-600' : 'text-gray-400 hover:text-gray-600'
-    }`}
+    className="flex-1 py-2 flex flex-col items-center justify-center transition-all"
   >
-    <span className="text-xl mb-1">{icon}</span>
-    <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
+    <div className={`p-2 rounded-xl transition-all ${active ? 'bg-emerald-100' : ''}`}>
+      <img 
+        src={icon} 
+        alt={label} 
+        className="w-7 h-7"
+        onContextMenu={(e) => e.preventDefault()}
+        draggable={false}
+      />
+    </div>
+    <span className={`text-[11px] font-semibold uppercase tracking-wide mt-0.5 ${active ? 'text-emerald-600' : 'text-gray-500'}`}>{label}</span>
   </button>
 );
 
@@ -175,7 +214,9 @@ function App() {
   return (
     <Router>
       <NavigationProvider>
-        <AppContent />
+        <DataProvider>
+          <AppContent />
+        </DataProvider>
       </NavigationProvider>
     </Router>
   );

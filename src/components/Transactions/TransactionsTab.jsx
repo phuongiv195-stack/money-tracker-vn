@@ -1,16 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, orderBy, limit, writeBatch, doc } from 'firebase/firestore';
+import React, { useState, useMemo, useCallback } from 'react';
+import { writeBatch, doc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
+import { useData } from '../../contexts/DataContext';
 import AddTransactionModal from './AddTransactionModal';
 
 const TransactionsTab = () => {
   const userId = useUserId();
-  const [transactions, setTransactions] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { transactions, accountNames, categoryNames, isLoading } = useData();
+  
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -18,6 +16,7 @@ const TransactionsTab = () => {
   const [filterType, setFilterType] = useState('all');
   const [filterAccount, setFilterAccount] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
+  const [filterTime, setFilterTime] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
   // Multi-select state
@@ -26,60 +25,25 @@ const TransactionsTab = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [successMessage, setSuccessMessage] = useState(null);
 
-  useEffect(() => {
-    if (!userId) return;
-    try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('userId', '==', userId),
-        orderBy('date', 'desc'),
-        limit(200)
-      );
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const trans = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setTransactions(trans);
-        setLoading(false);
-      }, (err) => {
-        console.error("Firebase Error:", err);
-        setError("Cannot load data");
-        setLoading(false);
-      });
-
-      return () => unsubscribe();
-    } catch (err) {
-      setError("Query error: " + err.message);
-      setLoading(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(
-      collection(db, 'accounts'),
-      where('userId', '==', userId),
-      where('isActive', '==', true)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setAccounts(snapshot.docs.map(doc => doc.data().name).filter(Boolean));
-    });
-    return () => unsubscribe();
-  }, [userId]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, 'categories'), where('userId', '==', userId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setCategories(snapshot.docs.map(doc => doc.data().name).filter(Boolean));
-    });
-    return () => unsubscribe();
-  }, [userId]);
+  // Long press state for duplicate
+  const [longPressTimer, setLongPressTimer] = useState(null);
 
   const filteredTransactions = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    
     return transactions.filter(t => {
+      // Time filter
+      if (filterTime !== 'all') {
+        const tDate = t.date;
+        if (filterTime === 'today' && tDate !== today) return false;
+        if (filterTime === 'week' && tDate < startOfWeek.toISOString().split('T')[0]) return false;
+        if (filterTime === 'month' && tDate < startOfMonth.toISOString().split('T')[0]) return false;
+      }
+
       if (filterType !== 'all') {
         if (filterType === 'split' && t.type !== 'split') return false;
         if (filterType !== 'split' && t.type === 'split' && t.splitType !== filterType) return false;
@@ -119,7 +83,7 @@ const TransactionsTab = () => {
 
       return true;
     });
-  }, [transactions, filterType, filterAccount, filterCategory, searchQuery]);
+  }, [transactions, filterType, filterAccount, filterCategory, filterTime, searchQuery]);
 
   const totals = useMemo(() => {
     let income = 0, expense = 0;
@@ -146,10 +110,23 @@ const TransactionsTab = () => {
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(t);
     });
+    
+    // Sort transactions within each day by createdAt (newest first)
+    Object.keys(groups).forEach(dateKey => {
+      groups[dateKey].sort((a, b) => {
+        const getTimestamp = (t) => {
+          if (t.createdAt?.seconds) return t.createdAt.seconds * 1000;
+          if (t.createdAt) return new Date(t.createdAt).getTime();
+          return 0;
+        };
+        return getTimestamp(b) - getTimestamp(a);
+      });
+    });
+    
     return groups;
   }, [filteredTransactions]);
 
-  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all';
+  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all';
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0';
@@ -157,46 +134,65 @@ const TransactionsTab = () => {
   };
 
   const formatDateLabel = (dateStr) => {
-    if (!dateStr || dateStr === 'Unknown') return 'Unknown Date';
-    try {
-      const date = new Date(dateStr);
-      const yyyy = date.getFullYear();
-      const mm = String(date.getMonth() + 1).padStart(2, '0');
-      const dd = String(date.getDate()).padStart(2, '0');
-      const day = date.toLocaleDateString('en-US', { weekday: 'short' });
-      return `${yyyy}/${mm}/${dd} ${day}`;
-    } catch (e) {
-      return dateStr;
-    }
+    if (dateStr === 'Unknown') return 'Unknown Date';
+    const date = new Date(dateStr + 'T00:00:00');
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (dateStr === today.toISOString().split('T')[0]) return 'Today';
+    if (dateStr === yesterday.toISOString().split('T')[0]) return 'Yesterday';
+    
+    return date.toLocaleDateString('en-US', { 
+      weekday: 'short', 
+      month: 'short', 
+      day: 'numeric' 
+    });
   };
 
-  // Multi-select functions
-  const handleLongPress = (itemId) => {
+  // Toggle select mode
+  const handleLongPress = useCallback((id) => {
     if (!isSelectMode) {
       setIsSelectMode(true);
-      setSelectedItems(new Set([itemId]));
+      setSelectedItems(new Set([id]));
       if (navigator.vibrate) navigator.vibrate(50);
     }
-  };
+  }, [isSelectMode]);
 
-  const handleSelectItem = (itemId) => {
-    if (!isSelectMode) return;
-    const newSelected = new Set(selectedItems);
-    if (newSelected.has(itemId)) {
-      newSelected.delete(itemId);
-    } else {
-      newSelected.add(itemId);
+  // Touch handlers for long press
+  const handleTouchStart = useCallback((id) => {
+    const timer = setTimeout(() => handleLongPress(id), 500);
+    setLongPressTimer(timer);
+  }, [handleLongPress]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
     }
-    setSelectedItems(newSelected);
-  };
+  }, [longPressTimer]);
 
-  const handleSelectAll = () => {
-    const allIds = new Set(filteredTransactions.map(t => t.id));
-    setSelectedItems(allIds);
-  };
+  // Handle transaction click
+  const handleTransactionClick = useCallback((t) => {
+    if (isSelectMode) {
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(t.id)) {
+          newSet.delete(t.id);
+        } else {
+          newSet.add(t.id);
+        }
+        if (newSet.size === 0) setIsSelectMode(false);
+        return newSet;
+      });
+    } else {
+      setEditingTransaction(t);
+      setIsModalOpen(true);
+    }
+  }, [isSelectMode]);
 
+  // Delete selected transactions
   const handleDeleteSelected = async () => {
-    if (selectedItems.size === 0) return;
     try {
       const batch = writeBatch(db);
       selectedItems.forEach(id => {
@@ -207,149 +203,162 @@ const TransactionsTab = () => {
       setSelectedItems(new Set());
       setIsSelectMode(false);
       setShowDeleteConfirm(false);
-    } catch (err) { 
-      alert('Error: ' + err.message); 
+    } catch (err) {
+      console.error('Delete error:', err);
     }
   };
 
-  const exitSelectMode = () => {
+  // Duplicate selected transactions
+  const handleDuplicateSelected = async () => {
+    try {
+      const toDuplicate = transactions.filter(t => selectedItems.has(t.id));
+      
+      for (const t of toDuplicate) {
+        const { id, ...data } = t;
+        await addDoc(collection(db, 'transactions'), {
+          ...data,
+          createdAt: serverTimestamp()
+        });
+      }
+      
+      setSuccessMessage(`Duplicated ${selectedItems.size} transaction(s)`);
+      setSelectedItems(new Set());
+      setIsSelectMode(false);
+    } catch (err) {
+      console.error('Duplicate error:', err);
+    }
+  };
+
+  // Cancel select mode
+  const cancelSelectMode = () => {
     setIsSelectMode(false);
     setSelectedItems(new Set());
   };
 
-  // Long press handler
-  let longPressTimer = null;
-  const handleTouchStart = (itemId) => {
-    longPressTimer = setTimeout(() => handleLongPress(itemId), 500);
-  };
-  const handleTouchEnd = () => {
-    if (longPressTimer) clearTimeout(longPressTimer);
+  // Select all visible
+  const selectAll = () => {
+    const allIds = new Set(filteredTransactions.map(t => t.id));
+    setSelectedItems(allIds);
   };
 
-  const handleTransactionClick = (transaction) => {
-    if (isSelectMode) {
-      handleSelectItem(transaction.id);
-    } else {
-      setEditingTransaction(transaction);
-      setIsModalOpen(true);
-    }
-  };
-
-  const clearFilters = () => {
-    setFilterType('all');
-    setFilterAccount('all');
-    setFilterCategory('all');
-    setSearchQuery('');
-  };
-
-  // Split icon
-  const SplitIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600">
-      <path d="M16 3l-4 4-4-4" />
-      <path d="M12 7v6" />
-      <path d="M8 21l4-4 4 4" />
-      <path d="M12 17v-4" />
-    </svg>
-  );
-
-  if (loading) return <div className="p-4 text-center">Loading transactions...</div>;
-  if (error) return <div className="p-4 text-center text-red-500 text-sm">{error}</div>;
+  if (isLoading) return <div className="p-4 text-center">Loading transactions...</div>;
 
   return (
     <div className="pb-24">
-      {/* Header - changes based on select mode */}
-      {isSelectMode ? (
-        <div className="bg-indigo-600 p-4 shadow-sm sticky top-0 z-10">
+      {/* Header */}
+      <div className="bg-white p-4 shadow-sm sticky top-0 z-10">
+        {/* Select Mode Header */}
+        {isSelectMode ? (
           <div className="flex items-center justify-between">
-            <button onClick={exitSelectMode} className="text-white text-lg p-2 -ml-2">✕</button>
-            <div className="font-bold text-lg text-white">{selectedItems.size} selected</div>
+            <button onClick={cancelSelectMode} className="text-gray-500 text-lg">✕</button>
+            <span className="font-bold text-lg">{selectedItems.size} selected</span>
             <div className="flex gap-2">
-              <button onClick={handleSelectAll} className="text-white text-sm px-3 py-1 bg-white/20 rounded-lg">All</button>
-              <button onClick={() => setShowDeleteConfirm(true)} className="text-white text-sm px-3 py-1 bg-red-500 rounded-lg">🗑️</button>
+              <button onClick={selectAll} className="text-emerald-600 text-sm font-medium">All</button>
+              <button 
+                onClick={handleDuplicateSelected}
+                className="bg-sky-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+              >
+                📋
+              </button>
+              <button 
+                onClick={() => setShowDeleteConfirm(true)}
+                className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+              >
+                🗑️
+              </button>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="bg-white p-4 shadow-sm sticky top-0 z-10">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-bold text-gray-800">Transactions</h1>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`px-3 py-1 rounded-lg text-sm font-medium ${
-                hasActiveFilters 
-                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
-                  : 'bg-gray-100 text-gray-600'
-              }`}
-            >
-              🔽 Filters {hasActiveFilters && `(${[filterType !== 'all', filterAccount !== 'all', filterCategory !== 'all'].filter(Boolean).length})`}
-            </button>
-          </div>
+        ) : (
+          <>
+            {/* Search */}
+            <div className="flex items-center gap-2 mb-3">
+              <input
+                type="text"
+                placeholder="🔍 Search transactions..."
+                className="flex-1 p-2 pl-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:border-emerald-500"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`p-2 rounded-lg border transition-colors ${
+                  hasActiveFilters 
+                    ? 'bg-emerald-500 text-white border-emerald-500' 
+                    : 'bg-gray-50 text-gray-600 border-gray-300'
+                }`}
+              >
+                ⚙️
+              </button>
+            </div>
 
-          <input
-            type="text"
-            placeholder="🔍 Search..."
-            className="w-full p-2 pl-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:border-emerald-500"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-
-          {showFilters && (
-            <div className="mt-3 p-3 bg-gray-50 rounded-lg border space-y-3">
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold mb-1 block">Type</label>
-                <div className="flex gap-2">
-                  {['all', 'income', 'expense', 'loan'].map(type => (
-                    <button
-                      key={type}
-                      onClick={() => setFilterType(type)}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize ${
-                        filterType === type
-                          ? type === 'income' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                          : type === 'expense' ? 'bg-gray-200 text-gray-800 border border-gray-400'
-                          : type === 'loan' ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                          : 'bg-emerald-500 text-white'
-                          : 'bg-white text-gray-500 border border-gray-200'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
+            {/* Filters */}
+            {showFilters && (
+              <div className="space-y-2 mb-3 p-3 bg-gray-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-2">
+                  <select 
+                    value={filterType} 
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="p-2 rounded border border-gray-200 text-sm"
+                  >
+                    <option value="all">All Types</option>
+                    <option value="expense">Expense</option>
+                    <option value="income">Income</option>
+                    <option value="transfer">Transfer</option>
+                    <option value="split">Split</option>
+                  </select>
+                  <select 
+                    value={filterTime} 
+                    onChange={(e) => setFilterTime(e.target.value)}
+                    className="p-2 rounded border border-gray-200 text-sm"
+                  >
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="month">This Month</option>
+                  </select>
+                  <select 
+                    value={filterAccount} 
+                    onChange={(e) => setFilterAccount(e.target.value)}
+                    className="p-2 rounded border border-gray-200 text-sm"
+                  >
+                    <option value="all">All Accounts</option>
+                    {accountNames.map(acc => (
+                      <option key={acc} value={acc}>{acc}</option>
+                    ))}
+                  </select>
+                  <select 
+                    value={filterCategory} 
+                    onChange={(e) => setFilterCategory(e.target.value)}
+                    className="p-2 rounded border border-gray-200 text-sm"
+                  >
+                    <option value="all">All Categories</option>
+                    {categoryNames.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
+                {hasActiveFilters && (
+                  <button
+                    onClick={() => {
+                      setFilterType('all');
+                      setFilterAccount('all');
+                      setFilterCategory('all');
+                      setFilterTime('all');
+                    }}
+                    className="text-xs text-red-500 font-medium"
+                  >
+                    Clear All Filters
+                  </button>
+                )}
               </div>
+            )}
 
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold mb-1 block">Account</label>
-                <select
-                  value={filterAccount}
-                  onChange={(e) => setFilterAccount(e.target.value)}
-                  className="w-full p-2 bg-white rounded-lg border outline-none"
-                >
-                  <option value="all">All Accounts</option>
-                  {accounts.map(acc => <option key={acc} value={acc}>{acc}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold mb-1 block">Category</label>
-                <select
-                  value={filterCategory}
-                  onChange={(e) => setFilterCategory(e.target.value)}
-                  className="w-full p-2 bg-white rounded-lg border outline-none"
-                >
-                  <option value="all">All Categories</option>
-                  {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-              </div>
-
-              {hasActiveFilters && (
-                <button onClick={clearFilters} className="w-full py-2 text-sm text-gray-600">
-                  ✕ Clear filters
-                </button>
-              )}
+            <div className="text-xs text-gray-400 text-center">
+              Hold to select • Tap to edit
             </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {/* Totals */}
       {!isSelectMode && (
@@ -381,13 +390,14 @@ const TransactionsTab = () => {
               <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
                 {items.map((t, index) => {
                   const isSplit = t.type === 'split';
+                  const isTransfer = t.type === 'transfer';
+                  const isUnrealizedGain = t.type === 'unrealized_gain';
                   const amount = isSplit ? Number(t.totalAmount) : Number(t.amount);
                   const isPositive = amount > 0;
                   const isSelected = selectedItems.has(t.id);
                   
-                  // Get account display
-                  const accountDisplay = t.type === 'transfer' 
-                    ? `${t.fromAccount} → ${t.toAccount}`
+                  const accountDisplay = isTransfer 
+                    ? `${t.fromAccount || '?'} → ${t.toAccount || '?'}`
                     : t.account;
                   
                   return (
@@ -413,31 +423,34 @@ const TransactionsTab = () => {
                               {isSplit && <SplitIcon />}
                               {t.type === 'loan' 
                                 ? (t.memo || 'Loan transaction')
-                                : t.type === 'transfer'
-                                  ? 'Transfer'
-                                  : (t.payee || 'No Payee')
+                                : isTransfer
+                                  ? `Transfer: ${t.fromAccount || '?'} → ${t.toAccount || '?'}`
+                                  : isUnrealizedGain
+                                    ? `📈 Unrealized ${isPositive ? 'Gain' : 'Loss'}`
+                                    : (t.payee || 'No Payee')
                               }
                             </div>
                             
-                            {/* Subtitle with category/loan + account */}
                             {!isSplit && (
-                              <div className="text-xs text-gray-500">
-                                {t.type === 'loan' ? t.loan : t.type === 'transfer' ? '' : t.category}
-                                {accountDisplay && <span className="text-gray-400"> • {accountDisplay}</span>}
+                              <div className="text-xs text-gray-500 truncate">
+                                {t.type === 'loan' ? t.loan : isTransfer ? '' : isUnrealizedGain ? t.account : t.category}
+                                {t.memo && <span className="text-gray-400"> • {t.memo}</span>}
                               </div>
                             )}
                             
-                            {/* Split: show account */}
-                            {isSplit && (
-                              <div className="text-xs text-gray-400">
-                                {accountDisplay}
+                            {isSplit && t.memo && (
+                              <div className="text-xs text-gray-400 truncate">
+                                {t.memo}
                               </div>
                             )}
                           </div>
                         </div>
 
-                        <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
-                          {isPositive ? '+' : '-'}{formatCurrency(amount)}
+                        <div className="text-right">
+                          <div className={`font-bold ${isUnrealizedGain ? (isPositive ? 'text-emerald-600' : 'text-red-600') : (isPositive ? 'text-emerald-600' : 'text-gray-900')}`}>
+                            {isPositive ? '+' : '-'}{formatCurrency(amount)}
+                          </div>
+                          <div className="text-xs text-gray-400">{accountDisplay}</div>
                         </div>
                       </div>
 
@@ -528,5 +541,12 @@ const TransactionsTab = () => {
     </div>
   );
 };
+
+// Split icon component
+const SplitIcon = () => (
+  <svg className="w-4 h-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 3v6m0 0l-3-3m3 3l3-3M6 12h12M6 12l3-3M6 12l3 3M18 12l-3-3M18 12l-3 3M12 15v6m0 0l-3-3m3 3l3-3" />
+  </svg>
+);
 
 export default TransactionsTab;

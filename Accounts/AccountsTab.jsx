@@ -1,24 +1,63 @@
-import React, { useState, useMemo } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useData } from '../../contexts/DataContext';
+import { useUserId } from '../../contexts/AuthContext';
 import AddAccountModal from './AddAccountModal';
 import AccountDetail from './AccountDetail';
 import ReorderAccountsModal from './ReorderAccountsModal';
-import { useToast } from '../Toast/ToastProvider';
 
 const AccountsTab = () => {
-  const toast = useToast();
-  const { accounts, transactions, accountBalances, isLoading } = useData();
-  
+  const userId = useUserId();
+  const [accounts, setAccounts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
+  
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [selectedAccount, setSelectedAccount] = useState(null);
-  const [showArchivedAccounts, setShowArchivedAccounts] = useState(false);
 
-  // Use cached balances from DataContext
-  const balances = accountBalances;
+  // Fetch Accounts from Firebase
+  useEffect(() => {
+    if (!userId) return;
+    const q = query(collection(db, 'accounts'), where('userId', '==', userId));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const accs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAccounts(accs);
+    });
+    return () => unsubscribe();
+  }, [userId]);
+
+  // Fetch Transactions
+  useEffect(() => {
+    if (!userId) return;
+    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTransactions(trans);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [userId]);
+
+  // Calculate balances for transaction-based accounts
+  const balances = useMemo(() => {
+    const bal = {};
+
+    transactions.forEach(t => {
+      const amt = Number(t.amount);
+      
+      if (t.type === 'transfer') {
+        if (t.fromAccount) bal[t.fromAccount] = (bal[t.fromAccount] || 0) - amt;
+        if (t.toAccount) bal[t.toAccount] = (bal[t.toAccount] || 0) + amt;
+      } else {
+        const acc = t.account;
+        if (acc) bal[acc] = (bal[acc] || 0) + amt;
+      }
+    });
+    
+    return bal;
+  }, [transactions]);
 
   // Group accounts and calculate balances
   const accountGroups = useMemo(() => {
@@ -36,22 +75,47 @@ const AccountsTab = () => {
       
       let balance;
       if (isMarketValue) {
-        // Tính: startingBalance + tất cả transactions (bao gồm unrealized_gain)
+        // Tính theo thứ tự thời gian: startingBalance + transactions + value updates
         const accTransactions = transactions.filter(t => {
           if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
           return t.account === acc.name;
         });
         
+        const allEvents = [];
+        
+        // Thêm startingBalance như event đầu tiên (nếu có)
         const startingBalance = acc.startingBalance || 0;
         
-        // Cộng tất cả transactions
-        balance = startingBalance;
+        // Thêm transactions - dùng createdAt để có timestamp chính xác
         accTransactions.forEach(t => {
+          let amt = 0;
           if (t.type === 'transfer') {
-            balance += t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
+            amt = t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
           } else {
-            // Bao gồm unrealized_gain, expense, income...
-            balance += Number(t.amount) || 0;
+            amt = Number(t.amount) || 0;
+          }
+          // Ưu tiên createdAt, fallback về date
+          const ts = t.createdAt?.seconds ? t.createdAt.seconds * 1000 : new Date(t.date).getTime();
+          allEvents.push({ type: 'transaction', amount: amt, timestamp: ts });
+        });
+        
+        // Thêm value updates
+        if (acc.valueHistory) {
+          acc.valueHistory.forEach(entry => {
+            allEvents.push({ type: 'valueUpdate', value: entry.value, timestamp: entry.timestamp });
+          });
+        }
+        
+        // Sắp xếp theo thời gian
+        allEvents.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Tính current value - bắt đầu từ startingBalance
+        balance = startingBalance;
+        allEvents.forEach(event => {
+          if (event.type === 'valueUpdate') {
+            balance = event.value;
+          } else {
+            balance += event.amount;
           }
         });
       } else {
@@ -94,22 +158,7 @@ const AccountsTab = () => {
     setIsAddModalOpen(true);
   };
 
-  // Get archived accounts (isActive = false)
-  const archivedAccounts = useMemo(() => {
-    return accounts.filter(acc => !acc.isActive && acc.group !== 'LOANS');
-  }, [accounts]);
-
-  // Restore archived account
-  const handleRestoreAccount = async (account) => {
-    try {
-      await updateDoc(doc(db, 'accounts', account.id), { isActive: true });
-      toast.success('Account restored!');
-    } catch (err) {
-      toast.error('Error: ' + err.message);
-    }
-  };
-
-  if (isLoading) return <div className="p-4 text-center">Loading accounts...</div>;
+  if (loading) return <div className="p-4 text-center">Loading accounts...</div>;
 
   return (
     <div className="pb-24">
@@ -149,6 +198,10 @@ const AccountsTab = () => {
                       key={acc.id} 
                       className="p-4 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
                       onClick={() => handleAccountClick(acc)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        handleEditAccount(acc);
+                      }}
                     >
                       <div className="flex items-center gap-3">
                         <span className="text-xl">{acc.icon}</span>
@@ -169,7 +222,7 @@ const AccountsTab = () => {
       </div>
 
       {/* Empty State */}
-      {accounts.filter(a => a.isActive && a.group !== 'LOANS').length === 0 && archivedAccounts.length === 0 && (
+      {accounts.filter(a => a.isActive && a.group !== 'LOANS').length === 0 && (
         <div className="text-center text-gray-500 py-8 px-4">
           <div className="text-4xl mb-2">🏦</div>
           <p className="mb-4">No accounts yet</p>
@@ -182,44 +235,6 @@ const AccountsTab = () => {
           >
             + Add First Account
           </button>
-        </div>
-      )}
-
-      {/* Archived Accounts Section */}
-      {archivedAccounts.length > 0 && (
-        <div className="px-4 mt-6 mb-4">
-          <button
-            onClick={() => setShowArchivedAccounts(!showArchivedAccounts)}
-            className="w-full flex items-center justify-between text-sm font-bold text-gray-400 uppercase mb-2 py-2"
-          >
-            <span>📦 Archived Accounts ({archivedAccounts.length})</span>
-            <span className="text-lg">{showArchivedAccounts ? '▲' : '▼'}</span>
-          </button>
-          
-          {showArchivedAccounts && (
-            <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
-              {archivedAccounts.map((acc, index) => (
-                <div
-                  key={acc.id}
-                  className={`p-4 flex justify-between items-center ${index !== archivedAccounts.length - 1 ? 'border-b border-gray-200' : ''}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl opacity-50">{acc.icon}</span>
-                    <div>
-                      <div className="font-medium text-gray-500">{acc.name}</div>
-                      <div className="text-xs text-gray-400">{acc.group}</div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRestoreAccount(acc)}
-                    className="px-3 py-1 bg-emerald-100 text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-200"
-                  >
-                    Restore
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -275,7 +290,6 @@ const AccountsTab = () => {
             account={currentAccount}
             transactions={transactions}
             onClose={() => setSelectedAccount(null)}
-            onAccountUpdated={() => {}}
           />
         );
       })()}

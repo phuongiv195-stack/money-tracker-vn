@@ -1,16 +1,13 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../../services/firebase';
-import { useUserId } from '../../contexts/AuthContext';
+import { useData } from '../../contexts/DataContext';
 import CategoryDetail from './CategoryDetail';
 import AddCategoryModal from './AddCategoryModal';
 import EditGroupModal from './EditGroupModal';
+import ReorderCategoriesModal from './ReorderCategoriesModal';
+import ReorderGroupsModal from './ReorderGroupsModal';
 
 const CategoriesTab = () => {
-  const userId = useUserId();
-  const [categories, setCategories] = useState([]);
-  const [transactions, setTransactions] = useState([]); 
-  const [loading, setLoading] = useState(true);
+  const { categories, transactions, isLoading } = useData();
   
   const [searchQuery, setSearchQuery] = useState('');
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -18,6 +15,9 @@ const CategoriesTab = () => {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
+  const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
+  const [isReorderGroupsModalOpen, setIsReorderGroupsModalOpen] = useState(false);
+  const [groupOrderVersion, setGroupOrderVersion] = useState(0); // Force re-render when group order changes
   
   // Group editing
   const [editingGroup, setEditingGroup] = useState(null);
@@ -27,27 +27,7 @@ const CategoriesTab = () => {
   const longPressTimer = useRef(null);
   const touchStartPos = useRef({ x: 0, y: 0 });
 
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, 'categories'), where('userId', '==', userId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCategories(cats);
-    });
-    return () => unsubscribe();
-  }, [userId]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTransactions(trans);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [userId]);
-
+  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
@@ -112,6 +92,15 @@ const CategoriesTab = () => {
       groups[groupName].push({ ...cat, amount: realAmount });
     });
 
+    // Sort categories within each group by order
+    Object.keys(groups).forEach(groupName => {
+      groups[groupName].sort((a, b) => {
+        const orderA = a.order ?? 999;
+        const orderB = b.order ?? 999;
+        return orderA - orderB;
+      });
+    });
+
     if (!searchQuery.trim()) return groups;
 
     return Object.entries(groups).reduce((acc, [group, cats]) => {
@@ -122,6 +111,37 @@ const CategoriesTab = () => {
       return acc;
     }, {});
   }, [categories, searchQuery, categoryTotals, activeTab]);
+
+  // Get sorted group names based on saved order
+  const sortedGroupNames = useMemo(() => {
+    const groupNames = Object.keys(filteredGroups);
+    
+    // Load saved order from localStorage
+    const savedOrder = localStorage.getItem(`groupOrder_${activeTab}`);
+    
+    if (savedOrder) {
+      try {
+        const parsedOrder = JSON.parse(savedOrder);
+        // Sort groups by saved order, put new groups at end (alphabetically)
+        groupNames.sort((a, b) => {
+          const indexA = parsedOrder.indexOf(a);
+          const indexB = parsedOrder.indexOf(b);
+          if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+          if (indexA === -1) return 1;
+          if (indexB === -1) return -1;
+          return indexA - indexB;
+        });
+      } catch (e) {
+        console.error('Error parsing saved group order:', e);
+        groupNames.sort((a, b) => a.localeCompare(b));
+      }
+    } else {
+      // Default alphabetical sort
+      groupNames.sort((a, b) => a.localeCompare(b));
+    }
+    
+    return groupNames;
+  }, [filteredGroups, activeTab, groupOrderVersion]);
 
   // Simple click handler - view category detail
   const handleCategoryClick = (cat) => {
@@ -197,7 +217,7 @@ const CategoriesTab = () => {
     }
   };
 
-  if (loading) return <div className="p-4 text-center">Loading data...</div>;
+  if (isLoading) return <div className="p-4 text-center">Loading data...</div>;
 
   return (
     <div className="pb-20">
@@ -239,6 +259,13 @@ const CategoriesTab = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           <button
+            onClick={() => setIsReorderModalOpen(true)}
+            className="bg-white text-gray-600 border border-gray-300 w-10 h-10 rounded-lg flex items-center justify-center text-lg hover:bg-gray-50 transition-colors"
+            title="Reorder categories"
+          >
+            ↕️
+          </button>
+          <button
             onClick={() => {
               setEditingCategory(null);
               setIsAddModalOpen(true);
@@ -272,13 +299,25 @@ const CategoriesTab = () => {
           </button>
         </div>
         
-        <div className="text-xs text-gray-400 mt-2 text-center">
-          Tap to view • Hold to edit
+        <div className="flex justify-between items-center mt-2">
+          <div className="text-xs text-gray-400">
+            Tap to view • Hold to edit
+          </div>
+          <button
+            onClick={() => setIsReorderGroupsModalOpen(true)}
+            className="text-xs text-emerald-600 hover:text-emerald-700 font-medium"
+          >
+            ↕️ Reorder Groups
+          </button>
         </div>
       </div>
 
       <div className="px-4 space-y-4">
-        {Object.entries(filteredGroups).map(([groupName, groupCats]) => (
+        {sortedGroupNames.map(groupName => {
+          const groupCats = filteredGroups[groupName];
+          if (!groupCats || groupCats.length === 0) return null;
+          
+          return (
           <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-100">
             <div 
               className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider cursor-pointer select-none active:bg-gray-100"
@@ -327,9 +366,10 @@ const CategoriesTab = () => {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
 
-        {Object.keys(filteredGroups).length === 0 && (
+        {sortedGroupNames.length === 0 && (
           <div className="text-center text-gray-500 py-8">
             <div className="text-4xl mb-2">🤷‍♂️</div>
             No {activeTab} categories found
@@ -375,6 +415,25 @@ const CategoriesTab = () => {
         onSave={() => setEditingGroup(null)}
         groupName={editingGroup?.name}
         groupType={editingGroup?.type}
+      />
+
+      <ReorderCategoriesModal
+        isOpen={isReorderModalOpen}
+        onClose={() => setIsReorderModalOpen(false)}
+        categories={categories}
+        onSave={() => setIsReorderModalOpen(false)}
+        categoryType={activeTab}
+      />
+
+      <ReorderGroupsModal
+        isOpen={isReorderGroupsModalOpen}
+        onClose={() => setIsReorderGroupsModalOpen(false)}
+        categories={categories}
+        onSave={() => {
+          setIsReorderGroupsModalOpen(false);
+          setGroupOrderVersion(v => v + 1); // Force re-render
+        }}
+        categoryType={activeTab}
       />
     </div>
   );

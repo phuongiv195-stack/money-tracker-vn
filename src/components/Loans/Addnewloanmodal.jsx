@@ -10,17 +10,31 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
   const toast = useToast();
   const userId = useUserId();
   
+  // Helper to get today's date in local timezone
+  const getLocalToday = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  const formatDateForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  
   const [loanType, setLoanType] = useState('borrow');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
-  const [dateInputType, setDateInputType] = useState('text');
   
   const [formData, setFormData] = useState({
     name: '',
     loanName: '',
     amount: '',
     account: '',
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalToday(),
     memo: ''
   });
 
@@ -34,12 +48,11 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
         loanName: '',
         amount: '',
         account: '',
-        date: new Date().toISOString().split('T')[0],
+        date: getLocalToday(),
         memo: ''
       });
       setDisplayAmount('');
       setLoanType('borrow');
-      setDateInputType('text');
     }
   }, [isOpen]);
 
@@ -91,12 +104,6 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
     } catch (e) {
       console.error("Load accounts error:", e);
     }
-  };
-
-  const formatDateForDisplay = (isoDate) => {
-    if (!isoDate) return '';
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   const handleAmountChange = (e) => {
@@ -166,13 +173,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
       <div className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
         <button onClick={onClose} className="text-gray-500 text-lg p-2">✕</button>
         <h2 className="font-semibold text-lg">Add New Loan</h2>
-        <button 
-          onClick={handleSubmit} 
-          disabled={loading}
-          className="text-emerald-600 font-bold disabled:opacity-50 p-2"
-        >
-          {loading ? 'SAVING...' : 'SAVE'}
-        </button>
+        <div className="w-10"></div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -195,7 +196,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
                 onClick={() => setLoanType('lend')}
                 className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
                   loanType === 'lend'
-                    ? 'bg-gray-200 text-gray-800 border-2 border-gray-400'
+                    ? 'bg-red-100 text-red-700 border-2 border-red-400'
                     : 'bg-gray-50 text-gray-500 border border-gray-200'
                 }`}
               >
@@ -205,10 +206,10 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           </div>
 
           {/* Helper text */}
-          <div className={`text-sm p-3 rounded-lg ${
+          <div className={`text-sm p-3 rounded-lg border ${
             loanType === 'borrow' 
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-              : 'bg-gray-100 text-gray-700 border border-gray-300'
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+              : 'bg-red-50 text-red-700 border-red-200'
           }`}>
             {loanType === 'borrow' 
               ? '💰 Money comes IN → Account balance increases'
@@ -224,7 +225,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               placeholder={loanType === 'borrow' ? "E.g. Mike, Bank..." : "E.g. John, Friend..."}
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
+              className="w-full p-3 bg-gray-100 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-gray-200"
               
             />
           </div>
@@ -250,10 +251,10 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               placeholder="0"
               value={displayAmount}
               onChange={handleAmountChange}
-              className={`w-full text-3xl font-bold text-center p-4 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none ${
+              className={`w-full text-3xl font-bold text-center p-4 rounded-lg mt-1 focus:ring-2 outline-none border-2 ${
                 loanType === 'borrow' 
-                  ? 'bg-emerald-50 text-emerald-600' 
-                  : 'bg-gray-100 text-gray-800'
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-300 focus:ring-emerald-500' 
+                  : 'bg-red-50 text-red-600 border-red-300 focus:ring-red-500'
               }`}
             />
           </div>
@@ -279,14 +280,18 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           {/* Date */}
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
-            <input 
-              type={dateInputType} 
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={dateInputType === 'text' ? formatDateForDisplay(formData.date) : formData.date}
-              onChange={(e) => setFormData({...formData, date: e.target.value})}
-              onFocus={() => setDateInputType('date')} 
-              onBlur={() => setDateInputType('text')}  
-            />
+            <div className="relative mt-1">
+              <input 
+                type="date" 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                value={formData.date}
+                onChange={(e) => setFormData({...formData, date: e.target.value})}
+              />
+              <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between">
+                <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
+                <span className="text-gray-400">📅</span>
+              </div>
+            </div>
           </div>
 
           {/* Memo */}
@@ -300,6 +305,17 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               onChange={(e) => setFormData({...formData, memo: e.target.value})}
             />
           </div>
+        </div>
+
+        {/* Fixed Bottom Bar */}
+        <div className="p-4 mb-20 border-t bg-white flex justify-end">
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Saving...' : 'SAVE'}
+          </button>
         </div>
     </div>
   );
