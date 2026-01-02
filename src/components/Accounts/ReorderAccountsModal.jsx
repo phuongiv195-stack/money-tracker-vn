@@ -4,7 +4,7 @@ import { db } from '../../services/firebase';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
-const GROUP_ORDER = ['SPENDING', 'SAVINGS', 'INVESTMENTS'];
+const GROUP_ORDER = ['SPENDING', 'SAVINGS', 'INVESTMENTS', 'ASSETS'];
 
 const ReorderAccountsModal = ({ isOpen, onClose, accounts, onSave }) => {
   useBackHandler(isOpen, onClose);
@@ -13,6 +13,7 @@ const ReorderAccountsModal = ({ isOpen, onClose, accounts, onSave }) => {
   // Store accounts grouped by their group
   const [groupedAccounts, setGroupedAccounts] = useState({});
   const [saving, setSaving] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   
   // Drag state
   const [dragItem, setDragItem] = useState(null); // { group, index }
@@ -20,7 +21,8 @@ const ReorderAccountsModal = ({ isOpen, onClose, accounts, onSave }) => {
   const dragNode = useRef(null);
 
   useEffect(() => {
-    if (isOpen && accounts.length > 0) {
+    // Only initialize once when modal opens, not on every accounts change
+    if (isOpen && !initialized && accounts.length > 0) {
       // Filter active accounts (exclude LOANS) and group them
       const activeAccounts = accounts.filter(a => a.isActive && a.group !== 'LOANS');
       
@@ -38,9 +40,15 @@ const ReorderAccountsModal = ({ isOpen, onClose, accounts, onSave }) => {
       });
       
       setGroupedAccounts(grouped);
-      setSaving(false); // Reset saving state when opening
+      setInitialized(true);
     }
-  }, [isOpen, accounts]);
+    
+    // Reset when modal closes
+    if (!isOpen) {
+      setInitialized(false);
+      setSaving(false);
+    }
+  }, [isOpen, accounts, initialized]);
 
   // Drag handlers
   const handleDragStart = (e, group, index) => {

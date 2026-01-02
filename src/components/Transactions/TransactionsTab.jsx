@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { writeBatch, doc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
@@ -7,17 +7,40 @@ import AddTransactionModal from './AddTransactionModal';
 
 const TransactionsTab = () => {
   const userId = useUserId();
-  const { transactions, accountNames, categoryNames, isLoading } = useData();
+  const { 
+    transactions, 
+    accountNames, 
+    categoryNames, 
+    tagSuggestions, 
+    isLoading,
+    hasMoreTransactions,
+    loadingMore,
+    loadMoreTransactions,
+    transactionCount
+  } = useData();
   
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // Loan notice modal state
+  const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
+
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterAccount, setFilterAccount] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterTime, setFilterTime] = useState('all');
+  const [filterTag, setFilterTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+
+  // Debounce search query (300ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Multi-select state
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -36,6 +59,9 @@ const TransactionsTab = () => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     
     return transactions.filter(t => {
+      // Exclude future transactions from normal list
+      if (t.isFuture) return false;
+
       // Time filter
       if (filterTime !== 'all') {
         const tDate = t.date;
@@ -67,9 +93,16 @@ const TransactionsTab = () => {
         }
       }
 
-      if (searchQuery.trim()) {
-        const lowerQuery = searchQuery.toLowerCase();
-        const searchFields = [t.payee, t.category, t.memo, t.loan, t.account].filter(Boolean).join(' ').toLowerCase();
+      // Tag filter - supports both old 'tag' and new 'tags' fields
+      if (filterTag !== 'all') {
+        const transactionTags = t.tags || (t.tag ? [t.tag] : []);
+        if (!transactionTags.includes(filterTag)) return false;
+      }
+
+      if (debouncedSearch.trim()) {
+        const lowerQuery = debouncedSearch.toLowerCase();
+        const tagsString = (t.tags || (t.tag ? [t.tag] : [])).join(' ');
+        const searchFields = [t.payee, t.category, t.memo, t.loan, t.account, tagsString].filter(Boolean).join(' ').toLowerCase();
         
         let splitMatch = false;
         if (t.type === 'split' && t.splits) {
@@ -83,7 +116,7 @@ const TransactionsTab = () => {
 
       return true;
     });
-  }, [transactions, filterType, filterAccount, filterCategory, filterTime, searchQuery]);
+  }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, debouncedSearch]);
 
   const totals = useMemo(() => {
     let income = 0, expense = 0;
@@ -126,7 +159,7 @@ const TransactionsTab = () => {
     return groups;
   }, [filteredTransactions]);
 
-  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all';
+  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all';
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0';
@@ -136,18 +169,11 @@ const TransactionsTab = () => {
   const formatDateLabel = (dateStr) => {
     if (dateStr === 'Unknown') return 'Unknown Date';
     const date = new Date(dateStr + 'T00:00:00');
-    const today = new Date();
-    const yesterday = new Date();
-    yesterday.setDate(today.getDate() - 1);
-
-    if (dateStr === today.toISOString().split('T')[0]) return 'Today';
-    if (dateStr === yesterday.toISOString().split('T')[0]) return 'Yesterday';
-    
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'short', 
-      month: 'short', 
-      day: 'numeric' 
-    });
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const day = date.toLocaleDateString('en-US', { weekday: 'short' });
+    return `${yyyy}/${mm}/${dd} ${day}`;
   };
 
   // Toggle select mode
@@ -186,6 +212,15 @@ const TransactionsTab = () => {
         return newSet;
       });
     } else {
+      // Show notice for loan transactions
+      if (t.type === 'loan') {
+        setLoanNoticeModal({ show: true, loanName: t.loan || 'Loan' });
+        return;
+      }
+      // Don't open edit modal for unrealized_gain transactions
+      if (t.type === 'unrealized_gain') {
+        return; // Frozen - no action
+      }
       setEditingTransaction(t);
       setIsModalOpen(true);
     }
@@ -337,6 +372,19 @@ const TransactionsTab = () => {
                     ))}
                   </select>
                 </div>
+                {/* Tag Filter - Full Width */}
+                {tagSuggestions.length > 0 && (
+                  <select 
+                    value={filterTag} 
+                    onChange={(e) => setFilterTag(e.target.value)}
+                    className="w-full p-2 rounded border border-gray-200 text-sm"
+                  >
+                    <option value="all">🏷️ All Tags</option>
+                    {tagSuggestions.map(tag => (
+                      <option key={tag} value={tag}>🏷️ {tag}</option>
+                    ))}
+                  </select>
+                )}
                 {hasActiveFilters && (
                   <button
                     onClick={() => {
@@ -344,6 +392,7 @@ const TransactionsTab = () => {
                       setFilterAccount('all');
                       setFilterCategory('all');
                       setFilterTime('all');
+                      setFilterTag('all');
                     }}
                     className="text-xs text-red-500 font-medium"
                   >
@@ -400,15 +449,18 @@ const TransactionsTab = () => {
                     ? `${t.fromAccount || '?'} → ${t.toAccount || '?'}`
                     : t.account;
                   
+                  const isLoan = t.type === 'loan';
+                  const isFrozen = isLoan || isUnrealizedGain; // Both loan and unrealized_gain are frozen
+                  
                   return (
                     <div 
                       key={t.id || index}
                       onClick={() => handleTransactionClick(t)}
-                      onTouchStart={() => handleTouchStart(t.id)}
+                      onTouchStart={() => !isFrozen && handleTouchStart(t.id)}
                       onTouchEnd={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
                       onContextMenu={(e) => { e.preventDefault(); handleLongPress(t.id); }}
-                      className={`p-3 cursor-pointer hover:bg-gray-50 ${index !== items.length - 1 ? 'border-b' : ''} ${isSelected ? 'bg-indigo-50' : ''}`}
+                      className={`p-3 ${isFrozen ? 'cursor-default bg-gray-50' : 'cursor-pointer hover:bg-gray-50'} ${index !== items.length - 1 ? 'border-b' : ''} ${isSelected ? 'bg-indigo-50' : ''}`}
                     >
                       {/* Main row */}
                       <div className="flex justify-between items-start">
@@ -421,14 +473,21 @@ const TransactionsTab = () => {
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-gray-800 flex items-center gap-1.5">
                               {isSplit && <SplitIcon />}
+                              {isLoan && <span className="text-amber-500">💰</span>}
                               {t.type === 'loan' 
                                 ? (t.memo || 'Loan transaction')
                                 : isTransfer
                                   ? `Transfer: ${t.fromAccount || '?'} → ${t.toAccount || '?'}`
                                   : isUnrealizedGain
-                                    ? `📈 Unrealized ${isPositive ? 'Gain' : 'Loss'}`
+                                    ? `Unrealized ${isPositive ? 'Gain' : 'Loss'}`
                                     : (t.payee || 'No Payee')
                               }
+                              {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
+                              {isUnrealizedGain && (
+                                <span className={`text-xs px-1.5 py-0.5 rounded ml-1 ${isPositive ? 'text-emerald-600 bg-emerald-100' : 'text-red-600 bg-red-100'}`}>
+                                  {isPositive ? '📈 Gain' : '📉 Loss'}
+                                </span>
+                              )}
                             </div>
                             
                             {!isSplit && (
@@ -451,14 +510,24 @@ const TransactionsTab = () => {
                             {isPositive ? '+' : '-'}{formatCurrency(amount)}
                           </div>
                           <div className="text-xs text-gray-400">{accountDisplay}</div>
+                          {/* Support both old 'tag' and new 'tags' fields */}
+                          {(t.tags?.length > 0 || t.tag) && (
+                            <div className="flex flex-wrap gap-1 justify-end mt-0.5">
+                              {(t.tags || (t.tag ? [t.tag] : [])).map(tag => (
+                                <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded inline-block">
+                                  🏷️ {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {/* Split details */}
                       {isSplit && t.splits && (
-                        <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">
+                        <div className="mt-1.5 space-y-0.5 pl-3 border-l-2 border-sky-200 ml-1">
                           {t.splits.map((s, i) => (
-                            <div key={i} className="flex justify-between text-sm">
+                            <div key={i} className="flex justify-between text-xs">
                               <span className="text-gray-600">
                                 {s.isLoan ? s.loan : s.category}
                                 {s.memo && <span className="text-gray-400 ml-1">• {s.memo}</span>}
@@ -476,6 +545,32 @@ const TransactionsTab = () => {
               </div>
             </div>
           ))
+        )}
+
+        {/* Load More Button */}
+        {hasMoreTransactions && !isLoading && (
+          <div className="p-4 text-center">
+            <button
+              onClick={loadMoreTransactions}
+              disabled={loadingMore}
+              className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50"
+            >
+              {loadingMore ? (
+                <span className="flex items-center gap-2 justify-center">
+                  <span className="animate-spin">⏳</span> Loading...
+                </span>
+              ) : (
+                `Load More (${transactionCount} loaded)`
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* All loaded indicator */}
+        {!hasMoreTransactions && transactionCount > 0 && (
+          <div className="p-4 text-center text-gray-400 text-sm">
+            ✓ All {transactionCount} transactions loaded
+          </div>
         )}
       </div>
 
@@ -534,6 +629,49 @@ const TransactionsTab = () => {
               >
                 OK
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loan Notice Modal */}
+      {loanNoticeModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="text-3xl mb-1">🏦</div>
+              <div className="font-bold">Loan Transaction</div>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-gray-700 text-center">
+                This is a loan transaction. To edit it, please go to the Loans tab.
+              </p>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-center">
+                <div className="text-sm text-emerald-600">Loan</div>
+                <div className="font-bold text-emerald-700">{loanNoticeModal.loanName}</div>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setLoanNoticeModal({ show: false, loanName: '' })}
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={() => {
+                    const loanName = loanNoticeModal.loanName;
+                    setLoanNoticeModal({ show: false, loanName: '' });
+                    // Navigate to Loans tab and open specific loan detail
+                    window.dispatchEvent(new CustomEvent('openLoans'));
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent('openLoanDetail', { detail: { loanName } }));
+                    }, 150);
+                  }}
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600"
+                >
+                  Go to Loans →
+                </button>
+              </div>
             </div>
           </div>
         </div>

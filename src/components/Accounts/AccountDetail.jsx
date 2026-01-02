@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { doc, updateDoc, writeBatch, deleteDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
 import AddAccountModal from './AddAccountModal';
 import UpdateValueModal from './UpdateValueModal';
+import EditStartingBalanceModal from './EditStartingBalanceModal';
+import EditUnrealizedGainModal from './EditUnrealizedGainModal';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
@@ -21,9 +23,6 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   
   // Edit Starting Balance state
   const [isEditStartingBalanceOpen, setIsEditStartingBalanceOpen] = useState(false);
-  const [editStartingBalanceValue, setEditStartingBalanceValue] = useState('');
-  const [editStartingBalanceDisplay, setEditStartingBalanceDisplay] = useState('');
-  const [editStartingBalanceDate, setEditStartingBalanceDate] = useState('');
   
   // Multi-select state
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -38,10 +37,37 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   
   // Edit Unrealized Gain state
   const [editUnrealizedGain, setEditUnrealizedGain] = useState(null);
-  const [editUnrealizedAmount, setEditUnrealizedAmount] = useState('');
-  const [editUnrealizedDisplay, setEditUnrealizedDisplay] = useState('');
+  
+  // Loan notice modal state
+  const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
 
-  useBackHandler(isSelectMode ? () => { setIsSelectMode(false); setSelectedItems(new Set()); } : true, isSelectMode ? () => { setIsSelectMode(false); setSelectedItems(new Set()); } : onClose);
+  // Smart back handler - close menu/modals first
+  const handleBackPress = useCallback(() => {
+    if (loanNoticeModal.show) {
+      setLoanNoticeModal({ show: false, loanName: '' });
+    } else if (showMenu) {
+      setShowMenu(false);
+    } else if (showEditAccountModal) {
+      setShowEditAccountModal(false);
+    } else if (showArchiveModal) {
+      setShowArchiveModal(false);
+    } else if (showDeleteAccountModal) {
+      setShowDeleteAccountModal(false);
+    } else if (isReconciling) {
+      setIsReconciling(false);
+    } else if (showManualReconcile) {
+      setShowManualReconcile(false);
+    } else if (showDeleteConfirm) {
+      setShowDeleteConfirm(false);
+    } else if (isSelectMode) {
+      setIsSelectMode(false);
+      setSelectedItems(new Set());
+    } else {
+      onClose();
+    }
+  }, [loanNoticeModal.show, showMenu, showEditAccountModal, showArchiveModal, showDeleteAccountModal, isReconciling, showManualReconcile, showDeleteConfirm, isSelectMode, onClose]);
+
+  useBackHandler(!!account, handleBackPress);
 
   if (!account) return null;
 
@@ -59,7 +85,15 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         if (t.type === 'split') return t.account === account.name;
         return t.account === account.name;
       })
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
+      .sort((a, b) => {
+        // Sort by date first (newest first)
+        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        // Within same date, sort by createdAt (newest first)
+        const aTime = a.createdAt?.seconds || a.createdAt?.getTime?.() / 1000 || 0;
+        const bTime = b.createdAt?.seconds || b.createdAt?.getTime?.() / 1000 || 0;
+        return bTime - aTime;
+      });
   }, [account, transactions]);
 
   const groupedTransactions = useMemo(() => {
@@ -81,8 +115,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     accountTransactions.forEach(t => {
       let amt = 0;
       if (t.type === 'transfer') {
-        const transferAmt = Math.abs(Number(t.amount) || 0);
-        amt = t.fromAccount === account.name ? -transferAmt : transferAmt;
+        amt = t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
       } else if (t.type === 'split') {
         amt = Number(t.totalAmount) || 0;
       } else {
@@ -107,8 +140,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     let currentVal = startingBalance;
     accountTransactions.forEach(t => {
       if (t.type === 'transfer') {
-        const transferAmt = Math.abs(Number(t.amount) || 0);
-        currentVal += t.fromAccount === account.name ? -transferAmt : transferAmt;
+        currentVal += t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
       } else if (t.type === 'split') {
         currentVal += Number(t.totalAmount) || 0;
       } else {
@@ -168,21 +200,31 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   };
 
   const handleDeleteSelected = async () => {
-    if (selectedItems.size === 0) return;
-    try {
-      const batch = writeBatch(db);
-      selectedItems.forEach(id => {
+  if (selectedItems.size === 0) return;
+  try {
+    const batch = writeBatch(db);
+    selectedItems.forEach(id => {
+      if (!id.includes('-split-')) {
         batch.delete(doc(db, 'transactions', id));
-      });
-      await batch.commit();
+      }
+    });
+    await batch.commit();
+    
+    // Check nếu xóa hết transactions → close detail
+    const remainingTransactions = loan.transactions.filter(t => !selectedItems.has(t.id));
+    if (remainingTransactions.length === 0) {
+      toast.success('All transactions deleted. Loan removed.');
+      onClose(); // Đóng LoanDetail
+    } else {
+      setSuccessMessage(`Deleted ${selectedItems.size} transaction(s)`);
       setSelectedItems(new Set());
       setIsSelectMode(false);
       setShowDeleteConfirm(false);
-      setSuccessMessage(`Deleted ${selectedItems.size} transaction(s)`);
-    } catch (err) { 
-      toast.error('Error: ' + err.message); 
     }
-  };
+  } catch (err) { 
+    toast.error('Error: ' + err.message); 
+  }
+};
 
   const handleDuplicateSelected = async () => {
     if (selectedItems.size === 0) return;
@@ -475,11 +517,21 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         )}
       </div>
 
+      {/* Memo Info Card - only show if memo exists */}
+      {account.memo && (
+        <div className="mx-4 mt-3 p-3 bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-start gap-2">
+            <span className="text-gray-400">📝</span>
+            <div className="text-sm text-gray-600 whitespace-pre-wrap">{account.memo}</div>
+          </div>
+        </div>
+      )}
+
       {isReconciling && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
             {/* Header */}
-            <div className="bg-indigo-500 p-4 text-white text-center">
+            <div className="bg-emerald-500 p-4 text-white text-center">
               <div className="font-bold text-lg">Reconcile Account</div>
             </div>
             
@@ -488,17 +540,17 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600 text-sm">Cleared Balance</span>
-                  <span className="font-bold text-emerald-600">{formatCurrency(clearedBalance)}</span>
+                  <span className={`font-bold ${clearedBalance >= 0 ? 'text-emerald-600' : 'text-gray-800'}`}>{clearedBalance < 0 ? '-' : ''}{formatCurrency(clearedBalance)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600 text-sm">+ Uncleared Balance</span>
                   <span className={`font-bold ${unclearedBalance >= 0 ? 'text-gray-600' : 'text-red-600'}`}>
-                    {unclearedBalance >= 0 ? '+' : ''}{formatCurrency(unclearedBalance)}
+                    {unclearedBalance < 0 ? '-' : '+'}{formatCurrency(unclearedBalance)}
                   </span>
                 </div>
                 <div className="border-t pt-2 flex justify-between items-center">
                   <span className="text-gray-700 font-medium">Working Balance</span>
-                  <span className="font-bold text-lg">{formatCurrency(balance)}</span>
+                  <span className="font-bold text-lg">{balance < 0 ? '-' : ''}{formatCurrency(balance)}</span>
                 </div>
               </div>
 
@@ -517,7 +569,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               {/* Confirmation Question */}
               <div className="text-center py-2">
                 <div className="text-gray-600 text-sm">Is your current balance</div>
-                <div className="text-3xl font-bold text-gray-800 my-2">{formatCurrency(clearedBalance)}?</div>
+                <div className="text-3xl font-bold text-gray-800 my-2">{clearedBalance < 0 ? '-' : ''}{formatCurrency(clearedBalance)}?</div>
               </div>
 
               {/* Buttons */}
@@ -530,7 +582,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 </button>
                 <button 
                   onClick={() => handleQuickReconcile()} 
-                  className="flex-1 bg-indigo-500 text-white py-3 rounded-lg font-medium hover:bg-indigo-600 transition-colors"
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
                 >
                   Yes
                 </button>
@@ -539,7 +591,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               {/* Enter Different Amount Link */}
               <button 
                 onClick={() => { setIsReconciling(false); setShowManualReconcile(true); }}
-                className="w-full text-indigo-500 text-sm hover:underline"
+                className="w-full text-emerald-500 text-sm hover:underline"
               >
                 No, enter the correct balance →
               </button>
@@ -552,7 +604,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       {showManualReconcile && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
-            <div className="bg-indigo-500 p-4 text-white text-center">
+            <div className="bg-emerald-500 p-4 text-white text-center">
               <div className="font-bold text-lg">Enter Statement Balance</div>
             </div>
             
@@ -567,7 +619,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 placeholder="Enter balance..." 
                 value={formatNumberInput(reconcileBalance)} 
                 onChange={handleBalanceChange} 
-                className="w-full text-2xl font-bold text-center p-4 border-2 border-indigo-200 rounded-lg focus:border-indigo-500 outline-none" 
+                className="w-full text-2xl font-bold text-center p-4 border-2 border-emerald-200 rounded-lg focus:border-emerald-500 outline-none" 
                  
               />
               
@@ -581,7 +633,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 <button 
                   onClick={() => handleFinishReconcile()} 
                   disabled={!reconcileBalance}
-                  className="flex-1 bg-indigo-500 text-white py-3 rounded-lg font-medium hover:bg-indigo-600 transition-colors disabled:opacity-50"
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
                 >
                   Reconcile
                 </button>
@@ -684,9 +736,11 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             grouped[date].sort((a, b) => b.timestamp - a.timestamp);
           });
           
-          return Object.entries(grouped).map(([date, items]) => (
+          return Object.entries(grouped)
+            .sort(([dateA], [dateB]) => (dateB || '').localeCompare(dateA || ''))
+            .map(([date, items]) => (
             <div key={date}>
-              <div className="text-xs text-gray-400 mb-2 ml-1">{formatDateLabel(date)}</div>
+              <div className="text-xs font-bold text-gray-500 mb-2 uppercase ml-1">{formatDateLabel(date)}</div>
               <div className="bg-white rounded-lg shadow-sm border overflow-hidden divide-y divide-gray-50">
                 {items.map((item, index) => {
                   if (item.type === 'startingBalance') {
@@ -750,7 +804,15 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                       return (
                         <div 
                           key={t.id} 
-                          onClick={() => isSelectMode ? handleSelectItem(t.id) : setEditUnrealizedGain(t)} 
+                          onClick={(e) => {
+                            // Ignore if clicking on clear button
+                            if (e.target.closest('.clear-btn')) return;
+                            if (isSelectMode) {
+                              handleSelectItem(t.id);
+                            } else {
+                              setEditUnrealizedGain(t);
+                            }
+                          }} 
                           onTouchStart={() => handleTouchStart(t.id)}
                           onTouchEnd={handleTouchEnd}
                           onTouchMove={handleTouchEnd}
@@ -777,7 +839,14 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                                 <div className="text-xs text-gray-400">{formatBalance(balanceAtTime)}</div>
                               )}
                             </div>
-                            {!isSelectMode && <button onClick={(e) => handleToggleClear(t, e)} className={`text-xl w-8 h-8 flex items-center justify-center rounded-full ${getClearColor(t.clearStatus)}`}>{getClearIcon(t.clearStatus)}</button>}
+                            {!isSelectMode && (
+                              <button 
+                                onClick={(e) => handleToggleClear(t, e)} 
+                                className={`clear-btn text-xl w-10 h-10 flex items-center justify-center rounded-full active:bg-gray-200 ${getClearColor(t.clearStatus)}`}
+                              >
+                                {getClearIcon(t.clearStatus)}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -786,7 +855,22 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                     return (
                       <div 
                         key={t.id} 
-                        onClick={() => isSelectMode ? handleSelectItem(t.id) : (() => { setEditingTransaction(t); setIsModalOpen(true); })()} 
+                        onClick={(e) => {
+                          // Ignore if clicking on clear button
+                          if (e.target.closest('.clear-btn')) return;
+                          
+                          if (isSelectMode) {
+                            handleSelectItem(t.id);
+                          } else {
+                            // Show notice for loan transactions
+                            if (t.type === 'loan') {
+                              setLoanNoticeModal({ show: true, loanName: t.loan || 'Loan' });
+                              return;
+                            }
+                            setEditingTransaction(t);
+                            setIsModalOpen(true);
+                          }
+                        }} 
                         onTouchStart={() => handleTouchStart(t.id)}
                         onTouchEnd={handleTouchEnd}
                         onTouchMove={handleTouchEnd}
@@ -800,9 +884,11 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-800 truncate flex items-center">
+                            <div className="font-medium text-gray-800 truncate flex items-center gap-1.5">
                               {isSplit && <SplitIcon />}
-                              {isLoan ? (t.memo || 'Loan') : isTransfer ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? (t.toAccount || 'Unknown') : (t.fromAccount || 'Unknown')}` : (t.payee || 'No Payee')}
+                              {isLoan && <span className="text-amber-500">💰</span>}
+                              {isLoan ? (t.memo || 'Loan transaction') : isTransfer ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? (t.toAccount || 'Unknown') : (t.fromAccount || 'Unknown')}` : (t.payee || 'No Payee')}
+                              {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
                             </div>
                             {!isSplit && (
                               <div className="text-xs text-gray-500 truncate">
@@ -817,7 +903,14 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                               <div className="text-xs text-gray-400">{formatBalance(balanceAtTime)}</div>
                             )}
                           </div>
-                          {!isSelectMode && <button onClick={(e) => handleToggleClear(t, e)} className={`text-xl w-8 h-8 flex items-center justify-center rounded-full ${getClearColor(t.clearStatus)}`}>{getClearIcon(t.clearStatus)}</button>}
+                          {!isSelectMode && (
+                            <button 
+                              onClick={(e) => handleToggleClear(t, e)} 
+                              className={`clear-btn text-xl w-10 h-10 flex items-center justify-center rounded-full active:bg-gray-200 ${getClearColor(t.clearStatus)}`}
+                            >
+                              {getClearIcon(t.clearStatus)}
+                            </button>
+                          )}
                         </div>
                         {isSplit && t.splits && (
                           <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">
@@ -838,7 +931,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       {!isSelectMode && (
         <button
           onClick={handleAddTransaction}
-          className="fixed bottom-24 right-4 bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
+          className="fixed bottom-24 right-4 bg-emerald-500 text-white w-16 h-16 rounded-full shadow-lg flex items-center justify-center text-4xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
         >
           +
         </button>
@@ -969,79 +1062,12 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       )}
 
       {/* Edit Starting Balance Modal */}
-      {isEditStartingBalanceOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
-            <div className="bg-emerald-500 p-4 text-white text-center">
-              <div className="text-3xl mb-1">💵</div>
-              <div className="font-bold text-lg">Edit Starting Balance</div>
-            </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold">Amount</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={editStartingBalanceDisplay}
-                  onChange={(e) => {
-                    const rawValue = e.target.value.replace(/,/g, '');
-                    if (rawValue === '' || /^\d*$/.test(rawValue)) {
-                      setEditStartingBalanceValue(rawValue);
-                      setEditStartingBalanceDisplay(rawValue ? Number(rawValue).toLocaleString('en-US') : '');
-                    }
-                  }}
-                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-xl font-bold"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
-                <div className="relative mt-1">
-                  <input
-                    type="date"
-                    value={editStartingBalanceDate}
-                    onChange={(e) => setEditStartingBalanceDate(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <div className="w-full p-3 bg-gray-50 rounded-lg flex items-center justify-between">
-                    <span className="text-gray-800">{formatDateForDisplay(editStartingBalanceDate)}</span>
-                    <span className="text-gray-400">📅</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setIsEditStartingBalanceOpen(false)} 
-                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={async () => {
-                    try {
-                      const newBalance = parseFloat(editStartingBalanceValue) || 0;
-                      await updateDoc(doc(db, 'accounts', account.id), { 
-                        startingBalance: newBalance,
-                        startingBalanceDate: new Date(editStartingBalanceDate),
-                        updatedAt: new Date()
-                      });
-                      setIsEditStartingBalanceOpen(false);
-                      toast.success('Starting balance updated!');
-                      if (onAccountUpdated) onAccountUpdated();
-                    } catch (err) {
-                      toast.error('Error: ' + err.message);
-                    }
-                  }} 
-                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <EditStartingBalanceModal
+        isOpen={isEditStartingBalanceOpen}
+        onClose={() => setIsEditStartingBalanceOpen(false)}
+        account={account}
+        onSave={onAccountUpdated}
+      />
 
       {/* Edit Account Modal */}
       <AddAccountModal
@@ -1137,128 +1163,52 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       )}
 
       {/* Edit Unrealized Gain Modal */}
-      {editUnrealizedGain && (
+      <EditUnrealizedGainModal
+        isOpen={!!editUnrealizedGain}
+        onClose={() => setEditUnrealizedGain(null)}
+        transaction={editUnrealizedGain}
+        account={account}
+        onSave={onAccountUpdated}
+      />
+
+      {/* Loan Notice Modal */}
+      {loanNoticeModal.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
             <div className="bg-emerald-500 p-4 text-white text-center">
-              <div className="text-3xl mb-1">📈</div>
-              <div className="font-bold text-lg">Edit Unrealized {Number(editUnrealizedGain.amount) >= 0 ? 'Gain' : 'Loss'}</div>
+              <div className="text-3xl mb-1">🏦</div>
+              <div className="font-bold">Loan Transaction</div>
             </div>
             <div className="p-4 space-y-4">
-              <div>
-                <label className="text-xs text-gray-500 uppercase font-semibold">Amount</label>
-                <input
-                  type="text"
-                  inputMode="text"
-                  value={editUnrealizedDisplay || (editUnrealizedGain.amount ? (editUnrealizedGain.amount < 0 ? '-' : '') + formatCurrency(editUnrealizedGain.amount) : '')}
-                  onChange={(e) => {
-                    let raw = e.target.value.replace(/,/g, '');
-                    if (raw === '-') {
-                      setEditUnrealizedAmount('-');
-                      setEditUnrealizedDisplay('-');
-                      return;
-                    }
-                    if (raw === '' || /^-?\d*\.?\d*$/.test(raw)) {
-                      setEditUnrealizedAmount(raw);
-                      if (raw === '' || raw === '-') {
-                        setEditUnrealizedDisplay(raw);
-                      } else {
-                        const num = parseFloat(raw);
-                        if (!isNaN(num)) {
-                          const isNegative = raw.startsWith('-');
-                          setEditUnrealizedDisplay((isNegative ? '-' : '') + formatCurrency(Math.abs(num)));
-                        }
-                      }
-                    }
-                  }}
-                  className="w-full p-3 bg-gray-200 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-xl font-bold"
-                  autoFocus
-                  onFocus={() => {
-                    if (!editUnrealizedDisplay) {
-                      const amt = editUnrealizedGain.amount || 0;
-                      setEditUnrealizedAmount(String(amt));
-                      setEditUnrealizedDisplay((amt < 0 ? '-' : '') + formatCurrency(Math.abs(amt)));
-                    }
-                  }}
-                />
+              <p className="text-gray-700 text-center">
+                This is a loan transaction. To edit it, please go to the Loans tab.
+              </p>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-center">
+                <div className="text-sm text-emerald-600">Loan</div>
+                <div className="font-bold text-emerald-700">{loanNoticeModal.loanName}</div>
               </div>
               <div className="flex gap-2">
                 <button 
-                  onClick={() => {
-                    setEditUnrealizedGain(null);
-                    setEditUnrealizedAmount('');
-                    setEditUnrealizedDisplay('');
-                  }}
-                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium"
+                  onClick={() => setLoanNoticeModal({ show: false, loanName: '' })}
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button 
-                  onClick={async () => {
-                    const oldAmount = Number(editUnrealizedGain.amount) || 0;
-                    const newAmount = parseFloat(editUnrealizedAmount);
-                    if (isNaN(newAmount)) {
-                      toast.error('Invalid amount');
-                      return;
-                    }
-                    
-                    try {
-                      // Update transaction
-                      await updateDoc(doc(db, 'transactions', editUnrealizedGain.id), {
-                        amount: newAmount,
-                        updatedAt: new Date()
-                      });
-                      
-                      // Update currentValue on account
-                      const diff = newAmount - oldAmount;
-                      const newCurrentValue = (account.currentValue || 0) + diff;
-                      await updateDoc(doc(db, 'accounts', account.id), {
-                        currentValue: newCurrentValue,
-                        updatedAt: new Date()
-                      });
-                      
-                      toast.success('Updated!');
-                      setEditUnrealizedGain(null);
-                      setEditUnrealizedAmount('');
-                      setEditUnrealizedDisplay('');
-                      if (onAccountUpdated) onAccountUpdated();
-                    } catch (err) {
-                      toast.error('Error: ' + err.message);
-                    }
+                  onClick={() => {
+                    const loanName = loanNoticeModal.loanName;
+                    setLoanNoticeModal({ show: false, loanName: '' });
+                    // Navigate to Loans tab and open specific loan detail
+                    window.dispatchEvent(new CustomEvent('openLoans'));
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent('openLoanDetail', { detail: { loanName } }));
+                    }, 150);
                   }}
-                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium"
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600"
                 >
-                  Save
+                  Go to Loans →
                 </button>
               </div>
-              <button 
-                onClick={async () => {
-                  try {
-                    const oldAmount = Number(editUnrealizedGain.amount) || 0;
-                    
-                    // Delete transaction
-                    await deleteDoc(doc(db, 'transactions', editUnrealizedGain.id));
-                    
-                    // Update currentValue on account (subtract the deleted amount)
-                    const newCurrentValue = (account.currentValue || 0) - oldAmount;
-                    await updateDoc(doc(db, 'accounts', account.id), {
-                      currentValue: newCurrentValue,
-                      updatedAt: new Date()
-                    });
-                    
-                    toast.success('Deleted!');
-                    setEditUnrealizedGain(null);
-                    setEditUnrealizedAmount('');
-                    setEditUnrealizedDisplay('');
-                    if (onAccountUpdated) onAccountUpdated();
-                  } catch (err) {
-                    toast.error('Error: ' + err.message);
-                  }
-                }}
-                className="w-full bg-red-100 text-red-600 py-3 rounded-lg font-medium"
-              >
-                🗑️ Delete
-              </button>
             </div>
           </div>
         </div>

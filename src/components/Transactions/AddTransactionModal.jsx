@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
@@ -6,24 +6,88 @@ import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
-const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null }) => {
+const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null, forceFuture = false }) => {
   const toast = useToast();
   const userId = useUserId();
   const { 
     accountNames, 
+    groupedAccounts,
+    quickSelectGroupedAccounts,
     categories, 
     loanNames,
+    loanTransactions,
+    tagSuggestions,
+    addUserTag,
     payeeSuggestions: cachedPayeeSuggestions, 
-    payeeToCategoryMap: cachedPayeeToCategoryMap 
+    payeeToCategoryMap: cachedPayeeToCategoryMap,
+    payeeToAccountMap: cachedPayeeToAccountMap
   } = useData();
+  
+  // Duplicate mode - when true, Save creates new transaction instead of updating
+  const [isDuplicating, setIsDuplicating] = useState(false);
+  
+  // Create loan type map (loan name -> 'lend' or 'borrow')
+  const initialLoanTypeMap = useMemo(() => {
+    const map = {};
+    loanTransactions.forEach(t => {
+      if (t.loan && !map[t.loan]) {
+        if (t.loanType) {
+          map[t.loan] = t.loanType;
+        } else if (t.loan.toLowerCase().startsWith('lend to')) {
+          map[t.loan] = 'lend';
+        } else if (t.loan.toLowerCase().startsWith('borrow from')) {
+          map[t.loan] = 'borrow';
+        }
+      }
+    });
+    return map;
+  }, [loanTransactions]);
+  
+  const [loanTypeMap, setLoanTypeMap] = useState({});
+  
+  // Sync initialLoanTypeMap to loanTypeMap when it changes
+  useEffect(() => {
+    setLoanTypeMap(prev => ({...initialLoanTypeMap, ...prev}));
+  }, [initialLoanTypeMap]);
   
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
   const [isSplitMode, setIsSplitMode] = useState(false);
   
+  // Picker states
+  const [showPayeeList, setShowPayeeList] = useState(false);
+  const [showCategoryList, setShowCategoryList] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false); // Full screen category picker
+  const [showTagList, setShowTagList] = useState(false);
+  const [activeSplitIndex, setActiveSplitIndex] = useState(null);
+  const [activeSplitCategoryIndex, setActiveSplitCategoryIndex] = useState(null); // Full screen category for split
+  const [activeSplitLoanIndex, setActiveSplitLoanIndex] = useState(null); // Full screen loan picker for split
+  const [splitCategorySearch, setSplitCategorySearch] = useState(''); // Search in split category picker
+  const [newLoanName, setNewLoanName] = useState(''); // For creating new loan in split
+  const [newLoanType, setNewLoanType] = useState(null); // lend or borrow, null = not selected
+
+  // Check if any picker is open
+  const isAnyPickerOpen = showCategoryPicker || activeSplitCategoryIndex !== null || activeSplitLoanIndex !== null;
+
+  // Smart back handler - close picker first, then modal
+  const handleBackPress = useCallback(() => {
+    if (showCategoryPicker) {
+      setShowCategoryPicker(false);
+    } else if (activeSplitCategoryIndex !== null) {
+      setActiveSplitCategoryIndex(null);
+      setSplitCategorySearch('');
+    } else if (activeSplitLoanIndex !== null) {
+      setActiveSplitLoanIndex(null);
+      setNewLoanName('');
+      setNewLoanType(null);
+    } else {
+      onClose();
+    }
+  }, [showCategoryPicker, activeSplitCategoryIndex, activeSplitLoanIndex, onClose]);
+
   // Register back handler for hardware back button
-  useBackHandler(isOpen, onClose);
+  useBackHandler(isOpen, handleBackPress);
   
   // Helper to get today's date in local timezone (YYYY-MM-DD format)
   const getLocalToday = () => {
@@ -32,6 +96,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  };
+
+  // Check if selected date is in the future
+  const isFutureDate = (dateStr) => {
+    if (!dateStr) return false;
+    return dateStr > getLocalToday();
   };
   
   const [formData, setFormData] = useState({
@@ -43,6 +113,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     toAccount: '',
     date: getLocalToday(),
     memo: '',
+    tag: '',  // For input field
+    tags: [], // Array of selected tags
     spendingType: 'need'
   });
 
@@ -55,117 +127,103 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const loans = loanNames;
   const payeeSuggestions = cachedPayeeSuggestions;
   const payeeToCategoryMap = cachedPayeeToCategoryMap;
+  const payeeToAccountMap = cachedPayeeToAccountMap;
   const categorySuggestions = categories;
-  
-  const [showPayeeList, setShowPayeeList] = useState(false);
-  const [showCategoryList, setShowCategoryList] = useState(false);
-  const [activeSplitIndex, setActiveSplitIndex] = useState(null);
 
-  // Initialize form when modal opens
+  // Default account logic is now handled in the main useEffect below
+
+  // Reset picker states when modal opens
   useEffect(() => {
-    if (!isOpen) return;
-    
-    if (editTransaction) {
-      // Editing existing transaction
-      if (editTransaction.type === 'split') {
-        setIsSplitMode(true);
-        setActiveTab(editTransaction.splitType || 'expense');
-        setSplits(editTransaction.splits || []);
-        setFormData({
-          amount: Math.abs(editTransaction.totalAmount).toString(),
-          payee: editTransaction.payee || '',
-          category: '',
-          account: editTransaction.account || (accounts.length > 0 ? accounts[0] : ''),
-          fromAccount: '',
-          toAccount: '',
-          date: editTransaction.date || getLocalToday(),
-          memo: '',
-          spendingType: 'need'
-        });
-        setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
+    if (isOpen) {
+      // Reset loading state
+      setLoading(false);
+      
+      // Reset all picker states
+      setShowCategoryPicker(false);
+      setActiveSplitCategoryIndex(null);
+      setActiveSplitLoanIndex(null);
+      setSplitCategorySearch('');
+      setNewLoanName('');
+      setNewLoanType(null);
+      setShowPayeeList(false);
+      setShowCategoryList(false);
+      setShowTagList(false);
+      setActiveSplitIndex(null);
+      setIsDuplicating(false); // Reset duplicate mode
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (editTransaction) {
+        if (editTransaction.type === 'split') {
+          setIsSplitMode(true);
+          setActiveTab(editTransaction.splitType || 'expense');
+          setSplits(editTransaction.splits || []);
+          setFormData({
+            amount: Math.abs(editTransaction.totalAmount).toString(),
+            payee: editTransaction.payee || '',
+            category: '',
+            account: editTransaction.account || accounts[0] || '',
+            fromAccount: '',
+            toAccount: '',
+            date: editTransaction.date || getLocalToday(),
+            memo: '',
+            tag: '',
+            tags: editTransaction.tags || (editTransaction.tag ? [editTransaction.tag] : []),
+            spendingType: 'need'
+          });
+          setDisplayAmount(Math.abs(editTransaction.totalAmount).toLocaleString('en-US'));
+        } else {
+          setIsSplitMode(false);
+          setActiveTab(editTransaction.type);
+          setFormData({
+            amount: Math.abs(editTransaction.amount).toString(),
+            payee: editTransaction.payee || '',
+            category: editTransaction.category || '',
+            account: editTransaction.account || accounts[0] || '',
+            fromAccount: editTransaction.fromAccount || accounts[0] || '',
+            toAccount: editTransaction.toAccount || accounts[1] || accounts[0] || '',
+            date: editTransaction.date || getLocalToday(),
+            memo: editTransaction.memo || '',
+            tag: '',
+            tags: editTransaction.tags || (editTransaction.tag ? [editTransaction.tag] : []),
+            spendingType: editTransaction.spendingType || 'need'
+          });
+          setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
+        }
       } else {
         setIsSplitMode(false);
-        setActiveTab(editTransaction.type);
+        setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
+        
+        if (prefilledCategory?.type) {
+          setActiveTab(prefilledCategory.type);
+        } else {
+          setActiveTab('expense');
+        }
+        
+        // Set default account - use prefilledAccount or first account from quick select list
+        const firstQuickAccount = quickSelectGroupedAccounts[0]?.accounts[0]?.name || accounts[0] || '';
+        const defaultAccount = prefilledAccount || firstQuickAccount;
+        const otherAccounts = accounts.filter(a => a !== defaultAccount);
+        
         setFormData({
-          amount: Math.abs(editTransaction.amount).toString(),
-          payee: editTransaction.payee || '',
-          category: editTransaction.category || '',
-          account: editTransaction.account || (accounts.length > 0 ? accounts[0] : ''),
-          fromAccount: editTransaction.fromAccount || (accounts.length > 0 ? accounts[0] : ''),
-          toAccount: editTransaction.toAccount || (accounts.length > 1 ? accounts[1] : accounts[0] || ''),
-          date: editTransaction.date || getLocalToday(),
-          memo: editTransaction.memo || '',
-          spendingType: editTransaction.spendingType || 'need'
+          amount: '',
+          payee: '',
+          category: prefilledCategory?.name || '',
+          account: defaultAccount,
+          fromAccount: defaultAccount,
+          toAccount: otherAccounts[0] || accounts[0] || '',
+          date: getLocalToday(),
+          memo: '',
+          tag: '',
+          tags: [],
+          spendingType: prefilledCategory?.spendingType || 'need'
         });
-        setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
+        setDisplayAmount('');
       }
-    } else {
-      // New transaction
-      setIsSplitMode(false);
-      setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
-      
-      if (prefilledCategory?.type) {
-        setActiveTab(prefilledCategory.type);
-      } else {
-        setActiveTab('expense');
-      }
-      
-      // Determine default account
-      let defaultAccount = '';
-      if (prefilledAccount && accounts.includes(prefilledAccount)) {
-        defaultAccount = prefilledAccount;
-      } else if (accounts.length > 0) {
-        defaultAccount = accounts[0];
-      }
-      
-      // Determine toAccount for transfers
-      let defaultToAccount = '';
-      if (accounts.length > 1) {
-        defaultToAccount = accounts.filter(a => a !== defaultAccount)[0] || accounts[0];
-      } else if (accounts.length === 1) {
-        defaultToAccount = accounts[0];
-      }
-      
-      setFormData({
-        amount: '',
-        payee: '',
-        category: prefilledCategory?.name || '',
-        account: defaultAccount,
-        fromAccount: defaultAccount,
-        toAccount: defaultToAccount,
-        date: getLocalToday(),
-        memo: '',
-        spendingType: prefilledCategory?.spendingType || 'need'
-      });
-      setDisplayAmount('');
     }
-  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory, accounts]);
-
-  // Update account when accounts load (if current account is empty/invalid)
-  useEffect(() => {
-    if (!isOpen || accounts.length === 0) return;
-    
-    setFormData(prev => {
-      const needsUpdate = !prev.account || !accounts.includes(prev.account);
-      const needsFromUpdate = !prev.fromAccount || !accounts.includes(prev.fromAccount);
-      const needsToUpdate = !prev.toAccount || !accounts.includes(prev.toAccount);
-      
-      if (!needsUpdate && !needsFromUpdate && !needsToUpdate) {
-        return prev; // No changes needed
-      }
-      
-      const newAccount = needsUpdate ? (prefilledAccount && accounts.includes(prefilledAccount) ? prefilledAccount : accounts[0]) : prev.account;
-      const newFromAccount = needsFromUpdate ? newAccount : prev.fromAccount;
-      const newToAccount = needsToUpdate ? (accounts.filter(a => a !== newFromAccount)[0] || accounts[0]) : prev.toAccount;
-      
-      return {
-        ...prev,
-        account: newAccount,
-        fromAccount: newFromAccount,
-        toAccount: newToAccount
-      };
-    });
-  }, [isOpen, accounts, prefilledAccount]);
+  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory, accounts, quickSelectGroupedAccounts]);
 
   const formatDateForDisplay = (isoDate) => {
     if (!isoDate) return '';
@@ -209,9 +267,13 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     setActiveSplitIndex(null);
   };
 
-  const handleSplitLoanChange = (index, loan) => {
+  const handleSplitLoanChange = (index, loan, newLoanType = null) => {
     const newSplits = [...splits];
     newSplits[index].loan = loan;
+    // If creating new loan, store the loan type
+    if (newLoanType) {
+      newSplits[index].newLoanType = newLoanType;
+    }
     setSplits(newSplits);
   };
 
@@ -270,8 +332,15 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       return;
     }
 
+    const isFuture = forceFuture || isFutureDate(formData.date);
+
     // Validate transfer accounts
     if (activeTab === 'transfer') {
+      // Transfer không cho phép future
+      if (isFuture) {
+        toast.error("Transfer cannot be scheduled as future transaction!");
+        return;
+      }
       if (!formData.fromAccount) {
         toast.error("Please select From account!");
         return;
@@ -285,16 +354,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         return;
       }
     } else {
-      // Validate account for non-transfer transactions
-      // Account dropdown only shows valid accounts, so just check if selected
-      if (!formData.account) {
-        // Try to use first account if available
-        if (accounts.length > 0) {
-          setFormData(prev => ({ ...prev, account: accounts[0] }));
-          toast.error("Please select account!");
-        } else {
-          toast.error("No accounts available. Please create an account first!");
-        }
+      // Validate account for non-transfer transactions (skip for future)
+      if (!isFuture && !formData.account) {
+        toast.error("Please select account!");
         return;
       }
     }
@@ -317,6 +379,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           toast.error(`Split #${i + 1}: Please select category`);
           return;
         }
+        // Check if category exists in system
+        if (!s.isLoan && s.category) {
+          const categoryExists = categorySuggestions.some(c => c.name === s.category);
+          if (!categoryExists) {
+            toast.error(`Split #${i + 1}: Category "${s.category}" doesn't exist. Please create it first in Categories tab.`);
+            return;
+          }
+        }
       }
       setSplits(newSplits);
     } else {
@@ -324,36 +394,61 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         toast.error("Please select category!");
         return;
       }
+      // Check if category exists in system (for non-transfer, non-split transactions)
+      if (activeTab !== 'transfer' && formData.category) {
+        const categoryExists = categorySuggestions.some(c => c.name === formData.category);
+        if (!categoryExists) {
+          toast.error(`Category "${formData.category}" doesn't exist. Please create it first in Categories tab.`);
+          return;
+        }
+      }
     }
 
     setLoading(true);
     try {
+      const isFuture = forceFuture || isFutureDate(formData.date);
+      
       if (isSplitMode) {
         const totalAmount = Number(formData.amount);
-        const finalSplits = splits.map((s, i) => ({
-          amount: i === splits.length - 1 ? getRemainingAmount() : Number(s.amount),
-          category: s.category || null,
-          loan: s.loan || null,
-          isLoan: s.isLoan,
-          memo: s.memo || null
-        }));
+        const finalSplits = splits.map((s, i) => {
+          const splitData = {
+            amount: i === splits.length - 1 ? getRemainingAmount() : Number(s.amount),
+            category: s.category || null,
+            loan: s.loan || null,
+            isLoan: s.isLoan,
+            memo: s.memo || null
+          };
+          // Only include loanType if it's a loan split and we have a type
+          if (s.isLoan && s.loan) {
+            const determinedLoanType = s.newLoanType || loanTypeMap[s.loan] || null;
+            if (determinedLoanType) {
+              splitData.loanType = determinedLoanType;
+            }
+          }
+          return splitData;
+        });
         
         const transactionData = {
           userId: userId,
           type: 'split',
           splitType: activeTab,
           totalAmount: activeTab === 'expense' ? -Math.abs(totalAmount) : Math.abs(totalAmount),
-          account: formData.account,
+          account: isFuture ? null : formData.account,
           payee: formData.payee,
           date: formData.date,
-          splits: finalSplits
+          splits: finalSplits,
+          tag: formData.tags.length > 0 ? formData.tags[0] : null,  // Keep single tag for backwards compatibility
+          tags: formData.tags.length > 0 ? formData.tags : null,
+          isFuture: isFuture
         };
 
-        if (!editTransaction) {
+        // Always set createdAt for new or duplicated transactions
+        if (!editTransaction || isDuplicating) {
           transactionData.createdAt = new Date();
         }
 
-        if (editTransaction) {
+        // If duplicating, always create new (addDoc), otherwise update or add based on editTransaction
+        if (editTransaction && !isDuplicating) {
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -366,10 +461,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           type: activeTab,
           amount: finalAmount,
           date: formData.date,
-          memo: formData.memo
+          memo: formData.memo,
+          tag: formData.tags.length > 0 ? formData.tags[0] : null,  // Keep single tag for backwards compatibility
+          tags: formData.tags.length > 0 ? formData.tags : null,
+          isFuture: isFuture
         };
 
-        if (!editTransaction) {
+        // Always set createdAt for new or duplicated transactions
+        if (!editTransaction || isDuplicating) {
           transactionData.createdAt = new Date();
         }
 
@@ -382,7 +481,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
           transactionData.payee = formData.payee;
           transactionData.category = formData.category;
-          transactionData.account = formData.account;
+          transactionData.account = isFuture ? null : formData.account;
           
           // Save spendingType only for expense transactions
           if (activeTab === 'expense') {
@@ -390,7 +489,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           }
         }
 
-        if (editTransaction) {
+        // If duplicating, always create new (addDoc), otherwise update or add based on editTransaction
+        if (editTransaction && !isDuplicating) {
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -451,35 +551,64 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       {/* Full screen on mobile, centered card on desktop */}
       <div className="bg-white w-full h-full sm:w-[450px] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
         
-        {/* Header */}
+        {/* Header with Duplicate and Save button */}
         <div className="flex justify-between items-center p-4 border-b shrink-0">
-          <button onClick={onClose} className="text-gray-500 text-lg p-2 -ml-2">✕</button>
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="text-gray-500 text-lg p-2 -ml-2">✕</button>
+            {/* Duplicate button - only show when editing and not already duplicating */}
+            {editTransaction && !isDuplicating && (
+              <button 
+                onClick={() => {
+                  setIsDuplicating(true);
+                  // Update date to today when duplicating
+                  setFormData(prev => ({ ...prev, date: getLocalToday() }));
+                  toast.success('Duplicating - edit and save as new');
+                }}
+                className="px-4 py-1.5 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
+              >
+                Copy
+              </button>
+            )}
+          </div>
           <h2 className="font-semibold text-lg">
-            {editTransaction ? 'Edit Transaction' : 'Add Transaction'}
+            {isDuplicating ? 'Duplicate Transaction' : editTransaction ? 'Edit Transaction' : forceFuture ? '📅 Schedule Future' : 'Add Transaction'}
           </h2>
-          <div className="w-10"></div>
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? '...' : 'Save'}
+          </button>
         </div>
 
         {/* Type Tabs */}
         <div className="flex p-2 gap-2 bg-gray-50 shrink-0">
-          {['expense', 'income', 'transfer'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab);
-                if (tab === 'transfer') disableSplitMode();
-              }}
-              className={`flex-1 py-2 rounded-lg capitalize font-medium transition-colors ${
-                activeTab === tab 
-                  ? (tab === 'expense' ? 'bg-red-100 text-red-700 border border-red-300' 
-                    : tab === 'income' ? 'bg-emerald-100 text-emerald-700 border border-emerald-400' 
-                    : 'bg-blue-100 text-blue-700 border border-blue-400')
-                  : 'bg-white text-gray-500 border border-gray-200'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+          {['expense', 'income', 'transfer'].map(tab => {
+            const isDisabled = forceFuture && tab === 'transfer';
+            return (
+              <button
+                key={tab}
+                onClick={() => {
+                  if (isDisabled) return;
+                  setActiveTab(tab);
+                  if (tab === 'transfer') disableSplitMode();
+                }}
+                disabled={isDisabled}
+                className={`flex-1 py-2 rounded-lg capitalize font-medium transition-colors ${
+                  isDisabled 
+                    ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                    : activeTab === tab 
+                      ? (tab === 'expense' ? 'bg-red-100 text-red-700 border border-red-300' 
+                        : tab === 'income' ? 'bg-emerald-100 text-emerald-700 border border-emerald-400' 
+                        : 'bg-blue-100 text-blue-700 border border-blue-400')
+                      : 'bg-white text-gray-500 border border-gray-200'
+                }`}
+              >
+                {tab}
+              </button>
+            );
+          })}
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto flex-1">
@@ -526,31 +655,41 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                 onChange={(e) => setFormData({...formData, payee: e.target.value})}
                 onFocus={() => setShowPayeeList(true)}
                 onBlur={() => setTimeout(() => setShowPayeeList(false), 200)}
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none text-base"
               />
-              {showPayeeList && payeeSuggestions.length > 0 && (
-                <div className="absolute z-10 w-full bg-white shadow-lg max-h-32 overflow-y-auto rounded-lg mt-1 border">
+              {showPayeeList && payeeSuggestions.filter(p => p.toLowerCase().includes(formData.payee.toLowerCase())).length > 0 && (
+                <div className="absolute z-20 w-full bg-white shadow-xl rounded-lg mt-1 border border-gray-200">
                   {payeeSuggestions
                     .filter(p => p.toLowerCase().includes(formData.payee.toLowerCase()))
-                    .slice(0, 5)
+                    .slice(0, 8)
                     .map((payee, idx) => (
                       <div 
                         key={idx} 
-                        className="p-2 hover:bg-gray-100 cursor-pointer text-sm"
+                        className="p-3 hover:bg-gray-100 cursor-pointer text-base border-b border-gray-100 last:border-b-0"
                         onClick={() => {
-                          // Auto-fill category if payee has been used before
+                          // Auto-fill category and account if payee has been used before
                           const autoCategory = payeeToCategoryMap[payee];
+                          const autoAccount = payeeToAccountMap[payee];
+                          
+                          const newData = { ...formData, payee };
+                          
+                          // Auto-fill category if empty
                           if (autoCategory && !formData.category) {
-                            setFormData({...formData, payee, category: autoCategory});
-                          } else {
-                            setFormData({...formData, payee});
+                            newData.category = autoCategory;
                           }
+                          
+                          // Auto-fill account if exists in current accounts list
+                          if (autoAccount && accounts.includes(autoAccount)) {
+                            newData.account = autoAccount;
+                          }
+                          
+                          setFormData(newData);
                           setShowPayeeList(false);
                         }}
                       >
                         {payee}
                         {payeeToCategoryMap[payee] && (
-                          <span className="text-xs text-gray-400 ml-2">→ {payeeToCategoryMap[payee]}</span>
+                          <span className="text-sm text-gray-400 ml-2">→ {payeeToCategoryMap[payee]}</span>
                         )}
                       </div>
                     ))}
@@ -589,7 +728,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                     {/* Amount */}
                     <div className="mb-2">
                       {isLastSplit ? (
-                        <div className="text-2xl font-bold text-center p-2 rounded-lg bg-sky-100 text-sky-700">
+                        <div className="text-2xl font-bold text-center p-3 rounded-lg bg-sky-100 text-sky-700">
                           {splitAmount.toLocaleString()}
                           <span className="text-xs ml-1 opacity-70">(auto)</span>
                         </div>
@@ -600,7 +739,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                           placeholder="Amount"
                           value={split.amount ? Number(split.amount).toLocaleString() : ''}
                           onChange={(e) => handleSplitAmountChange(index, e.target.value)}
-                          className="w-full p-2 text-xl font-bold text-center bg-white rounded-lg border border-sky-200"
+                          className="w-full p-3 text-xl font-bold text-center bg-white rounded-lg border border-sky-200 text-base"
                         />
                       )}
                     </div>
@@ -609,7 +748,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                     <div className="flex gap-2 mb-2">
                       <button
                         onClick={() => { if (split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-1.5 text-xs rounded-lg font-medium ${
+                        className={`flex-1 py-2 text-base rounded-lg font-medium ${
                           !split.isLoan 
                             ? 'bg-sky-500 text-white'
                             : 'bg-white text-gray-500 border border-gray-200'
@@ -619,7 +758,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                       </button>
                       <button
                         onClick={() => { if (!split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-1.5 text-xs rounded-lg font-medium ${
+                        className={`flex-1 py-2 text-base rounded-lg font-medium ${
                           split.isLoan 
                             ? 'bg-sky-500 text-white'
                             : 'bg-white text-gray-500 border border-gray-200'
@@ -631,47 +770,214 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
                     {/* Category or Loan Selector */}
                     {split.isLoan ? (
-                      <select
-                        value={split.loan}
-                        onChange={(e) => handleSplitLoanChange(index, e.target.value)}
-                        className="w-full p-2 bg-white rounded-lg border border-sky-200 text-sm"
-                      >
-                        <option value="">Select loan...</option>
-                        {loans.map(loan => (
-                          <option key={loan} value={loan}>{loan}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Select category..."
-                          value={split.category}
-                          onChange={(e) => {
-                            const newSplits = [...splits];
-                            newSplits[index].category = e.target.value;
-                            setSplits(newSplits);
-                          }}
-                          onFocus={() => setActiveSplitIndex(index)}
-                          onBlur={() => setTimeout(() => setActiveSplitIndex(null), 200)}
-                          className="w-full p-2 bg-white rounded-lg border border-sky-200 text-sm"
-                        />
-                        {activeSplitIndex === index && (
-                          <div className="absolute z-30 w-full bg-white shadow-xl max-h-32 overflow-y-auto rounded-lg mt-1 border border-gray-200">
-                            {filteredCategories
-                              .filter(cat => cat.name.toLowerCase().includes(split.category.toLowerCase()))
-                              .map(cat => (
-                                <div
-                                  key={cat.id}
-                                  onClick={() => handleSplitCategoryChange(index, cat.name)}
-                                  className="p-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-sm"
-                                >
-                                  <span>{cat.icon}</span>
-                                  <span>{cat.name}</span>
+                      <div>
+                        <div
+                          onClick={() => setActiveSplitLoanIndex(index)}
+                          className="w-full p-3 bg-white rounded-lg border border-sky-200 text-base cursor-pointer flex items-center justify-between"
+                        >
+                          <span className={split.loan ? 'text-gray-900' : 'text-gray-400'}>
+                            {split.loan || 'Select or create loan...'}
+                          </span>
+                          <span className="text-gray-400">▼</span>
+                        </div>
+                        
+                        {/* Full Screen Loan Picker */}
+                        {activeSplitLoanIndex === index && (
+                          <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                            {/* Header */}
+                            <div className="flex items-center justify-between p-4 border-b bg-white">
+                              <button onClick={() => { setActiveSplitLoanIndex(null); setNewLoanName(''); setNewLoanType(null); }} className="text-gray-500 text-xl">✕</button>
+                              <h3 className="font-semibold text-lg">Select Loan</h3>
+                              <div className="w-8"></div>
+                            </div>
+                            
+                            {/* Scrollable Content */}
+                            <div 
+                              className="flex-1 overflow-y-auto"
+                              onScroll={() => document.activeElement?.blur()}
+                            >
+                              {/* Existing Loans List */}
+                              {loans.length > 0 && (
+                                <>
+                                  <div className="p-3 text-xs font-bold text-gray-500 uppercase bg-gray-50 sticky top-0">Existing Loans</div>
+                                  {loans.map(loan => (
+                                    <div 
+                                      key={loan} 
+                                      className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
+                                      onClick={() => {
+                                        handleSplitLoanChange(index, loan);
+                                        setActiveSplitLoanIndex(null);
+                                        setNewLoanName('');
+                                        setNewLoanType(null);
+                                      }}
+                                    >
+                                      <span className="text-2xl">{loanTypeMap[loan] === 'lend' || loan.toLowerCase().startsWith('lend to') ? '💸' : '💰'}</span>
+                                      <span className="flex-1 text-base">{loan}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+                              
+                              {/* + New Loan Section */}
+                              <div className="p-3 text-xs font-bold text-gray-500 uppercase bg-gray-50 sticky top-0 mt-2 border-t">+ New Loan</div>
+                              <div className="p-4">
+                                {/* Loan Type Selection */}
+                                <div className="flex gap-2 mb-3">
+                                  <button
+                                    onClick={() => setNewLoanType('lend')}
+                                    className={`flex-1 py-3 rounded-lg font-medium text-base ${
+                                      newLoanType === 'lend' 
+                                        ? 'bg-emerald-500 text-white' 
+                                        : 'bg-white text-gray-600 border border-gray-200'
+                                    }`}
+                                  >
+                                    💸 I Lend
+                                  </button>
+                                  <button
+                                    onClick={() => setNewLoanType('borrow')}
+                                    className={`flex-1 py-3 rounded-lg font-medium text-base ${
+                                      newLoanType === 'borrow' 
+                                        ? 'bg-amber-500 text-white' 
+                                        : 'bg-white text-gray-600 border border-gray-200'
+                                    }`}
+                                  >
+                                    💰 I Borrow
+                                  </button>
                                 </div>
-                              ))}
+                                
+                                {/* Name Input - Only show after selecting type */}
+                                {newLoanType && (
+                                  <div className="space-y-3">
+                                    <input
+                                      type="text"
+                                      placeholder={newLoanType === 'lend' ? "Who are you lending to?" : "Who are you borrowing from?"}
+                                      value={newLoanName}
+                                      onChange={(e) => setNewLoanName(e.target.value)}
+                                      className="w-full p-3 bg-white rounded-lg border border-gray-200 text-base"
+                                      autoFocus
+                                    />
+                                    {newLoanName.trim() && (
+                                      <>
+                                        <div className="text-sm text-gray-500 text-center">
+                                          Will create: <span className="font-medium text-gray-700">
+                                            {newLoanType === 'lend' ? `Lend to ${newLoanName.trim()}` : `Borrow from ${newLoanName.trim()}`}
+                                          </span>
+                                        </div>
+                                        <button
+                                          onClick={() => {
+                                            if (newLoanName.trim()) {
+                                              const fullLoanName = newLoanType === 'lend' 
+                                                ? `Lend to ${newLoanName.trim()}` 
+                                                : `Borrow from ${newLoanName.trim()}`;
+                                              handleSplitLoanChange(index, fullLoanName, newLoanType);
+                                              setLoanTypeMap(prev => ({...prev, [fullLoanName]: newLoanType}));
+                                              setNewLoanName('');
+                                              setNewLoanType(null);
+                                              setActiveSplitLoanIndex(null);
+                                            }
+                                          }}
+                                          className="w-full py-3 bg-emerald-500 text-white rounded-lg font-medium text-base"
+                                        >
+                                          Create Loan
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         )}
+                      </div>
+                    ) : (
+                      <div>
+                        <div
+                          onClick={() => setActiveSplitCategoryIndex(index)}
+                          className="w-full p-3 bg-white rounded-lg border border-sky-200 text-base cursor-pointer flex items-center justify-between"
+                        >
+                          <span className={split.category ? 'text-gray-900' : 'text-gray-400'}>
+                            {split.category || 'Select category...'}
+                          </span>
+                          <span className="text-gray-400">▼</span>
+                        </div>
+                        
+                        {/* Full Screen Category Picker for Split */}
+                        {activeSplitCategoryIndex === index && (() => {
+                          const searchTerm = (splitCategorySearch || '').toLowerCase();
+                          const groupedCats = {};
+                          filteredCategories
+                            .filter(cat => cat.name.toLowerCase().includes(searchTerm))
+                            .forEach(cat => {
+                              const groupName = cat.group || 'Other';
+                              if (!groupedCats[groupName]) groupedCats[groupName] = [];
+                              groupedCats[groupName].push(cat);
+                            });
+                          
+                          Object.keys(groupedCats).forEach(groupName => {
+                            groupedCats[groupName].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+                          });
+                          
+                          const sortedGroups = Object.keys(groupedCats).sort((a, b) => {
+                            const catsA = groupedCats[a];
+                            const catsB = groupedCats[b];
+                            const orderA = catsA[0]?.groupOrder ?? 999;
+                            const orderB = catsB[0]?.groupOrder ?? 999;
+                            return orderA - orderB;
+                          });
+                          
+                          return (
+                            <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                              {/* Header */}
+                              <div className="flex items-center justify-between p-4 border-b bg-white">
+                                <button onClick={() => { setActiveSplitCategoryIndex(null); setSplitCategorySearch(''); }} className="text-gray-500 text-xl">✕</button>
+                                <h3 className="font-semibold text-lg">Select Category</h3>
+                                <div className="w-8"></div>
+                              </div>
+                              
+                              {/* Search */}
+                              <div className="p-3 border-b">
+                                <input
+                                  type="text"
+                                  placeholder="Search category..."
+                                  value={splitCategorySearch}
+                                  onChange={(e) => setSplitCategorySearch(e.target.value)}
+                                  className="w-full p-3 bg-gray-100 rounded-lg outline-none text-base"
+                                  autoFocus
+                                />
+                              </div>
+                              
+                              {/* Category List grouped */}
+                              <div 
+                                className="flex-1 overflow-y-auto"
+                                onScroll={() => document.activeElement?.blur()}
+                              >
+                                {sortedGroups.map(groupName => (
+                                  <div key={groupName}>
+                                    {/* Group Header */}
+                                    <div className="px-4 py-2 bg-gray-100 text-sm font-semibold text-gray-600 sticky top-0">
+                                      {groupName}
+                                    </div>
+                                    {/* Categories in group */}
+                                    {groupedCats[groupName].map(cat => (
+                                      <div 
+                                        key={cat.id} 
+                                        className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
+                                        onClick={() => {
+                                          handleSplitCategoryChange(index, cat.name);
+                                          setActiveSplitCategoryIndex(null);
+                                          setSplitCategorySearch('');
+                                        }}
+                                      >
+                                        <span className="text-2xl">{cat.icon}</span>
+                                        <span className="flex-1 text-base">{cat.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -681,7 +987,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                       placeholder="Memo (optional)"
                       value={split.memo}
                       onChange={(e) => handleSplitMemoChange(index, e.target.value)}
-                      className="w-full p-2 bg-white rounded-lg border border-sky-200 text-sm mt-2"
+                      className="w-full p-3 bg-white rounded-lg border border-sky-200 text-base mt-2"
                     />
                   </div>
                 );
@@ -690,7 +996,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
               {/* Add Split Button */}
               <button
                 onClick={addSplitLine}
-                className="w-full py-2 border-2 border-dashed border-sky-300 rounded-xl font-medium text-sky-600 hover:bg-sky-50"
+                className="w-full py-3 border-2 border-dashed border-sky-300 rounded-xl font-medium text-sky-600 hover:bg-sky-50 text-base"
               >
                 + Add Split
               </button>
@@ -701,36 +1007,95 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           {!isSplitMode && activeTab !== 'transfer' && (
             <div className="relative">
               <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
-              <input
-                type="text"
-                placeholder="Select category..."
-                value={formData.category}
-                onChange={(e) => {
-                  setFormData({...formData, category: e.target.value});
-                  setShowCategoryList(true);
-                }}
-                onFocus={() => setShowCategoryList(true)}
-                onBlur={() => setTimeout(() => setShowCategoryList(false), 200)}
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              />
+              <div
+                onClick={() => setShowCategoryPicker(true)}
+                className="w-full p-3 bg-gray-50 rounded-lg mt-1 cursor-pointer flex items-center justify-between text-base"
+              >
+                <span className={formData.category ? 'text-gray-900' : 'text-gray-400'}>
+                  {formData.category || 'Select category...'}
+                </span>
+                <span className="text-gray-400">▼</span>
+              </div>
               
-              {showCategoryList && (
-                <div className="absolute z-20 w-full bg-white shadow-xl max-h-48 overflow-y-auto rounded-lg mt-1 border border-gray-200">
-                  {filteredCategories
-                    .filter(cat => cat.name.toLowerCase().includes(formData.category.toLowerCase()))
-                    .map(cat => (
-                      <div 
-                        key={cat.id} 
-                        className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
-                        onClick={() => handleCategorySelect(cat.name)}
-                      >
-                        <span className="text-xl">{cat.icon}</span>
-                        <span>{cat.name}</span>
-                        <span className="text-xs text-gray-400 ml-auto">{cat.group}</span>
-                      </div>
-                    ))}
-                </div>
-              )}
+              {/* Full Screen Category Picker */}
+              {showCategoryPicker && (() => {
+                // Group categories
+                const searchTerm = formData.category.toLowerCase();
+                const groupedCats = {};
+                filteredCategories
+                  .filter(cat => cat.name.toLowerCase().includes(searchTerm))
+                  .forEach(cat => {
+                    const groupName = cat.group || 'Other';
+                    if (!groupedCats[groupName]) groupedCats[groupName] = [];
+                    groupedCats[groupName].push(cat);
+                  });
+                
+                // Sort categories within each group by order
+                Object.keys(groupedCats).forEach(groupName => {
+                  groupedCats[groupName].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+                });
+                
+                // Sort groups by groupOrder
+                const sortedGroups = Object.keys(groupedCats).sort((a, b) => {
+                  const catsA = groupedCats[a];
+                  const catsB = groupedCats[b];
+                  const orderA = catsA[0]?.groupOrder ?? 999;
+                  const orderB = catsB[0]?.groupOrder ?? 999;
+                  return orderA - orderB;
+                });
+                
+                return (
+                  <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                    {/* Header */}
+                    <div className="flex items-center justify-between p-4 border-b bg-white">
+                      <button onClick={() => setShowCategoryPicker(false)} className="text-gray-500 text-xl">✕</button>
+                      <h3 className="font-semibold text-lg">Select Category</h3>
+                      <div className="w-8"></div>
+                    </div>
+                    
+                    {/* Search */}
+                    <div className="p-3 border-b">
+                      <input
+                        type="text"
+                        placeholder="Search category..."
+                        value={formData.category}
+                        onChange={(e) => setFormData({...formData, category: e.target.value})}
+                        className="w-full p-3 bg-gray-100 rounded-lg outline-none text-base"
+                        autoFocus
+                      />
+                    </div>
+                    
+                    {/* Category List grouped */}
+                    <div 
+                      className="flex-1 overflow-y-auto"
+                      onScroll={() => document.activeElement?.blur()}
+                    >
+                      {sortedGroups.map(groupName => (
+                        <div key={groupName}>
+                          {/* Group Header */}
+                          <div className="px-4 py-2 bg-gray-100 text-sm font-semibold text-gray-600 sticky top-0">
+                            {groupName}
+                          </div>
+                          {/* Categories in group */}
+                          {groupedCats[groupName].map(cat => (
+                            <div 
+                              key={cat.id} 
+                              className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
+                              onClick={() => {
+                                handleCategorySelect(cat.name);
+                                setShowCategoryPicker(false);
+                              }}
+                            >
+                              <span className="text-2xl">{cat.icon}</span>
+                              <span className="flex-1 text-base">{cat.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -786,24 +1151,36 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
               <div>
                 <label className="text-xs text-gray-500 uppercase font-semibold">From</label>
                 <select 
-                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none text-base"
                   value={formData.fromAccount}
                   onChange={(e) => setFormData({...formData, fromAccount: e.target.value})}
                 >
-                  {accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
+                  {quickSelectGroupedAccounts.map(group => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.accounts.map(acc => (
+                        <option key={acc.name} value={acc.name}>
+                          {acc.icon} {acc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase font-semibold">To</label>
                 <select 
-                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
+                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none text-base"
                   value={formData.toAccount}
                   onChange={(e) => setFormData({...formData, toAccount: e.target.value})}
                 >
-                  {accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
+                  {groupedAccounts.map(group => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.accounts.map(acc => (
+                        <option key={acc.name} value={acc.name}>
+                          {acc.icon} {acc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
@@ -814,19 +1191,34 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           {activeTab !== 'transfer' && (
             <div>
               <label className="text-xs text-gray-500 uppercase font-semibold">Account</label>
-              <select 
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-                value={formData.account}
-                onChange={(e) => setFormData({...formData, account: e.target.value})}
-              >
-                {accounts.length === 0 ? (
-                  <option value="">Loading...</option>
-                ) : (
-                  accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
-                  ))
-                )}
-              </select>
+              {(forceFuture || isFutureDate(formData.date)) ? (
+                <div className="w-full p-3 bg-amber-50 rounded-lg mt-1 border border-amber-200">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <span>📅</span>
+                    <span className="text-base">Future transaction - Select account when activated</span>
+                  </div>
+                </div>
+              ) : (
+                <select 
+                  className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none text-base"
+                  value={formData.account}
+                  onChange={(e) => setFormData({...formData, account: e.target.value})}
+                >
+                  {accounts.length === 0 ? (
+                    <option value="">Loading...</option>
+                  ) : (
+                    quickSelectGroupedAccounts.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.accounts.map(acc => (
+                          <option key={acc.name} value={acc.name}>
+                            {acc.icon} {acc.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))
+                  )}
+                </select>
+              )}
             </div>
           )}
 
@@ -834,22 +1226,16 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
             <div className="relative mt-1">
-              {/* Hidden native date input */}
+              <div className="w-full p-3 bg-gray-50 rounded-lg flex items-center justify-between text-base pointer-events-none">
+                <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
+                <span className="text-gray-400">📅</span>
+              </div>
               <input 
                 type="date" 
-                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 value={formData.date}
                 onChange={(e) => setFormData({...formData, date: e.target.value})}
               />
-              {/* Display formatted date */}
-              <div className="w-full p-3 pr-10 bg-gray-50 rounded-lg text-gray-800 cursor-pointer">
-                {formData.date ? new Date(formData.date + 'T00:00:00').toLocaleDateString('en-GB', { 
-                  day: 'numeric', 
-                  month: 'short', 
-                  year: 'numeric' 
-                }) : 'Select date'}
-              </div>
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">📅</span>
             </div>
           </div>
 
@@ -857,36 +1243,166 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           {!isSplitMode && (
             <div>
               <label className="text-xs text-gray-500 uppercase font-semibold">Memo</label>
-              <input
-                type="text"
-                placeholder="Notes (optional)"
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-                value={formData.memo}
-                onChange={(e) => setFormData({...formData, memo: e.target.value})}
-              />
+              <div className="relative mt-1">
+                <input
+                  type="text"
+                  placeholder="Notes (optional)"
+                  className="w-full p-3 bg-gray-50 rounded-lg outline-none text-base pr-10"
+                  value={formData.memo}
+                  onChange={(e) => setFormData({...formData, memo: e.target.value})}
+                />
+                {/* Clear memo button - only show when memo has value */}
+                {formData.memo && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, memo: ''})}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                    title="Clear memo"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
           )}
+
+          {/* Tags - For all modes (multi-select) */}
+          <div className="relative">
+            <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
+
+            {/* Available tags - above input */}
+            {tagSuggestions.filter(tag => !formData.tags.includes(tag)).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+                {tagSuggestions
+                  .filter(tag => !formData.tags.includes(tag))
+                  .map(tag => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData,
+                        tags: [...formData.tags, tag]
+                      })}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm hover:bg-emerald-200 transition-colors"
+                    >
+                      🏷️ {tag}
+                    </button>
+                  ))}
+              </div>
+            )}
+            
+            {/* Input box with selected tags inside */}
+            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg border border-gray-200 focus-within:border-emerald-400 min-h-[44px]">
+              {/* Selected tags */}
+              {formData.tags.map(tag => (
+                <span 
+                  key={tag}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-sm"
+                >
+                  🏷️ {tag}
+                  <button
+                    type="button"
+                    onClick={() => setFormData({
+                      ...formData, 
+                      tags: formData.tags.filter(t => t !== tag)
+                    })}
+                    className="text-emerald-500 hover:text-emerald-700"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              
+              {/* Text input */}
+              <input
+                type="text"
+                placeholder={formData.tags.length > 0 ? "" : "Type new tag + Enter"}
+                className="flex-1 min-w-[100px] bg-transparent outline-none text-sm py-1"
+                value={formData.tag}
+                onChange={(e) => {
+                  setFormData({...formData, tag: e.target.value});
+                  setShowTagList(true);
+                }}
+                onFocus={() => setShowTagList(true)}
+                onBlur={() => setTimeout(() => setShowTagList(false), 200)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && formData.tag.trim()) {
+                    e.preventDefault();
+                    const newTag = formData.tag.trim();
+                    if (!formData.tags.includes(newTag)) {
+                      setFormData({
+                        ...formData,
+                        tags: [...formData.tags, newTag],
+                        tag: ''
+                      });
+                      // Save new tag to userTags collection
+                      addUserTag(newTag).then(() => {
+                        console.log('Tag added to userTags:', newTag);
+                      }).catch(err => {
+                        console.error('Failed to save tag:', err);
+                        toast.error('Failed to save tag: ' + err.message);
+                      });
+                    }
+                    setShowTagList(false);
+                  }
+                  // Backspace to remove last tag when input is empty
+                  if (e.key === 'Backspace' && !formData.tag && formData.tags.length > 0) {
+                    setFormData({
+                      ...formData,
+                      tags: formData.tags.slice(0, -1)
+                    });
+                  }
+                }}
+              />
+            </div>
+            
+            {/* Autocomplete dropdown - only show when typing */}
+            {showTagList && formData.tag && tagSuggestions.length > 0 && (
+              <div className="absolute z-20 w-full bg-white shadow-xl max-h-36 overflow-y-auto rounded-lg mt-1 border border-gray-200">
+                {tagSuggestions
+                  .filter(tag => 
+                    tag.toLowerCase().includes((formData.tag || '').toLowerCase()) &&
+                    !formData.tags.includes(tag)
+                  )
+                  .map(tag => (
+                    <div 
+                      key={tag} 
+                      className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
+                      onClick={() => {
+                        setFormData({
+                          ...formData, 
+                          tags: [...formData.tags, tag],
+                          tag: ''
+                        });
+                        setShowTagList(false);
+                      }}
+                    >
+                      <span className="text-emerald-500">🏷️</span>
+                      <span>{tag}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+            
+            {/* Helper text - Always visible */}
+            <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+              <span className="font-bold">💡 Tip:</span>
+              <span>Type tag name and press <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-gray-700 font-mono">Enter</kbd> to save</span>
+            </div>
+          </div>
         </div>
 
-        {/* Fixed Bottom Bar */}
-        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
-          {editTransaction && (
+        {/* Bottom Bar - Only show Delete when editing and NOT duplicating */}
+        {editTransaction && !isDuplicating && (
+          <div className="p-4 border-t bg-white">
             <button 
               onClick={handleDelete}
-              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
+              className="w-full py-3 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
             >
-              🗑️ Delete
+              🗑️ Delete Transaction
             </button>
-          )}
-          <div className="flex-1"></div>
-          <button 
-            onClick={handleSubmit} 
-            disabled={loading}
-            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : 'SAVE'}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

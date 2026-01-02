@@ -2,16 +2,40 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import DesktopReports from './DesktopReports';
+import AccountStatement from './AccountStatement';
 
 const ReportsTab = () => {
-  const { transactions, isLoading } = useData();
+  const { 
+    transactions, 
+    tagSuggestions, 
+    isLoading, 
+    accounts, 
+    categories, 
+    groupedAccounts,
+    hasMoreTransactions,
+    loadAllTransactions,
+    loadingMore
+  } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
   
   // Detail view state
-  const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | null
+  const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | 'tag-report' | 'desktop-detail' | 'account-statement' | null
   const [dateRange, setDateRange] = useState('this-month');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
+  const [selectedTag, setSelectedTag] = useState('');
+  const [expandedCategories, setExpandedCategories] = useState({}); // Track which categories are expanded
+  
+  // Account Statement state (lifted up for back button handling)
+  const [selectedStatementAccount, setSelectedStatementAccount] = useState('');
+
+  // Reset dateRange when exiting detail view
+  useEffect(() => {
+    if (!detailView) {
+      setDateRange('this-month');
+      setCustomRange({ from: '', to: '' });
+    }
+  }, [detailView]);
 
   // Check screen size - only show desktop reports on large screens
   useEffect(() => {
@@ -20,8 +44,24 @@ const ReportsTab = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Register back handler
-  useBackHandler(!!detailView, () => setDetailView(null));
+  // Auto-load all transactions when entering detail view that needs full data
+  useEffect(() => {
+    if (detailView && hasMoreTransactions && !loadingMore) {
+      // Load all for detailed reports
+      loadAllTransactions();
+    }
+  }, [detailView, hasMoreTransactions, loadingMore, loadAllTransactions]);
+
+  // Register back handler - handle account-statement differently
+  useBackHandler(!!detailView, () => {
+    if (detailView === 'account-statement' && selectedStatementAccount) {
+      // Clear account selection first - go back to account picker
+      setSelectedStatementAccount('');
+    } else {
+      // Go back to Reports Tab
+      setDetailView(null);
+    }
+  });
 
   // Colors for pie chart
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#9ca3af'];
@@ -120,6 +160,96 @@ const ReportsTab = () => {
 
     return { income, expense, net: income - expense, categoryData };
   }, [transactions, currentDate]);
+
+  // Needs vs Wants summary (for main view)
+  const needWantSummary = useMemo(() => {
+    const monthStr = currentDate.toISOString().slice(0, 7);
+    const monthlyTrans = transactions.filter(t => 
+      t.date && t.date.startsWith(monthStr) && t.type !== 'loan' && t.type !== 'income' && t.type !== 'transfer'
+    );
+
+    let needs = 0, wants = 0;
+    const needCatMap = {}, wantCatMap = {};
+
+    monthlyTrans.forEach(t => {
+      if (t.type === 'expense') {
+        const amt = Math.abs(Number(t.amount));
+        const spendingType = t.spendingType || 'need';
+        if (spendingType === 'need') {
+          needs += amt;
+          if (t.category) needCatMap[t.category] = (needCatMap[t.category] || 0) + amt;
+        } else {
+          wants += amt;
+          if (t.category) wantCatMap[t.category] = (wantCatMap[t.category] || 0) + amt;
+        }
+      }
+      if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
+        t.splits.forEach(s => {
+          if (!s.isLoan) {
+            const splitAmt = Math.abs(s.amount);
+            const spendingType = s.spendingType || 'need';
+            if (spendingType === 'need') {
+              needs += splitAmt;
+              if (s.category) needCatMap[s.category] = (needCatMap[s.category] || 0) + splitAmt;
+            } else {
+              wants += splitAmt;
+              if (s.category) wantCatMap[s.category] = (wantCatMap[s.category] || 0) + splitAmt;
+            }
+          }
+        });
+      }
+    });
+
+    const total = needs + wants;
+    const needPercent = total > 0 ? Math.round((needs / total) * 100) : 0;
+    const wantPercent = total > 0 ? Math.round((wants / total) * 100) : 0;
+
+    return { needs, wants, total, needPercent, wantPercent };
+  }, [transactions, currentDate]);
+
+  // Needs vs Wants monthly data for detail view
+  const needWantMonthlyData = useMemo(() => {
+    const months = getDateRangeMonths();
+    const today = new Date().toISOString().split('T')[0];
+    
+    return months.map(({ year, month, isToday }) => {
+      const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const monthlyTrans = transactions.filter(t => {
+        if (!t.date || t.type === 'loan' || t.type === 'income' || t.type === 'transfer') return false;
+        if (isToday) return t.date === today;
+        return t.date.startsWith(monthStr);
+      });
+
+      let needs = 0, wants = 0;
+
+      monthlyTrans.forEach(t => {
+        if (t.type === 'expense') {
+          const amt = Math.abs(Number(t.amount));
+          const spendingType = t.spendingType || 'need';
+          if (spendingType === 'need') needs += amt;
+          else wants += amt;
+        }
+        if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
+          t.splits.forEach(s => {
+            if (!s.isLoan) {
+              const splitAmt = Math.abs(s.amount);
+              const spendingType = s.spendingType || 'need';
+              if (spendingType === 'need') needs += splitAmt;
+              else wants += splitAmt;
+            }
+          });
+        }
+      });
+
+      return {
+        month: isToday ? 'Today' : `${month + 1}/${String(year).slice(2)}`,
+        monthKey: monthStr,
+        needs,
+        wants,
+        total: needs + wants
+      };
+    });
+  }, [transactions, dateRange, customRange]);
 
   // Monthly data for detail view
   const monthlyData = useMemo(() => {
@@ -408,21 +538,98 @@ const ReportsTab = () => {
       </select>
       
       {dateRange === 'custom' && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="month"
-            value={customRange.from}
-            onChange={(e) => setCustomRange({ ...customRange, from: e.target.value })}
-            className="flex-1 p-2 bg-gray-50 rounded-lg border text-sm"
-            placeholder="From"
-          />
-          <input
-            type="month"
-            value={customRange.to}
-            onChange={(e) => setCustomRange({ ...customRange, to: e.target.value })}
-            className="flex-1 p-2 bg-gray-50 rounded-lg border text-sm"
-            placeholder="To"
-          />
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {/* From */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500 text-sm">From:</span>
+            <select
+              value={customRange.from ? customRange.from.split('-')[0] : ''}
+              onChange={(e) => {
+                const year = e.target.value;
+                const month = customRange.from ? customRange.from.split('-')[1] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, from: `${year}-${month}` });
+                } else if (year) {
+                  setCustomRange({ ...customRange, from: `${year}-` });
+                } else {
+                  setCustomRange({ ...customRange, from: '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Year</option>
+              {[2026, 2027, 2028, 2029, 2030].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <select
+              value={customRange.from ? customRange.from.split('-')[1] : ''}
+              onChange={(e) => {
+                const month = e.target.value;
+                const year = customRange.from ? customRange.from.split('-')[0] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, from: `${year}-${month}` });
+                } else if (month) {
+                  setCustomRange({ ...customRange, from: `-${month}` });
+                } else {
+                  setCustomRange({ ...customRange, from: year ? `${year}-` : '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Month</option>
+              {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          
+          <span className="text-gray-400 text-sm">→</span>
+          
+          {/* To */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500 text-sm">To:</span>
+            <select
+              value={customRange.to ? customRange.to.split('-')[0] : ''}
+              onChange={(e) => {
+                const year = e.target.value;
+                const month = customRange.to ? customRange.to.split('-')[1] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, to: `${year}-${month}` });
+                } else if (year) {
+                  setCustomRange({ ...customRange, to: `${year}-` });
+                } else {
+                  setCustomRange({ ...customRange, to: '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Year</option>
+              {[2026, 2027, 2028, 2029, 2030].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <select
+              value={customRange.to ? customRange.to.split('-')[1] : ''}
+              onChange={(e) => {
+                const month = e.target.value;
+                const year = customRange.to ? customRange.to.split('-')[0] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, to: `${year}-${month}` });
+                } else if (month) {
+                  setCustomRange({ ...customRange, to: `-${month}` });
+                } else {
+                  setCustomRange({ ...customRange, to: year ? `${year}-` : '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Month</option>
+              {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
     </div>
@@ -483,15 +690,329 @@ const ReportsTab = () => {
     return <DesktopReports onBack={() => setDetailView(null)} />;
   }
 
+  // Account Statement - Desktop Only
+  if (detailView === 'account-statement' && isDesktop) {
+    return (
+      <AccountStatement 
+        accounts={accounts} 
+        transactions={transactions} 
+        categories={categories}
+        groupedAccounts={groupedAccounts}
+        selectedAccount={selectedStatementAccount}
+        setSelectedAccount={setSelectedStatementAccount}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
+  // Tag Report Detail View
+  if (detailView === 'tag-report') {
+    // Calculate tag report data
+    const tagTransactions = selectedTag 
+      ? transactions.filter(t => {
+          // Support both old 'tag' and new 'tags' fields
+          const transactionTags = t.tags || (t.tag ? [t.tag] : []);
+          return transactionTags.includes(selectedTag);
+        })
+      : [];
+    
+    // Calculate totals
+    let tagIncome = 0;
+    let tagExpense = 0;
+    let tagLoansOut = 0; // Money lent (will be received)
+    let tagLoansIn = 0; // Money borrowed (will be paid)
+    const categoryBreakdown = {};
+    const categoryTransactions = {}; // Store transactions by category
+    const loanBreakdown = {};
+    const loanTransactionsList = []; // Store loan transactions
+
+    tagTransactions.forEach(t => {
+      if (t.type === 'split') {
+        const amt = Number(t.totalAmount) || 0;
+        if (amt > 0) tagIncome += amt;
+        else tagExpense += Math.abs(amt);
+        
+        // Process splits
+        t.splits?.forEach(s => {
+          if (s.isLoan && s.loan) {
+            const splitAmt = Number(s.amount) || 0;
+            if (t.splitType === 'expense') {
+              // Split expense with loan = you paid for someone (lend)
+              // Amount should be negative (money out of your pocket)
+              loanBreakdown[s.loan] = (loanBreakdown[s.loan] || 0) - splitAmt;
+            } else if (t.splitType === 'income') {
+              // Split income with loan = someone paid you back
+              // Amount should be positive (money into your pocket)
+              loanBreakdown[s.loan] = (loanBreakdown[s.loan] || 0) + splitAmt;
+            }
+          } else if (s.category) {
+            const splitAmt = Number(s.amount) || 0;
+            categoryBreakdown[s.category] = (categoryBreakdown[s.category] || 0) + splitAmt;
+            // Add to category transactions
+            if (!categoryTransactions[s.category]) categoryTransactions[s.category] = [];
+            categoryTransactions[s.category].push({
+              ...t,
+              displayAmount: splitAmt,
+              displayName: t.payee || s.category || 'Split'
+            });
+          }
+        });
+      } else if (t.type === 'loan') {
+        const amt = Number(t.amount) || 0;
+        if (t.loanType === 'lend') {
+          if (amt < 0) tagLoansOut += Math.abs(amt); // Lent more
+          else tagLoansIn += amt; // Received payment
+        } else { // borrow
+          if (amt > 0) tagLoansIn += amt; // Borrowed more
+          else tagLoansOut += Math.abs(amt); // Paid back
+        }
+        // Track by person
+        if (t.loan) {
+          loanBreakdown[t.loan] = (loanBreakdown[t.loan] || 0) + amt;
+        }
+        loanTransactionsList.push(t);
+      } else if (t.type === 'income') {
+        tagIncome += Math.abs(Number(t.amount));
+        if (t.category) {
+          categoryBreakdown[t.category] = (categoryBreakdown[t.category] || 0) + Math.abs(Number(t.amount));
+          // Add to category transactions
+          if (!categoryTransactions[t.category]) categoryTransactions[t.category] = [];
+          categoryTransactions[t.category].push({
+            ...t,
+            displayAmount: Math.abs(Number(t.amount)),
+            displayName: t.payee || t.category
+          });
+        }
+      } else if (t.type === 'expense') {
+        tagExpense += Math.abs(Number(t.amount));
+        if (t.category) {
+          categoryBreakdown[t.category] = (categoryBreakdown[t.category] || 0) + Math.abs(Number(t.amount));
+          // Add to category transactions
+          if (!categoryTransactions[t.category]) categoryTransactions[t.category] = [];
+          categoryTransactions[t.category].push({
+            ...t,
+            displayAmount: Math.abs(Number(t.amount)),
+            displayName: t.payee || t.category
+          });
+        }
+      }
+    });
+
+    const netLoans = Object.values(loanBreakdown).reduce((sum, v) => sum + v, 0);
+    const actualCost = tagExpense - tagIncome + netLoans;
+
+    const sortedCategories = Object.entries(categoryBreakdown)
+      .sort((a, b) => b[1] - a[1]);
+
+    const sortedLoans = Object.entries(loanBreakdown)
+      .filter(([_, v]) => v !== 0)
+      .sort((a, b) => b[1] - a[1]);
+
+    // Toggle category expansion
+    const toggleCategory = (cat) => {
+      setExpandedCategories(prev => ({
+        ...prev,
+        [cat]: !prev[cat]
+      }));
+    };
+
+    return (
+      <div className="fixed inset-0 bg-white z-50 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b bg-white">
+          <button onClick={() => { setDetailView(null); setSelectedTag(''); setExpandedCategories({}); }} className="text-gray-500 text-lg">✕</button>
+          <h2 className="font-semibold text-lg">Tag Report</h2>
+          <div className="w-8"></div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Tag Selector */}
+          <div>
+            <label className="text-xs text-gray-500 uppercase font-semibold">Select Tag</label>
+            <select
+              value={selectedTag}
+              onChange={(e) => { setSelectedTag(e.target.value); setExpandedCategories({}); }}
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 border border-gray-200 outline-none"
+            >
+              <option value="">-- Choose a tag --</option>
+              {tagSuggestions.map(tag => (
+                <option key={tag} value={tag}>🏷️ {tag}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Report Content */}
+          {selectedTag && (
+            <>
+              {/* 1. Total Project Cost */}
+              <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl p-4 text-white">
+                <div className="text-sm opacity-80">💰 Total Project Cost</div>
+                <div className="text-3xl font-bold mt-1">
+                  {formatCurrency(tagExpense)}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  {tagTransactions.length} transactions • Including loans
+                </div>
+              </div>
+
+              {/* 2. Who Paid What */}
+              <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                <h3 className="font-semibold text-gray-700 text-sm">💸 Who Paid</h3>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">I paid</span>
+                  <span className="text-gray-800 font-medium">{formatCurrency(tagExpense)}</span>
+                </div>
+                {/* Show others who paid for me (from borrow - positive amount means money came to me) */}
+                {sortedLoans.filter(([_, amt]) => amt > 0).map(([person, amount]) => (
+                  <div key={person} className="flex justify-between text-sm">
+                    <span className="text-gray-600">{person} paid for me</span>
+                    <span className="text-gray-800 font-medium">{formatCurrency(amount)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* 3. By Category with Expandable Transactions */}
+              {sortedCategories.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-center gap-4 mb-3">
+                    <h3 className="font-semibold text-gray-800">📂 By Category</h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          const allExpanded = {};
+                          sortedCategories.forEach(([cat]) => { allExpanded[cat] = true; });
+                          setExpandedCategories(allExpanded);
+                        }}
+                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                      >
+                        Expand All
+                      </button>
+                      <button
+                        onClick={() => setExpandedCategories({})}
+                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                      >
+                        Collapse All
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Category list */}
+                  <div className="space-y-0">
+                    {sortedCategories.map(([cat, amount]) => {
+                      const isExpanded = expandedCategories[cat];
+                      const catTrans = categoryTransactions[cat] || [];
+                      
+                      return (
+                        <div key={cat}>
+                          {/* Category Row */}
+                          <div 
+                            className="flex items-center py-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                            onClick={() => toggleCategory(cat)}
+                          >
+                            <span className={`text-gray-400 text-xs w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                            <span className="text-gray-700 min-w-0 flex-shrink">{cat}</span>
+                            <span className="text-gray-400 text-xs mx-2">({catTrans.length})</span>
+                            <span className="text-red-600 font-medium ml-auto">{formatCurrency(amount)}</span>
+                          </div>
+                          
+                          {/* Expanded Transactions */}
+                          {isExpanded && catTrans.length > 0 && (
+                            <div className="border-l-2 border-gray-200 ml-2 bg-gray-50">
+                              {catTrans
+                                .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                .map((t, idx) => (
+                                  <div key={t.id || idx} className="flex items-center py-1.5 pl-3 pr-1 text-sm border-b border-gray-100 last:border-b-0">
+                                    <span className="text-gray-600 min-w-0 flex-shrink truncate">{t.displayName}</span>
+                                    <span className="text-gray-400 text-xs mx-2 flex-shrink-0">{t.date}</span>
+                                    <span className="text-red-500 ml-auto flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Settlement - Ai nợ ai */}
+              {sortedLoans.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-semibold text-gray-700 text-sm">🔄 Settlement</h3>
+                    <span className="text-xs text-gray-400">• I paid for others up front</span>
+                  </div>
+                  {sortedLoans.map(([person, amount]) => {
+                    const theyOweMe = amount < 0;
+                    const displayAmount = Math.abs(amount);
+                    return (
+                      <div key={person} className="flex justify-between text-sm">
+                        <span className="text-gray-600">{person}</span>
+                        <span className={`font-medium ${theyOweMe ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          {theyOweMe ? `owes me ${formatCurrency(displayAmount)}` : `I owe ${formatCurrency(displayAmount)}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 5. My Actual Cost */}
+              <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl p-4 text-white">
+                <div className="text-sm opacity-80">✨ My Actual Cost</div>
+                <div className="text-3xl font-bold mt-1">
+                  {formatCurrency(Math.abs(actualCost))}
+                </div>
+                <div className="text-xs opacity-70 mt-1">
+                  After loans settled (e.g. everyone pays me back)
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Empty State - No tag selected but tags exist */}
+          {!selectedTag && tagSuggestions.length > 0 && (
+            <div className="text-center text-gray-500 py-10">
+              <span className="text-5xl">🏷️</span>
+              <p className="mt-2">Select a tag to view report</p>
+            </div>
+          )}
+
+          {/* Empty State - No tags exist */}
+          {tagSuggestions.length === 0 && (
+            <div className="text-center py-10 px-4">
+              <span className="text-5xl">🏷️</span>
+              <p className="text-gray-700 font-medium mt-3">No tags yet</p>
+              <p className="text-gray-500 text-sm mt-2">
+                Add tags when creating transactions to track spending by trip, event, or project.
+              </p>
+              <div className="mt-4 p-4 bg-amber-50 rounded-xl border border-amber-200 text-left">
+                <p className="text-amber-800 text-sm font-medium">💡 How to add tags:</p>
+                <ol className="text-amber-700 text-sm mt-2 space-y-1 list-decimal list-inside">
+                  <li>Open Add Transaction</li>
+                  <li>Scroll down to "Tags" field</li>
+                  <li>Type your tag name (e.g. "DaNang2025")</li>
+                  <li>Press <span className="font-bold">Enter</span> to add the tag</li>
+                </ol>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Detail View - Full Screen (Mobile)
-  if (detailView === 'spending' || detailView === 'income-expense') {
+  if (detailView === 'spending' || detailView === 'income-expense' || detailView === 'need-want') {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-white">
           <button onClick={() => setDetailView(null)} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">
-            {detailView === 'spending' ? 'Spending by Category' : 'Income vs Expense'}
+            {detailView === 'spending' ? 'Spending by Category' : detailView === 'income-expense' ? 'Income vs Expense' : 'Needs vs Wants'}
           </h2>
           <div className="w-8"></div>
         </div>
@@ -504,10 +1025,83 @@ const ReportsTab = () => {
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               {renderFullPieChart()}
             </div>
-          ) : (
+          ) : detailView === 'income-expense' ? (
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               {renderFullBarChart()}
               {renderIncomeExpenseTable()}
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              {/* Needs vs Wants Bar Chart */}
+              <div className="mb-6">
+                <div className="flex items-end justify-center gap-4 h-48">
+                  {needWantMonthlyData.map((m, idx) => {
+                    const maxVal = Math.max(...needWantMonthlyData.map(d => Math.max(d.needs, d.wants))) || 1;
+                    const needHeight = (m.needs / maxVal) * 150;
+                    const wantHeight = (m.wants / maxVal) * 150;
+                    return (
+                      <div key={idx} className="flex flex-col items-center">
+                        <div className="flex items-end gap-1 h-40">
+                          <div className="w-6 bg-blue-500 rounded-t" style={{ height: `${Math.max(needHeight, 2)}px` }} title={`Needs: ${formatCurrency(m.needs)}`}></div>
+                          <div className="w-6 bg-purple-500 rounded-t" style={{ height: `${Math.max(wantHeight, 2)}px` }} title={`Wants: ${formatCurrency(m.wants)}`}></div>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-2">{m.month}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-center gap-6 mt-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                    <span className="text-sm text-gray-600">Needs</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-purple-500 rounded"></div>
+                    <span className="text-sm text-gray-600">Wants</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Needs vs Wants Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-2 text-gray-600 font-medium">Month</th>
+                      <th className="text-right py-2 text-blue-600 font-medium">Needs</th>
+                      <th className="text-right py-2 text-purple-600 font-medium">Wants</th>
+                      <th className="text-right py-2 text-gray-600 font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {needWantMonthlyData.map((m, idx) => (
+                      <tr key={idx} className="border-b border-gray-100">
+                        <td className="py-2 text-gray-800">{m.month}</td>
+                        <td className="py-2 text-right text-blue-600">{formatCurrency(m.needs)}</td>
+                        <td className="py-2 text-right text-purple-600">{formatCurrency(m.wants)}</td>
+                        <td className="py-2 text-right text-gray-700">{formatCurrency(m.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    {(() => {
+                      const totalNeeds = needWantMonthlyData.reduce((sum, m) => sum + m.needs, 0);
+                      const totalWants = needWantMonthlyData.reduce((sum, m) => sum + m.wants, 0);
+                      const grandTotal = totalNeeds + totalWants;
+                      const needsPercent = grandTotal > 0 ? Math.round((totalNeeds / grandTotal) * 100) : 0;
+                      const wantsPercent = grandTotal > 0 ? Math.round((totalWants / grandTotal) * 100) : 0;
+                      return (
+                        <tr className="border-t-2 border-gray-300 font-semibold">
+                          <td className="py-2 text-gray-800">Total</td>
+                          <td className="py-2 text-right text-blue-700">{formatCurrency(totalNeeds)} <span className="text-xs font-normal">({needsPercent}%)</span></td>
+                          <td className="py-2 text-right text-purple-700">{formatCurrency(totalWants)} <span className="text-xs font-normal">({wantsPercent}%)</span></td>
+                          <td className="py-2 text-right text-gray-800">{formatCurrency(grandTotal)}</td>
+                        </tr>
+                      );
+                    })()}
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -603,7 +1197,142 @@ const ReportsTab = () => {
           </div>
         </div>
 
-        {/* Card 3: Detailed Reports - Desktop Only */}
+        {/* Card 3: Needs vs Wants */}
+        <div 
+          onClick={() => setDetailView('need-want')}
+          className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
+        >
+          <div className="flex gap-4">
+            {/* Mini Bar Chart for Needs vs Wants */}
+            <div className="flex-shrink-0 w-24 h-24 flex items-center justify-center">
+              <div className="flex items-end gap-2 h-16">
+                <div className="flex flex-col items-center">
+                  <div 
+                    className="w-8 bg-blue-500 rounded-t" 
+                    style={{ height: `${needWantSummary.total > 0 ? Math.max((needWantSummary.needs / needWantSummary.total) * 50, 4) : 4}px` }}
+                  ></div>
+                  <span className="text-xs text-gray-500 mt-1">N</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div 
+                    className="w-8 bg-purple-500 rounded-t" 
+                    style={{ height: `${needWantSummary.total > 0 ? Math.max((needWantSummary.wants / needWantSummary.total) * 50, 4) : 4}px` }}
+                  ></div>
+                  <span className="text-xs text-gray-500 mt-1">W</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-gray-800">Needs vs Wants</h3>
+              <div className="text-xs text-gray-500 mb-2">
+                {new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </div>
+              
+              <div className="space-y-0.5">
+                <div className="flex justify-between items-center text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm bg-blue-500"></div>
+                    <span className="text-gray-600">Needs ({needWantSummary.needPercent}%)</span>
+                  </div>
+                  <span className="text-gray-700">{formatCurrency(needWantSummary.needs)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm bg-purple-500"></div>
+                    <span className="text-gray-600">Wants ({needWantSummary.wantPercent}%)</span>
+                  </div>
+                  <span className="text-gray-700">{formatCurrency(needWantSummary.wants)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm pt-1 border-t border-gray-100 mt-1">
+                  <span className="font-semibold text-gray-700">Total Spending</span>
+                  <span className="font-bold text-gray-800">{formatCurrency(needWantSummary.total)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 4: Tag Report - Always visible */}
+        <div 
+          onClick={() => setDetailView('tag-report')}
+          className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center">
+              <span className="text-5xl">🏷️</span>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-bold text-gray-800">Tag Report</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Track spending by trip, event, or project
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                {tagSuggestions.length > 0 
+                  ? `${tagSuggestions.length} tag${tagSuggestions.length > 1 ? 's' : ''} available`
+                  : '📝 Add tags when creating transactions'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 5: Account Statement - Desktop Only */}
+        <div 
+          onClick={() => {
+            if (isDesktop) {
+              setDetailView('account-statement');
+            }
+          }}
+          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center p-2">
+              {/* Account Statement Icon */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                {/* Paper background */}
+                <rect x="6" y="4" width="44" height="56" rx="3" fill="#E8F5E9" stroke="#1E3A5F" strokeWidth="2"/>
+                {/* Header bar */}
+                <rect x="6" y="4" width="44" height="12" rx="3" fill="#10B981"/>
+                {/* Table lines */}
+                <line x1="12" y1="24" x2="44" y2="24" stroke="#1E3A5F" strokeWidth="1.5"/>
+                <line x1="12" y1="32" x2="44" y2="32" stroke="#E5E7EB" strokeWidth="1"/>
+                <line x1="12" y1="40" x2="44" y2="40" stroke="#E5E7EB" strokeWidth="1"/>
+                <line x1="12" y1="48" x2="44" y2="48" stroke="#E5E7EB" strokeWidth="1"/>
+                {/* Vertical dividers */}
+                <line x1="28" y1="20" x2="28" y2="52" stroke="#E5E7EB" strokeWidth="1"/>
+                {/* Check marks */}
+                <text x="14" y="30" fontSize="8" fill="#10B981">✓</text>
+                <text x="14" y="38" fontSize="8" fill="#10B981">✓</text>
+                <text x="14" y="46" fontSize="8" fill="#F59E0B">🔒</text>
+                {/* Numbers */}
+                <text x="32" y="30" fontSize="6" fill="#1E3A5F" fontFamily="monospace">1,234</text>
+                <text x="32" y="38" fontSize="6" fill="#1E3A5F" fontFamily="monospace">5,678</text>
+                <text x="32" y="46" fontSize="6" fill="#1E3A5F" fontFamily="monospace">9,012</text>
+                {/* Dollar sign */}
+                <circle cx="52" cy="48" r="10" fill="#10B981" stroke="#1E3A5F" strokeWidth="1.5"/>
+                <text x="48" y="52" fontSize="12" fill="white" fontWeight="bold">$</text>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Account Ledger</h3>
+                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Desktop Only</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Table view with running balance, reconcile transactions
+              </p>
+              {!isDesktop && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 6: Detailed Reports - Desktop Only */}
         <div 
           onClick={() => {
             if (isDesktop) {

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { doc, writeBatch } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
@@ -8,6 +10,7 @@ const ReorderGroupsModal = ({ isOpen, onClose, categories, onSave, categoryType 
   
   const [groups, setGroups] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   
   // Drag state
   const [dragIndex, setDragIndex] = useState(null);
@@ -15,38 +18,39 @@ const ReorderGroupsModal = ({ isOpen, onClose, categories, onSave, categoryType 
   const dragNode = useRef(null);
 
   useEffect(() => {
-    if (isOpen && categories.length > 0) {
+    // Only initialize once when modal opens, not on every categories change
+    if (isOpen && !initialized && categories.length > 0) {
       // Get unique groups for this category type
       const filteredCategories = categories.filter(c => c.type === categoryType);
       const uniqueGroups = [...new Set(filteredCategories.map(c => c.group).filter(Boolean))];
       
-      // Load saved order from localStorage
-      const savedOrder = localStorage.getItem(`groupOrder_${categoryType}`);
-      
-      if (savedOrder) {
-        try {
-          const parsedOrder = JSON.parse(savedOrder);
-          // Sort groups by saved order, put new groups at end
-          uniqueGroups.sort((a, b) => {
-            const indexA = parsedOrder.indexOf(a);
-            const indexB = parsedOrder.indexOf(b);
-            if (indexA === -1 && indexB === -1) return a.localeCompare(b);
-            if (indexA === -1) return 1;
-            if (indexB === -1) return -1;
-            return indexA - indexB;
-          });
-        } catch (e) {
-          console.error('Error parsing saved group order:', e);
+      // Load saved order from categories (use groupOrder field)
+      // Get groupOrder from first category of each group
+      const groupOrderMap = {};
+      filteredCategories.forEach(cat => {
+        if (cat.group && groupOrderMap[cat.group] === undefined) {
+          groupOrderMap[cat.group] = cat.groupOrder ?? 999;
         }
-      } else {
-        // Default alphabetical sort
-        uniqueGroups.sort((a, b) => a.localeCompare(b));
-      }
+      });
+      
+      // Sort groups by groupOrder
+      uniqueGroups.sort((a, b) => {
+        const orderA = groupOrderMap[a] ?? 999;
+        const orderB = groupOrderMap[b] ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.localeCompare(b); // Fallback to alphabetical
+      });
       
       setGroups(uniqueGroups);
+      setInitialized(true);
+    }
+    
+    // Reset when modal closes
+    if (!isOpen) {
+      setInitialized(false);
       setSaving(false);
     }
-  }, [isOpen, categories, categoryType]);
+  }, [isOpen, categories, categoryType, initialized]);
 
   // Drag handlers
   const handleDragStart = (e, index) => {
@@ -139,13 +143,26 @@ const ReorderGroupsModal = ({ isOpen, onClose, categories, onSave, categoryType 
     setGroups(newGroups);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (saving) return;
     setSaving(true);
     
     try {
-      // Save to localStorage
-      localStorage.setItem(`groupOrder_${categoryType}`, JSON.stringify(groups));
+      const batch = writeBatch(db);
+      
+      // Update groupOrder for all categories in each group
+      groups.forEach((groupName, index) => {
+        const categoriesInGroup = categories.filter(
+          c => c.type === categoryType && c.group === groupName
+        );
+        
+        categoriesInGroup.forEach(cat => {
+          const catRef = doc(db, 'categories', cat.id);
+          batch.update(catRef, { groupOrder: index });
+        });
+      });
+      
+      await batch.commit();
       
       toast.success('Group order saved!');
       onClose();
@@ -245,7 +262,7 @@ const ReorderGroupsModal = ({ isOpen, onClose, categories, onSave, categoryType 
 
         {/* Footer hint */}
         <div className="p-4 border-t bg-gray-50 text-center text-xs text-gray-500">
-          Group order is saved locally on this device
+          Group order syncs across all your devices
         </div>
 
       </div>

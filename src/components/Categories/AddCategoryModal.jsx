@@ -27,16 +27,31 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
   // Load existing groups
   useEffect(() => {
     if (isOpen) {
+      // Reset loading state when modal opens
+      setLoading(false);
+      
       loadGroups();
       
       if (editCategory) {
-        setFormData({
-          name: editCategory.name,
-          icon: editCategory.icon,
-          type: editCategory.type,
-          group: editCategory.group || '',
-          spendingType: editCategory.spendingType || 'need'
-        });
+        // Check if this is a prefilled new category (from group + button)
+        if (editCategory.prefilledGroup) {
+          setFormData({
+            name: '',
+            icon: '📦',
+            type: editCategory.prefilledType || defaultType,
+            group: editCategory.prefilledGroup,
+            spendingType: 'need'
+          });
+        } else {
+          // Regular edit mode
+          setFormData({
+            name: editCategory.name,
+            icon: editCategory.icon,
+            type: editCategory.type,
+            group: editCategory.group || '',
+            spendingType: editCategory.spendingType || 'need'
+          });
+        }
       } else {
         setFormData({
           name: '',
@@ -85,7 +100,10 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
         spendingType: formData.type === 'expense' ? formData.spendingType : null
       };
 
-      if (editCategory) {
+      // Check if this is edit mode (has id and not prefilledGroup)
+      const isEditMode = editCategory && editCategory.id && !editCategory.prefilledGroup;
+
+      if (isEditMode) {
         // Keep existing createdAt if it exists
         if (editCategory.createdAt) {
           categoryData.createdAt = editCategory.createdAt;
@@ -189,8 +207,14 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
         
         <div className="flex justify-between items-center p-4 border-b">
           <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
-          <h2 className="font-semibold text-lg">{editCategory ? 'Edit Category' : 'Add Category'}</h2>
-          <div className="w-8"></div>
+          <h2 className="font-semibold text-lg">{editCategory && !editCategory.prefilledGroup ? 'Edit Category' : 'Add Category'}</h2>
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? '...' : 'Save'}
+          </button>
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto">
@@ -375,25 +399,17 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
           </div>
         </div>
 
-        {/* Fixed Bottom Bar */}
-        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
-          {editCategory && (
+        {/* Bottom Bar - Only show Delete when editing (not when adding new with prefilled group) */}
+        {editCategory && !editCategory.prefilledGroup && (
+          <div className="p-4 border-t bg-white">
             <button 
               onClick={handleDelete}
-              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
+              className="w-full py-3 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
             >
-              🗑️ Delete
+              🗑️ Delete Category
             </button>
-          )}
-          <div className="flex-1"></div>
-          <button 
-            onClick={handleSubmit} 
-            disabled={loading}
-            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : 'SAVE'}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, deleteDoc, addDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import useBackHandler from '../../hooks/useBackHandler';
@@ -12,46 +12,70 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
   
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Check if this is "Add New Group" mode
+  const isNewGroup = groupName?.isNew === true;
+  const categoryType = isNewGroup ? groupName.type : groupType;
 
   // Sync state khi groupName thay đổi
   useEffect(() => {
-    if (groupName) {
+    // Reset loading state
+    setLoading(false);
+    
+    if (isNewGroup) {
+      setNewName('');
+    } else if (groupName) {
       setNewName(groupName);
     }
-  }, [groupName]);
+  }, [groupName, isNewGroup]);
 
-  const handleRename = async () => {
+  const handleSave = async () => {
     if (!newName.trim()) {
       toast.error("Please enter group name!");
       return;
     }
 
-    if (newName.trim() === groupName) {
+    if (!isNewGroup && newName.trim() === groupName) {
       onClose();
       return;
     }
 
     setLoading(true);
     try {
-      // Tìm tất cả categories trong group này
-      const q = query(
-        collection(db, 'categories'),
-        where('userId', '==', userId),
-        where('group', '==', groupName),
-        where('type', '==', groupType)
-      );
-      const snapshot = await getDocs(q);
+      if (isNewGroup) {
+        // Create a placeholder category to establish the group
+        await addDoc(collection(db, 'categories'), {
+          userId,
+          name: `New ${categoryType === 'income' ? 'Income' : 'Expense'}`,
+          icon: categoryType === 'income' ? '💰' : '📦',
+          type: categoryType,
+          group: newName.trim(),
+          spendingType: 'need',
+          createdAt: new Date().toISOString()
+        });
+        toast.success(`Group "${newName.trim()}" created!`);
+      } else {
+        // Rename existing group - find all categories in this group
+        const q = query(
+          collection(db, 'categories'),
+          where('userId', '==', userId),
+          where('group', '==', groupName),
+          where('type', '==', groupType)
+        );
+        const snapshot = await getDocs(q);
 
-      // Update tất cả categories
-      const promises = snapshot.docs.map(docSnap =>
-        updateDoc(doc(db, 'categories', docSnap.id), { group: newName.trim() })
-      );
-      await Promise.all(promises);
+        // Update all categories
+        const promises = snapshot.docs.map(docSnap =>
+          updateDoc(doc(db, 'categories', docSnap.id), { group: newName.trim() })
+        );
+        await Promise.all(promises);
+        toast.success('Group renamed!');
+      }
 
       if (onSave) onSave();
       onClose();
     } catch (error) {
-      toast.error("Error renaming: " + error.message);
+      toast.error("Error: " + error.message);
     }
     setLoading(false);
   };
@@ -95,8 +119,15 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl w-full max-w-sm shadow-xl">
-        <div className="p-4 border-b">
-          <h3 className="font-bold text-lg text-center">Edit Group</h3>
+        <div className={`p-4 border-b ${isNewGroup ? 'bg-emerald-500 text-white rounded-t-xl' : ''}`}>
+          <h3 className={`font-bold text-lg text-center ${isNewGroup ? 'text-white' : ''}`}>
+            {isNewGroup ? 'Add New Group' : 'Edit Group'}
+          </h3>
+          {isNewGroup && (
+            <p className="text-emerald-100 text-xs text-center mt-1">
+              {categoryType === 'income' ? 'Income' : 'Expense'} category group
+            </p>
+          )}
         </div>
 
         <div className="p-4 space-y-4">
@@ -107,7 +138,8 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
-              
+              placeholder="Enter group name"
+              autoFocus
             />
           </div>
 
@@ -119,21 +151,23 @@ const EditGroupModal = ({ isOpen, onClose, onSave, groupName, groupType }) => {
               Cancel
             </button>
             <button
-              onClick={handleRename}
-              disabled={loading}
+              onClick={handleSave}
+              disabled={loading || !newName.trim()}
               className="flex-1 py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
             >
-              {loading ? 'Saving...' : 'Rename'}
+              {loading ? 'Saving...' : isNewGroup ? 'Create' : 'Rename'}
             </button>
           </div>
 
-          <button
-            onClick={handleDelete}
-            disabled={loading}
-            className="w-full py-3 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors border border-red-200 disabled:opacity-50"
-          >
-            🗑️ Delete Group & All Categories
-          </button>
+          {!isNewGroup && (
+            <button
+              onClick={handleDelete}
+              disabled={loading}
+              className="w-full py-3 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors border border-red-200 disabled:opacity-50"
+            >
+              🗑️ Delete Group & All Categories
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -301,11 +301,11 @@ const DesktopReports = ({ onBack }) => {
 
   // AmountCell component with hover
   const AmountCell = ({ amount, category, monthKey, type, className = '' }) => {
-    if (!amount) return <td className={`py-1.5 px-4 text-right ${className}`}></td>;
+    if (!amount) return <td className={`py-1.5 px-3 text-right ${className}`}></td>;
     
     return (
       <td 
-        className={`py-1.5 px-4 text-right cursor-pointer hover:bg-yellow-50 transition-colors ${className}`}
+        className={`py-1.5 px-3 text-right cursor-pointer hover:bg-yellow-50 transition-colors ${className}`}
         onMouseEnter={(e) => handleCellHover(e, category, monthKey, type, amount)}
         onMouseLeave={handleCellLeave}
       >
@@ -419,19 +419,91 @@ const DesktopReports = ({ onBack }) => {
               {/* Custom Range Inputs */}
               {dateRange === 'custom' && (
                 <>
-                  <input
-                    type="month"
-                    value={customRange.from}
-                    onChange={(e) => setCustomRange({ ...customRange, from: e.target.value })}
-                    className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
-                  />
-                  <span className="text-gray-400">to</span>
-                  <input
-                    type="month"
-                    value={customRange.to}
-                    onChange={(e) => setCustomRange({ ...customRange, to: e.target.value })}
-                    className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
-                  />
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={customRange.from ? customRange.from.split('-')[0] : ''}
+                      onChange={(e) => {
+                        const year = e.target.value;
+                        const month = customRange.from ? customRange.from.split('-')[1] : '';
+                        if (year && month) {
+                          setCustomRange({ ...customRange, from: `${year}-${month}` });
+                        } else if (year) {
+                          setCustomRange({ ...customRange, from: `${year}-` });
+                        } else {
+                          setCustomRange({ ...customRange, from: '' });
+                        }
+                      }}
+                      className="px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                    >
+                      <option value="">Year</option>
+                      {[2026, 2027, 2028, 2029, 2030].map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={customRange.from ? customRange.from.split('-')[1] : ''}
+                      onChange={(e) => {
+                        const month = e.target.value;
+                        const year = customRange.from ? customRange.from.split('-')[0] : '';
+                        if (year && month) {
+                          setCustomRange({ ...customRange, from: `${year}-${month}` });
+                        } else if (month) {
+                          setCustomRange({ ...customRange, from: `-${month}` });
+                        } else {
+                          setCustomRange({ ...customRange, from: year ? `${year}-` : '' });
+                        }
+                      }}
+                      className="px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                    >
+                      <option value="">MM</option>
+                      {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="text-gray-400">→</span>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={customRange.to ? customRange.to.split('-')[0] : ''}
+                      onChange={(e) => {
+                        const year = e.target.value;
+                        const month = customRange.to ? customRange.to.split('-')[1] : '';
+                        if (year && month) {
+                          setCustomRange({ ...customRange, to: `${year}-${month}` });
+                        } else if (year) {
+                          setCustomRange({ ...customRange, to: `${year}-` });
+                        } else {
+                          setCustomRange({ ...customRange, to: '' });
+                        }
+                      }}
+                      className="px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                    >
+                      <option value="">Year</option>
+                      {[2026, 2027, 2028, 2029, 2030].map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={customRange.to ? customRange.to.split('-')[1] : ''}
+                      onChange={(e) => {
+                        const month = e.target.value;
+                        const year = customRange.to ? customRange.to.split('-')[0] : '';
+                        if (year && month) {
+                          setCustomRange({ ...customRange, to: `${year}-${month}` });
+                        } else if (month) {
+                          setCustomRange({ ...customRange, to: `-${month}` });
+                        } else {
+                          setCustomRange({ ...customRange, to: year ? `${year}-` : '' });
+                        }
+                      }}
+                      className="px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                    >
+                      <option value="">MM</option>
+                      {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
                 </>
               )}
 
@@ -495,18 +567,18 @@ const DesktopReports = ({ onBack }) => {
         {/* Report Table */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
+            <table className="text-sm border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700 sticky left-0 bg-gray-50 min-w-[250px]">
+                  <th className="text-left py-3 px-3 font-semibold text-gray-700 sticky left-0 bg-gray-50 whitespace-nowrap">
                     Category
                   </th>
                   {reportData.months.map(m => (
-                    <th key={m.key} className="text-right py-3 px-4 font-semibold text-gray-700 min-w-[100px]">
+                    <th key={m.key} className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap">
                       {m.label}
                     </th>
                   ))}
-                  <th className="text-right py-3 px-4 font-semibold text-gray-700 min-w-[120px] bg-gray-100">
+                  <th className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap bg-gray-100">
                     Total
                   </th>
                 </tr>
@@ -514,7 +586,7 @@ const DesktopReports = ({ onBack }) => {
               <tbody>
                 {/* Income Section */}
                 <tr className="bg-emerald-50 border-b border-emerald-200">
-                  <td colSpan={reportData.months.length + 2} className="py-2 px-4 font-bold text-emerald-700">
+                  <td colSpan={reportData.months.length + 2} className="py-2 px-3 font-bold text-emerald-700">
                     📈 Income
                   </td>
                 </tr>
@@ -525,23 +597,23 @@ const DesktopReports = ({ onBack }) => {
                       className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
                       onClick={() => toggleGroup('income', groupName)}
                     >
-                      <td className="py-2 px-4 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
+                      <td className="py-2 px-3 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
                         <span className="mr-2">{expandedGroups[`income-${groupName}`] ? '▼' : '▶'}</span>
                         {groupName}
                       </td>
                       {reportData.months.map(m => (
-                        <td key={m.key} className="py-2 px-4 text-right text-emerald-600">
+                        <td key={m.key} className="py-2 px-3 text-right text-emerald-600">
                           {formatCurrency(groupData.months[m.key])}
                         </td>
                       ))}
-                      <td className="py-2 px-4 text-right font-medium text-emerald-700 bg-gray-50">
+                      <td className="py-2 px-3 text-right font-medium text-emerald-700 bg-gray-50">
                         {formatCurrency(groupData.total)}
                       </td>
                     </tr>
                     {/* Category Rows */}
                     {expandedGroups[`income-${groupName}`] && groupData.categories.map(cat => (
                       <tr key={cat.name} className="border-b border-gray-50 bg-gray-50/50">
-                        <td className="py-1.5 px-4 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
+                        <td className="py-1.5 px-3 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
                           {cat.name}
                         </td>
                         {reportData.months.map(m => (
@@ -554,7 +626,7 @@ const DesktopReports = ({ onBack }) => {
                             className="text-gray-600"
                           />
                         ))}
-                        <td className="py-1.5 px-4 text-right text-gray-700 bg-gray-100/50">
+                        <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
                           {formatCurrency(cat.total)}
                         </td>
                       </tr>
@@ -563,15 +635,15 @@ const DesktopReports = ({ onBack }) => {
                 ))}
                 {/* Income Total */}
                 <tr className="bg-emerald-100 border-b-2 border-emerald-300">
-                  <td className="py-2 px-4 font-bold text-emerald-800 sticky left-0 bg-emerald-100">
+                  <td className="py-2 px-3 font-bold text-emerald-800 sticky left-0 bg-emerald-100">
                     Total Income
                   </td>
                   {reportData.months.map(m => (
-                    <td key={m.key} className="py-2 px-4 text-right font-bold text-emerald-700">
+                    <td key={m.key} className="py-2 px-3 text-right font-bold text-emerald-700">
                       {formatCurrency(reportData.incomeTotals[m.key])}
                     </td>
                   ))}
-                  <td className="py-2 px-4 text-right font-bold text-emerald-800 bg-emerald-200">
+                  <td className="py-2 px-3 text-right font-bold text-emerald-800 bg-emerald-200">
                     {formatCurrency(reportData.grandTotalIncome)}
                   </td>
                 </tr>
@@ -581,7 +653,7 @@ const DesktopReports = ({ onBack }) => {
 
                 {/* Expense Section */}
                 <tr className="bg-red-50 border-b border-red-200">
-                  <td colSpan={reportData.months.length + 2} className="py-2 px-4 font-bold text-red-700">
+                  <td colSpan={reportData.months.length + 2} className="py-2 px-3 font-bold text-red-700">
                     📉 Expenses
                   </td>
                 </tr>
@@ -592,23 +664,23 @@ const DesktopReports = ({ onBack }) => {
                       className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
                       onClick={() => toggleGroup('expense', groupName)}
                     >
-                      <td className="py-2 px-4 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
+                      <td className="py-2 px-3 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
                         <span className="mr-2">{expandedGroups[`expense-${groupName}`] ? '▼' : '▶'}</span>
                         {groupName}
                       </td>
                       {reportData.months.map(m => (
-                        <td key={m.key} className="py-2 px-4 text-right text-red-600">
+                        <td key={m.key} className="py-2 px-3 text-right text-red-600">
                           {formatCurrency(groupData.months[m.key])}
                         </td>
                       ))}
-                      <td className="py-2 px-4 text-right font-medium text-red-700 bg-gray-50">
+                      <td className="py-2 px-3 text-right font-medium text-red-700 bg-gray-50">
                         {formatCurrency(groupData.total)}
                       </td>
                     </tr>
                     {/* Category Rows */}
                     {expandedGroups[`expense-${groupName}`] && groupData.categories.map(cat => (
                       <tr key={cat.name} className="border-b border-gray-50 bg-gray-50/50">
-                        <td className="py-1.5 px-4 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
+                        <td className="py-1.5 px-3 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
                           {cat.name}
                         </td>
                         {reportData.months.map(m => (
@@ -621,7 +693,7 @@ const DesktopReports = ({ onBack }) => {
                             className="text-gray-600"
                           />
                         ))}
-                        <td className="py-1.5 px-4 text-right text-gray-700 bg-gray-100/50">
+                        <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
                           {formatCurrency(cat.total)}
                         </td>
                       </tr>
@@ -630,15 +702,15 @@ const DesktopReports = ({ onBack }) => {
                 ))}
                 {/* Expense Total */}
                 <tr className="bg-red-100 border-b-2 border-red-300">
-                  <td className="py-2 px-4 font-bold text-red-800 sticky left-0 bg-red-100">
+                  <td className="py-2 px-3 font-bold text-red-800 sticky left-0 bg-red-100">
                     Total Expenses
                   </td>
                   {reportData.months.map(m => (
-                    <td key={m.key} className="py-2 px-4 text-right font-bold text-red-700">
+                    <td key={m.key} className="py-2 px-3 text-right font-bold text-red-700">
                       {formatCurrency(reportData.expenseTotals[m.key])}
                     </td>
                   ))}
-                  <td className="py-2 px-4 text-right font-bold text-red-800 bg-red-200">
+                  <td className="py-2 px-3 text-right font-bold text-red-800 bg-red-200">
                     {formatCurrency(reportData.grandTotalExpense)}
                   </td>
                 </tr>
@@ -648,18 +720,18 @@ const DesktopReports = ({ onBack }) => {
 
                 {/* Net Income */}
                 <tr className="bg-blue-50 border-2 border-blue-200">
-                  <td className="py-3 px-4 font-bold text-blue-800 sticky left-0 bg-blue-50">
+                  <td className="py-3 px-3 font-bold text-blue-800 sticky left-0 bg-blue-50">
                     💰 Net Income
                   </td>
                   {reportData.months.map(m => {
                     const net = (reportData.incomeTotals[m.key] || 0) - (reportData.expenseTotals[m.key] || 0);
                     return (
-                      <td key={m.key} className={`py-3 px-4 text-right font-bold ${net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <td key={m.key} className={`py-3 px-3 text-right font-bold ${net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {net >= 0 ? '+' : '-'}{formatCurrency(Math.abs(net))}
                       </td>
                     );
                   })}
-                  <td className={`py-3 px-4 text-right font-bold ${reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
+                  <td className={`py-3 px-3 text-right font-bold ${reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
                     {reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? '+' : '-'}
                     {formatCurrency(Math.abs(reportData.grandTotalIncome - reportData.grandTotalExpense))}
                   </td>

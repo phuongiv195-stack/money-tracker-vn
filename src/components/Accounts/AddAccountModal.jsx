@@ -33,7 +33,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
     currentValue: '',
     costBasis: '',
     startingBalance: '',
-    startingBalanceDate: getLocalToday()
+    startingBalanceDate: getLocalToday(),
+    memo: ''
   });
   const [loading, setLoading] = useState(false);
   const [displayStartingBalance, setDisplayStartingBalance] = useState('');
@@ -47,14 +48,13 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
     'SAVINGS': [
       { value: 'savings', label: 'Savings', icon: '💰' }
     ],
-    'INVESTMENTS': [
-      { value: 'investment', label: 'Investment', icon: '📈' },
+    'ASSETS': [
       { value: 'property', label: 'Property', icon: '🏠' },
       { value: 'vehicle', label: 'Vehicle', icon: '🚗' },
       { value: 'asset', label: 'Other Asset', icon: '💎' }
     ],
-    'LOANS': [
-      { value: 'loan', label: 'Loan', icon: '💸' }
+    'INVESTMENTS': [
+      { value: 'investment', label: 'Investment', icon: '📈' }
     ]
   };
 
@@ -63,8 +63,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
   // Check if account is market-value type (for Update Value feature)
   const isMarketValue = ['investment', 'property', 'vehicle', 'asset'].includes(formData.type);
   
-  // Check if account needs starting balance (all except loan)
-  const needsStartingBalance = formData.type !== 'loan';
+  // All accounts need starting balance now (loan type removed)
+  const needsStartingBalance = true;
 
   // Helper to format date to YYYY-MM-DD in local timezone
   const formatToLocalDateString = (date) => {
@@ -76,6 +76,9 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
 
   useEffect(() => {
     if (isOpen) {
+      // Reset loading state when modal opens
+      setLoading(false);
+      
       if (editAccount) {
         // Get startingBalanceDate
         let sbDateStr = getLocalToday();
@@ -99,7 +102,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           currentValue: editAccount.currentValue || '',
           costBasis: editAccount.costBasis || '',
           startingBalance: editAccount.startingBalance || '',
-          startingBalanceDate: sbDateStr
+          startingBalanceDate: sbDateStr,
+          memo: editAccount.memo || ''
         });
         setDisplayStartingBalance(
           editAccount.startingBalance 
@@ -115,7 +119,8 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           currentValue: '',
           costBasis: '',
           startingBalance: '',
-          startingBalanceDate: getLocalToday()
+          startingBalanceDate: getLocalToday(),
+          memo: ''
         });
         setDisplayStartingBalance('');
       }
@@ -128,11 +133,10 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
       cash: 'SPENDING',
       bank: 'SPENDING',
       savings: 'SAVINGS',
-      investment: 'INVESTMENTS',
-      property: 'INVESTMENTS',
-      vehicle: 'INVESTMENTS',
-      asset: 'INVESTMENTS',
-      loan: 'LOANS'
+      property: 'ASSETS',
+      vehicle: 'ASSETS',
+      asset: 'ASSETS',
+      investment: 'INVESTMENTS'
     };
     
     const newGroup = groupMap[formData.type];
@@ -155,6 +159,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
         icon: formData.icon,
         type: formData.type,
         group: formData.group,
+        memo: formData.memo.trim(),
         isActive: true,
         updatedAt: new Date()
       };
@@ -270,11 +275,17 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 sm:flex sm:items-center sm:justify-center">
       <div className="bg-white w-full h-full sm:w-[450px] sm:h-auto sm:max-h-[90vh] sm:rounded-xl flex flex-col">
         
-        {/* Header */}
+        {/* Header with Save button */}
         <div className="flex justify-between items-center p-4 border-b">
           <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">{editAccount ? 'Edit Account' : 'Add Account'}</h2>
-          <div className="w-8"></div>
+          <button 
+            onClick={handleSubmit} 
+            disabled={loading}
+            className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {loading ? '...' : 'Save'}
+          </button>
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto">
@@ -287,7 +298,7 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
               placeholder="E.g. Vietcombank, Cash, D-Cash SSI..."
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none"
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-base"
               
             />
           </div>
@@ -340,6 +351,18 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
             </div>
           </div>
 
+          {/* Memo */}
+          <div>
+            <label className="text-xs text-gray-500 uppercase font-semibold">Memo (Optional)</label>
+            <input
+              type="text"
+              placeholder="E.g. Account number, notes..."
+              value={formData.memo}
+              onChange={(e) => setFormData({...formData, memo: e.target.value})}
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none text-base"
+            />
+          </div>
+
           {/* Starting Balance - For all accounts except loan */}
           {needsStartingBalance && (
             <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
@@ -370,16 +393,16 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
                 <div>
                   <label className="text-xs text-emerald-600 font-semibold uppercase">Date</label>
                   <div className="relative mt-1">
+                    <div className="w-full p-3 bg-white rounded-lg flex items-center justify-between pointer-events-none">
+                      <span className="text-gray-800">{formatDateForDisplay(formData.startingBalanceDate)}</span>
+                      <span className="text-gray-400">📅</span>
+                    </div>
                     <input
                       type="date"
                       value={formData.startingBalanceDate}
                       onChange={(e) => setFormData({...formData, startingBalanceDate: e.target.value})}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
-                    <div className="w-full p-3 bg-white rounded-lg flex items-center justify-between">
-                      <span className="text-gray-800">{formatDateForDisplay(formData.startingBalanceDate)}</span>
-                      <span className="text-gray-400">📅</span>
-                    </div>
                   </div>
                 </div>
                 
@@ -413,25 +436,17 @@ const AddAccountModal = ({ isOpen, onClose, onSave, editAccount = null }) => {
           </div>
         </div>
 
-        {/* Fixed Bottom Bar */}
-        <div className="p-4 mb-20 border-t bg-white flex justify-between items-center gap-3">
-          {editAccount && (
+        {/* Bottom Bar - Only show Delete when editing */}
+        {editAccount && (
+          <div className="p-4 border-t bg-white">
             <button 
               onClick={handleDelete}
-              className="px-4 py-2 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
+              className="w-full py-3 bg-red-50 text-red-600 font-medium hover:bg-red-100 rounded-lg transition-colors"
             >
-              🗑️ Delete
+              🗑️ Delete Account
             </button>
-          )}
-          <div className="flex-1"></div>
-          <button 
-            onClick={handleSubmit} 
-            disabled={loading}
-            className="px-6 py-2 bg-emerald-500 text-white rounded-lg font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : 'SAVE'}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

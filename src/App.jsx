@@ -57,11 +57,14 @@ function AppContent() {
   useEffect(() => {
     const handleOpenSettings = () => setActiveTab('settings');
     const handleCloseSettings = () => setActiveTab('categories');
+    const handleOpenLoans = () => setActiveTab('loans');
     window.addEventListener('openSettings', handleOpenSettings);
     window.addEventListener('closeSettings', handleCloseSettings);
+    window.addEventListener('openLoans', handleOpenLoans);
     return () => {
       window.removeEventListener('openSettings', handleOpenSettings);
       window.removeEventListener('closeSettings', handleCloseSettings);
+      window.removeEventListener('openLoans', handleOpenLoans);
     };
   }, []);
 
@@ -138,7 +141,7 @@ function AppContent() {
       {activeTab !== 'loans' && activeTab !== 'settings' && (
         <button
           onClick={() => setIsModalOpen(true)}
-          className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
+          className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-16 h-16 rounded-full shadow-lg flex items-center justify-center text-4xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
         >
           +
         </button>
@@ -185,7 +188,7 @@ function AppContent() {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
         onSave={() => {
-          console.log("Transaction saved!");
+          // Transaction saved successfully
         }}
       />
     </div>

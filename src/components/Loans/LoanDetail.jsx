@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { writeBatch, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import AddLoanTransactionModal from './AddLoanTransactionModal';
@@ -6,7 +6,7 @@ import EditLoanTransactionModal from './EditLoanTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 
-const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
+const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   const toast = useToast();
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
@@ -23,10 +23,52 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
   const [showDeleteLoan, setShowDeleteLoan] = useState(false);
   const [showArchiveLoan, setShowArchiveLoan] = useState(false);
   const [editLoanName, setEditLoanName] = useState('');
+  
+  // Reconcile state
+  const [isReconciling, setIsReconciling] = useState(false);
 
-  useBackHandler(!!loan, isSelectMode ? () => { setIsSelectMode(false); setSelectedItems(new Set()); } : onClose);
+  // Smart back handler - close menu/modals first, then select mode, then close detail
+  const handleBackPress = useCallback(() => {
+    if (showMenu) {
+      setShowMenu(false);
+    } else if (showEditLoan) {
+      setShowEditLoan(false);
+    } else if (showDeleteLoan) {
+      setShowDeleteLoan(false);
+    } else if (showArchiveLoan) {
+      setShowArchiveLoan(false);
+    } else if (isReconciling) {
+      setIsReconciling(false);
+    } else if (showDeleteConfirm) {
+      setShowDeleteConfirm(false);
+    } else if (isSelectMode) {
+      setIsSelectMode(false);
+      setSelectedItems(new Set());
+    } else {
+      onClose();
+    }
+  }, [showMenu, showEditLoan, showDeleteLoan, showArchiveLoan, isReconciling, showDeleteConfirm, isSelectMode, onClose]);
+
+  useBackHandler(!!loan, handleBackPress);
   
   if (!loan) return null;
+
+  // Calculate cleared and uncleared balance
+  const { clearedBalance, unclearedBalance } = useMemo(() => {
+    let cleared = 0;
+    let uncleared = 0;
+    
+    loan.transactions.forEach(t => {
+      const amt = Number(t.amount) || 0;
+      if (t.clearStatus === 'cleared' || t.clearStatus === 'reconciled') {
+        cleared += amt;
+      } else {
+        uncleared += amt;
+      }
+    });
+    
+    return { clearedBalance: cleared, unclearedBalance: uncleared };
+  }, [loan.transactions]);
 
   // Group transactions by date
   const groupedTransactions = useMemo(() => {
@@ -42,6 +84,139 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
     return new Intl.NumberFormat('en-US').format(Math.abs(amount));
   };
 
+  // Clear status helpers
+  const getClearIcon = (s) => s === 'reconciled' ? '🔒' : s === 'cleared' ? '✓' : '○';
+  const getClearColor = (s) => s === 'reconciled' ? 'text-gray-400' : s === 'cleared' ? 'text-emerald-600' : 'text-gray-300';
+
+  const handleToggleClear = async (t, e) => {
+    e.stopPropagation();
+    
+    if (t.clearStatus === 'reconciled') { 
+      toast.warning('🔒 Locked - reconciled transaction'); 
+      return; 
+    }
+    
+    try {
+      // For split part transactions, update the parent split transaction
+      if (t.isSplitPart && t.parentSplitId) {
+        await updateDoc(doc(db, 'transactions', t.parentSplitId), { 
+          clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' 
+        });
+      } else {
+        await updateDoc(doc(db, 'transactions', t.id), { 
+          clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' 
+        });
+      }
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    }
+  };
+
+  // Quick Reconcile - mark all cleared items as reconciled
+  const handleQuickReconcile = async () => {
+    const clearedTrans = loan.transactions.filter(t => t.clearStatus === 'cleared');
+    
+    if (clearedTrans.length === 0) { 
+      setSuccessMessage('No cleared items to reconcile');
+      setIsReconciling(false);
+      return; 
+    }
+    
+    try {
+      const batch = writeBatch(db);
+      const timestamp = new Date();
+      
+      // Track which parent split IDs we've already updated
+      const updatedParentIds = new Set();
+      
+      clearedTrans.forEach(t => {
+        if (t.isSplitPart && t.parentSplitId) {
+          // For split parts, update the parent only once
+          if (!updatedParentIds.has(t.parentSplitId)) {
+            batch.update(doc(db, 'transactions', t.parentSplitId), { 
+              clearStatus: 'reconciled', 
+              reconciledAt: timestamp 
+            });
+            updatedParentIds.add(t.parentSplitId);
+          }
+        } else {
+          batch.update(doc(db, 'transactions', t.id), { 
+            clearStatus: 'reconciled', 
+            reconciledAt: timestamp 
+          });
+        }
+      });
+      
+      await batch.commit();
+      setIsReconciling(false);
+      setSuccessMessage('Reconciled successfully!');
+    } catch (err) { 
+      toast.error('Error: ' + err.message); 
+    }
+  };
+
+  // Undo last reconcile - unlock transactions reconciled in the last batch
+  const handleUnreconcile = async () => {
+    // Find the most recent reconciled transaction
+    const reconciledTrans = loan.transactions.filter(t => t.clearStatus === 'reconciled' && t.reconciledAt);
+    if (reconciledTrans.length === 0) { 
+      toast.warning('Nothing to undo'); 
+      return; 
+    }
+    
+    // Find the latest reconciledAt time
+    let latestTime = 0;
+    reconciledTrans.forEach(t => {
+      const time = t.reconciledAt?.seconds ? t.reconciledAt.seconds * 1000 : 0;
+      if (time > latestTime) latestTime = time;
+    });
+    
+    // Find all transactions reconciled within 5 seconds of the latest
+    const toUnlock = reconciledTrans.filter(t => {
+      const time = t.reconciledAt?.seconds ? t.reconciledAt.seconds * 1000 : 0;
+      return Math.abs(time - latestTime) < 5000;
+    });
+    
+    if (toUnlock.length === 0) { 
+      toast.warning('Nothing to unlock'); 
+      return; 
+    }
+    
+    const confirmed = await toast.confirm({
+      title: 'Undo Reconcile',
+      message: `Unlock ${toUnlock.length} transaction(s)?`,
+      confirmText: 'Unlock',
+      type: 'warning'
+    });
+    
+    if (!confirmed) return;
+    
+    try {
+      const batch = writeBatch(db);
+      const updatedParentIds = new Set();
+      
+      toUnlock.forEach(t => {
+        if (t.isSplitPart && t.parentSplitId) {
+          // For split parts, update the parent only once
+          if (!updatedParentIds.has(t.parentSplitId)) {
+            batch.update(doc(db, 'transactions', t.parentSplitId), { clearStatus: 'cleared', reconciledAt: null });
+            updatedParentIds.add(t.parentSplitId);
+          }
+        } else {
+          batch.update(doc(db, 'transactions', t.id), { clearStatus: 'cleared', reconciledAt: null });
+        }
+      });
+      
+      await batch.commit();
+      toast.success('Unlocked successfully!');
+    } catch (err) { 
+      toast.error('Error: ' + err.message); 
+    }
+  };
+
+  // Check if there are any reconciled transactions (for showing Undo button)
+  const hasReconciledTrans = loan.transactions.some(t => t.clearStatus === 'reconciled');
+
   const formatDateLabel = (dateStr) => {
     const date = new Date(dateStr);
     const yyyy = date.getFullYear();
@@ -54,6 +229,10 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
   // Loan action handlers
   const handleEditLoan = async () => {
     if (!editLoanName.trim()) return;
+    if (editLoanName.trim() === loan.name) {
+      setShowEditLoan(false);
+      return;
+    }
     try {
       const batch = writeBatch(db);
       // Update all transactions with old loan name to new name
@@ -63,6 +242,12 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         }
       });
       await batch.commit();
+      
+      // Notify parent to update selectedLoan
+      if (onLoanRenamed) {
+        onLoanRenamed(editLoanName.trim());
+      }
+      
       setShowEditLoan(false);
       setSuccessMessage('Loan renamed successfully!');
     } catch (err) {
@@ -71,6 +256,17 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
   };
 
   const handleDeleteLoan = async () => {
+    // Check if loan has split parts - cannot delete directly
+    const splitParts = loan.transactions.filter(t => t.isSplitPart);
+    const regularParts = loan.transactions.filter(t => !t.isSplitPart);
+    
+    if (splitParts.length > 0 && regularParts.length === 0) {
+      // All transactions are from splits - cannot delete
+      toast.error('Cannot delete: All transactions are from split transactions. Delete the original split transactions first.');
+      setShowDeleteLoan(false);
+      return;
+    }
+    
     try {
       const batch = writeBatch(db);
       loan.transactions.forEach(t => {
@@ -80,6 +276,11 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       });
       await batch.commit();
       setShowDeleteLoan(false);
+      
+      if (splitParts.length > 0) {
+        toast.info(`Deleted ${regularParts.length} transaction(s). ${splitParts.length} split transaction(s) remain - delete them from the original split.`);
+      }
+      
       onClose();
     } catch (err) {
       toast.error('Error: ' + err.message);
@@ -128,24 +329,31 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
   };
 
   const handleDeleteSelected = async () => {
-    if (selectedItems.size === 0) return;
-    try {
-      const batch = writeBatch(db);
-      selectedItems.forEach(id => {
-        // Don't delete split parts (they're virtual)
-        if (!id.includes('-split-')) {
-          batch.delete(doc(db, 'transactions', id));
-        }
-      });
-      await batch.commit();
+  if (selectedItems.size === 0) return;
+  try {
+    const batch = writeBatch(db);
+    selectedItems.forEach(id => {
+      if (!id.includes('-split-')) {
+        batch.delete(doc(db, 'transactions', id));
+      }
+    });
+    await batch.commit();
+    
+    // Check nếu xóa hết transactions → close detail
+    const remainingTransactions = loan.transactions.filter(t => !selectedItems.has(t.id));
+    if (remainingTransactions.length === 0) {
+      toast.success('All transactions deleted. Loan removed.');
+      onClose(); // Đóng LoanDetail
+    } else {
       setSuccessMessage(`Deleted ${selectedItems.size} transaction(s)`);
       setSelectedItems(new Set());
       setIsSelectMode(false);
       setShowDeleteConfirm(false);
-    } catch (err) { 
-      toast.error('Error: ' + err.message); 
     }
-  };
+  } catch (err) { 
+    toast.error('Error: ' + err.message); 
+  }
+};
 
   const exitSelectMode = () => {
     setIsSelectMode(false);
@@ -164,7 +372,10 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
   const handleTransactionClick = (t) => {
     if (isSelectMode) {
       handleSelectItem(t.id);
-    } else if (!t.isSplitPart) {
+    } else if (t.isSplitPart) {
+      // Show toast with instruction to edit from Transactions tab
+      toast.info('This is from a split transaction. Go to Transactions tab to edit the original split.');
+    } else {
       setEditingTransaction(t);
     }
   };
@@ -184,41 +395,82 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
           </div>
         </div>
       ) : (
-        <div className="bg-white p-4 shadow-sm flex items-center justify-between sticky top-0">
-          <button onClick={onClose} className="text-gray-600 text-lg p-2 -ml-2">← Back</button>
-          <div className="font-bold text-lg flex items-center gap-2">
-            <span>{isBorrow ? '💰' : '💸'}</span>
-            <span>{loan.name}</span>
+        <div className="bg-white p-3 shadow-sm flex items-center justify-between sticky top-0">
+          <button onClick={onClose} className="text-gray-600 p-2 -ml-2">←</button>
+          <div className="flex items-center gap-2 flex-1 min-w-0 mx-2">
+            <span className="text-lg">{isBorrow ? '💰' : '💸'}</span>
+            <span className="font-semibold text-gray-800 truncate">{loan.name}</span>
           </div>
           <div className="relative">
             <button 
               onClick={() => setShowMenu(!showMenu)} 
-              className="text-gray-600 text-xl p-2 hover:bg-gray-100 rounded-lg"
+              className={`text-gray-600 text-xl p-2 hover:bg-gray-100 rounded-lg ${showMenu ? 'pointer-events-none' : ''}`}
             >
               ⋮
             </button>
             {showMenu && (
               <>
-                {/* Backdrop để đóng menu khi click outside */}
-                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-                <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[140px] z-50">
-                  <button 
-                    onClick={() => { setShowMenu(false); setEditLoanName(loan.name); setShowEditLoan(true); }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
+                {/* Backdrop */}
+                <div 
+                  className="fixed inset-0 bg-transparent"
+                  style={{ zIndex: 55 }}
+                  onTouchStart={() => setShowMenu(false)}
+                  onClick={() => setShowMenu(false)} 
+                />
+                {/* Menu dropdown */}
+                <div 
+                  className="absolute right-0 top-full mt-2 bg-white rounded-lg shadow-lg border py-1 min-w-[150px]"
+                  style={{ zIndex: 100, touchAction: 'manipulation' }}
+                >
+                  <button
+                    type="button"
+                    onTouchStart={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setEditLoanName(loan.name); 
+                      setShowEditLoan(true); 
+                    }}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setEditLoanName(loan.name); 
+                      setShowEditLoan(true); 
+                    }}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 text-gray-700 active:bg-gray-100 cursor-pointer flex items-center gap-2"
                   >
-                    ✏️ Rename
+                    <span>✏️</span> <span>Rename</span>
                   </button>
-                  <button 
-                    onClick={() => { setShowMenu(false); setShowArchiveLoan(true); }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700"
+                  <button
+                    type="button"
+                    onTouchStart={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setShowArchiveLoan(true); 
+                    }}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setShowArchiveLoan(true); 
+                    }}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 text-gray-700 active:bg-gray-100 cursor-pointer flex items-center gap-2"
                   >
-                    📦 Archive
+                    <span>📦</span> <span>Archive</span>
                   </button>
-                  <button 
-                    onClick={() => { setShowMenu(false); setShowDeleteLoan(true); }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-red-600"
+                  <button
+                    type="button"
+                    onTouchStart={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setShowDeleteLoan(true); 
+                    }}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setShowMenu(false); 
+                      setShowDeleteLoan(true); 
+                    }}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 text-red-600 active:bg-red-50 cursor-pointer flex items-center gap-2"
                   >
-                    🗑️ Delete
+                    <span>🗑️</span> <span>Delete</span>
                   </button>
                 </div>
               </>
@@ -227,15 +479,37 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         </div>
       )}
 
-      {/* Loan Summary Card */}
-      <div className="p-4 bg-emerald-600 text-white shadow-sm">
-        <div className="text-sm opacity-90 text-center">Outstanding Balance</div>
-        <div className="text-3xl font-bold text-center mt-1">
-          {loan.balance < 0 ? '-' : ''}{formatCurrency(loan.balance)}
+      {/* Loan Summary Card - Compact */}
+      <div className="p-3 bg-emerald-600 text-white shadow-sm">
+        <div className="text-center">
+          <div className="text-xs opacity-90">Outstanding Balance</div>
+          <div className="text-2xl font-bold mt-0.5">
+            {loan.balance < 0 ? '-' : ''}{formatCurrency(loan.balance)}
+          </div>
         </div>
         
+        {/* Cleared / Uncleared row */}
+        <div className="flex justify-center gap-6 mt-2 pt-2 border-t border-white/20 text-xs">
+          <div className="text-center">
+            <div className="opacity-70">Cleared</div>
+            <div className="font-medium">{clearedBalance >= 0 ? '+' : '-'}{formatCurrency(clearedBalance)}</div>
+          </div>
+          <div className="text-center">
+            <div className="opacity-70">Uncleared</div>
+            <div className="font-medium">{unclearedBalance >= 0 ? '+' : '-'}{formatCurrency(unclearedBalance)}</div>
+          </div>
+        </div>
+        
+        {/* Reconcile button */}
+        {!isSelectMode && !isReconciling && (
+          <div className="mt-2 flex justify-center gap-2">
+            <button onClick={() => setIsReconciling(true)} className="bg-white/20 px-3 py-1.5 rounded-lg text-xs font-medium">Reconcile</button>
+            {hasReconciledTrans && <button onClick={handleUnreconcile} className="bg-white/10 px-3 py-1.5 rounded-lg text-xs font-medium">🔓 Undo Last</button>}
+          </div>
+        )}
+        
         {/* Paid Back / Received info */}
-        <div className="mt-3 pt-3 border-t border-white/20 text-center text-sm">
+        <div className="mt-2 pt-2 border-t border-white/20 text-center text-xs">
           {isBorrow ? (
             <span>Paid back: {formatCurrency(loan.paidBack)}</span>
           ) : (
@@ -244,20 +518,71 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         </div>
       </div>
 
-      {/* Archive banner when balance = 0 */}
-      {Math.abs(loan.balance) === 0 && (
-        <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-bold text-amber-800">🎉 Loan Settled!</div>
-              <div className="text-sm text-amber-600">Balance is zero. You can archive this loan.</div>
+      {/* Reconcile Modal */}
+      {isReconciling && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="font-bold text-lg">Reconcile Loan</div>
             </div>
-            <button
-              onClick={() => setShowArchiveLoan(true)}
-              className="bg-amber-500 text-white px-4 py-2 rounded-lg font-medium text-sm hover:bg-amber-600"
-            >
-              Archive
-            </button>
+            
+            <div className="p-4 space-y-4">
+              {/* Balance Summary */}
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 text-sm">Cleared Balance</span>
+                  <span className={`font-bold ${clearedBalance >= 0 ? 'text-emerald-600' : 'text-gray-800'}`}>{clearedBalance < 0 ? '-' : ''}{formatCurrency(clearedBalance)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 text-sm">+ Uncleared Balance</span>
+                  <span className={`font-bold ${unclearedBalance >= 0 ? 'text-gray-600' : 'text-red-600'}`}>
+                    {unclearedBalance < 0 ? '-' : '+'}{formatCurrency(unclearedBalance)}
+                  </span>
+                </div>
+                <div className="border-t pt-2 flex justify-between items-center">
+                  <span className="text-gray-700 font-medium">Outstanding Balance</span>
+                  <span className="font-bold text-lg">{loan.balance < 0 ? '-' : ''}{formatCurrency(loan.balance)}</span>
+                </div>
+              </div>
+
+              {/* Uncleared Warning */}
+              {unclearedBalance !== 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-amber-500">⚠️</span>
+                    <div className="text-sm text-amber-700">
+                      You have uncleared transactions. Clear them first or they will remain uncleared after reconciliation.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Confirmation Question */}
+              <div className="text-center py-2">
+                <div className="text-gray-600 text-sm">Is your cleared balance</div>
+                <div className="text-3xl font-bold text-gray-800 my-2">{clearedBalance < 0 ? '-' : ''}{formatCurrency(clearedBalance)}?</div>
+                <div className="text-sm text-gray-500">
+                  {loan.transactions.filter(t => t.clearStatus === 'cleared').length} cleared transactions will be locked
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setIsReconciling(false)} 
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                >
+                  No
+                </button>
+                <button 
+                  onClick={() => handleQuickReconcile()} 
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
+                >
+                  Yes
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -266,7 +591,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
       {!isSelectMode && (
         <button
           onClick={() => setIsAddTransactionOpen(true)}
-          className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
+          className="fixed bottom-24 right-4 md:right-[calc(50%-200px)] bg-emerald-500 text-white w-16 h-16 rounded-full shadow-lg flex items-center justify-center text-4xl hover:bg-emerald-600 transition-transform active:scale-95 z-30"
         >
           +
         </button>
@@ -295,7 +620,11 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
                   return (
                     <div 
                       key={t.id} 
-                      onClick={() => handleTransactionClick(t)}
+                      onClick={(e) => {
+                        // Ignore if clicking on clear button
+                        if (e.target.closest('.clear-btn')) return;
+                        handleTransactionClick(t);
+                      }}
                       onTouchStart={() => !t.isSplitPart && handleTouchStart(t.id)}
                       onTouchEnd={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
@@ -310,20 +639,43 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
                       )}
 
                       {/* Transaction Info */}
-                      <div className="flex-1">
-                        <div className="font-medium text-gray-800">
-                          {t.memo || 'Loan transaction'}
-                          {t.isSplitPart && <span className="text-xs text-gray-400 ml-1">(from split)</span>}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {t.account}
-                        </div>
+                      <div className="flex-1 min-w-0">
+                        {/* For split parts: show payee first, then loan name + memo */}
+                        {t.isSplitPart ? (
+                          <>
+                            <div className="font-medium text-gray-800 truncate">
+                              {t.payee || 'Split transaction'}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate">
+                              {t.loan}{t.memo ? ` • ${t.memo}` : ''}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-medium text-gray-800 truncate">
+                              {t.memo || 'Loan transaction'}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {t.account}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Amount - GREEN for positive, BLACK for negative */}
                       <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
                         {isPositive ? '+' : '-'}{formatCurrency(amt)}
                       </div>
+                      
+                      {/* Clear Status Button */}
+                      {!isSelectMode && (
+                        <button 
+                          onClick={(e) => handleToggleClear(t, e)} 
+                          className={`clear-btn text-xl w-10 h-10 flex items-center justify-center rounded-full active:bg-gray-200 ${getClearColor(t.clearStatus)}`}
+                        >
+                          {getClearIcon(t.clearStatus)}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -339,7 +691,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         onClose={() => setIsAddTransactionOpen(false)}
         onSave={() => {
           setIsAddTransactionOpen(false);
-          // Data will auto-refresh via Firebase listener, no need to close LoanDetail
+          // Data will auto-refresh via Firebase listener, stay in LoanDetail
         }}
         loan={loan}
       />
@@ -350,7 +702,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
         onClose={() => setEditingTransaction(null)}
         onSave={() => {
           setEditingTransaction(null);
-          // Data will auto-refresh via Firebase listener, no need to close LoanDetail
+          // Data will auto-refresh via Firebase listener, stay in LoanDetail
         }}
         transaction={editingTransaction}
         loan={loan}
@@ -358,7 +710,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden">
             <div className="bg-red-500 p-4 text-white text-center">
               <div className="text-4xl mb-1">🗑️</div>
@@ -390,7 +742,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
 
       {/* Success Modal */}
       {successMessage && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden">
             <div className="bg-emerald-500 p-4 text-white text-center">
               <div className="text-4xl mb-1">✓</div>
@@ -399,7 +751,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
             <div className="p-4">
               <p className="text-gray-700 text-center mb-4">{successMessage}</p>
               <button 
-                onClick={() => { setSuccessMessage(null); onClose(); }} 
+                onClick={() => setSuccessMessage(null)} 
                 className="w-full bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors"
               >
                 OK
@@ -411,7 +763,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
 
       {/* Edit Loan Modal */}
       {showEditLoan && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden">
             <div className="bg-indigo-500 p-4 text-white text-center">
               <div className="text-4xl mb-1">✏️</div>
@@ -424,6 +776,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
                 onChange={(e) => setEditLoanName(e.target.value)}
                 className="w-full p-3 border-2 border-gray-200 rounded-lg text-center text-lg font-medium focus:border-indigo-500 outline-none"
                 placeholder="Loan name"
+                autoFocus
               />
               <div className="flex gap-2 mt-4">
                 <button 
@@ -447,7 +800,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
 
       {/* Delete Loan Modal */}
       {showDeleteLoan && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden">
             <div className="bg-red-500 p-4 text-white text-center">
               <div className="text-4xl mb-1">🗑️</div>
@@ -479,7 +832,7 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
 
       {/* Archive Loan Modal */}
       {showArchiveLoan && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden">
             <div className="bg-amber-500 p-4 text-white text-center">
               <div className="text-4xl mb-1">📦</div>
@@ -507,11 +860,6 @@ const LoanDetail = ({ loan, onClose, onLoanUpdated }) => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Click outside to close menu */}
-      {showMenu && (
-        <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
       )}
     </div>
   );

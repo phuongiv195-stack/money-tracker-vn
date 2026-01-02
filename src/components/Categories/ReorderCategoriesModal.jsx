@@ -12,6 +12,7 @@ const ReorderCategoriesModal = ({ isOpen, onClose, categories, onSave, categoryT
   const [groupedCategories, setGroupedCategories] = useState({});
   const [groupOrder, setGroupOrder] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   
   // Drag state
   const [dragItem, setDragItem] = useState(null);
@@ -19,15 +20,33 @@ const ReorderCategoriesModal = ({ isOpen, onClose, categories, onSave, categoryT
   const dragNode = useRef(null);
 
   useEffect(() => {
-    if (isOpen && categories.length > 0) {
+    // Only initialize once when modal opens, not on every categories change
+    if (isOpen && !initialized && categories.length > 0) {
       // Filter categories by type and group them
       const filteredCategories = categories.filter(c => c.type === categoryType);
       
-      // Get unique groups and sort them
-      const groups = [...new Set(filteredCategories.map(c => c.group).filter(Boolean))].sort();
+      // Get unique groups
+      const groupSet = new Set(filteredCategories.map(c => c.group).filter(Boolean));
+      
+      // Build groupOrder map from categories
+      const groupOrderMap = {};
+      filteredCategories.forEach(cat => {
+        if (cat.group && groupOrderMap[cat.group] === undefined) {
+          groupOrderMap[cat.group] = cat.groupOrder ?? 999;
+        }
+      });
+      
+      // Sort groups by groupOrder (same as CategoriesTab)
+      const groups = [...groupSet].sort((a, b) => {
+        const orderA = groupOrderMap[a] ?? 999;
+        const orderB = groupOrderMap[b] ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.localeCompare(b); // Fallback to alphabetical
+      });
+      
       setGroupOrder(groups);
       
-      // Group categories
+      // Group categories and sort by order within each group
       const grouped = {};
       groups.forEach(group => {
         grouped[group] = filteredCategories
@@ -40,9 +59,15 @@ const ReorderCategoriesModal = ({ isOpen, onClose, categories, onSave, categoryT
       });
       
       setGroupedCategories(grouped);
+      setInitialized(true);
+    }
+    
+    // Reset when modal closes
+    if (!isOpen) {
+      setInitialized(false);
       setSaving(false);
     }
-  }, [isOpen, categories, categoryType]);
+  }, [isOpen, categories, categoryType, initialized]);
 
   // Drag handlers
   const handleDragStart = (e, group, index) => {

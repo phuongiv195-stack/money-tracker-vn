@@ -8,14 +8,31 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
   useBackHandler(isOpen, onClose);
   const toast = useToast();
   
+  // Helper to get today's date in local timezone
+  const getLocalToday = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  const formatDateForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  
   const [newValue, setNewValue] = useState('');
   const [displayValue, setDisplayValue] = useState('');
+  const [valueDate, setValueDate] = useState(getLocalToday());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && account) {
       setNewValue('');
       setDisplayValue('');
+      setValueDate(getLocalToday());
     }
   }, [isOpen, account]);
 
@@ -75,19 +92,12 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
 
       // Create Unrealized Gain/Loss transaction if there's a change
       if (gainLoss !== 0) {
-        const getLocalToday = () => {
-          const year = now.getFullYear();
-          const month = String(now.getMonth() + 1).padStart(2, '0');
-          const day = String(now.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        };
-
         await addDoc(collection(db, 'transactions'), {
           userId: account.userId,
           type: 'unrealized_gain',
           amount: gainLoss,
           account: account.name,
-          date: getLocalToday(),
+          date: valueDate, // Use selected date
           createdAt: now
         });
       }
@@ -144,6 +154,7 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
 
           {/* New Value Input */}
           <div>
+            <label className="text-xs text-gray-500 uppercase font-semibold mb-1 block">New Value</label>
             <input
               type="text"
               inputMode="text"
@@ -158,6 +169,23 @@ const UpdateValueModal = ({ isOpen, onClose, onSave, account, currentValue: prop
                 {change >= 0 ? '↑' : '↓'} {change >= 0 ? '+' : ''}{formatNumber(change)} ({change >= 0 ? '+' : ''}{changePercent}%)
               </div>
             )}
+          </div>
+
+          {/* Date */}
+          <div>
+            <label className="text-xs text-gray-500 uppercase font-semibold mb-1 block">Date</label>
+            <div className="relative">
+              <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between pointer-events-none">
+                <span className="text-gray-800">{formatDateForDisplay(valueDate)}</span>
+                <span className="text-gray-400">📅</span>
+              </div>
+              <input 
+                type="date" 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                value={valueDate}
+                onChange={(e) => setValueDate(e.target.value)}
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -49,38 +49,39 @@ const CategoriesTab = () => {
   };
 
   const { categoryTotals, summary } = useMemo(() => {
-    const currentMonthStr = currentDate.toISOString().slice(0, 7); 
-    const filteredTrans = transactions.filter(t => t.date && t.date.startsWith(currentMonthStr));
+  const currentMonthStr = currentDate.toISOString().slice(0, 7); 
+  const filteredTrans = transactions.filter(t => t.date && t.date.startsWith(currentMonthStr));
 
-    const catTotals = {};
-    let income = 0;
-    let expense = 0;
+  const catTotals = {};
+  let income = 0;
+  let expense = 0;
 
-    filteredTrans.forEach(t => {
-      if (t.type === 'split' && t.splits) {
-        t.splits.forEach(split => {
-          if (split.category) {
-            const splitAmt = t.splitType === 'expense' ? -split.amount : split.amount;
-            catTotals[split.category] = (catTotals[split.category] || 0) + splitAmt;
-            if (t.splitType === 'income') income += split.amount;
-            if (t.splitType === 'expense') expense -= split.amount;
-          }
-        });
-      } else {
-        const amt = Number(t.amount);
-        if (t.type === 'income') income += amt;
-        if (t.type === 'expense') expense += amt;
-        if (t.category) {
-          catTotals[t.category] = (catTotals[t.category] || 0) + amt;
+  filteredTrans.forEach(t => {
+    if (t.type === 'split' && t.splits) {
+      t.splits.forEach(split => {
+        if (split.category) {
+          const splitAmt = t.splitType === 'expense' ? -split.amount : split.amount;
+          catTotals[split.category] = (catTotals[split.category] || 0) + splitAmt;
+          if (t.splitType === 'income') income += split.amount;
+          if (t.splitType === 'expense') expense -= split.amount;
         }
+      });
+    } else {
+      const amt = Number(t.amount);
+      if (t.type === 'income') income += amt;
+      if (t.type === 'expense') expense += amt;
+      if (t.category) {
+        catTotals[t.category] = (catTotals[t.category] || 0) + amt;
       }
-    });
+    }
+  });
 
-    return {
-      categoryTotals: catTotals,
-      summary: { income, expense, net: income + expense }
-    };
-  }, [transactions, currentDate]);
+  return {
+    categoryTotals: catTotals,
+    summary: { income, expense, net: income + expense }
+  };
+}, [transactions, currentDate]);
+
 
   const filteredGroups = useMemo(() => {
     const groups = {};
@@ -112,36 +113,29 @@ const CategoriesTab = () => {
     }, {});
   }, [categories, searchQuery, categoryTotals, activeTab]);
 
-  // Get sorted group names based on saved order
+  // Get sorted group names based on groupOrder from categories
   const sortedGroupNames = useMemo(() => {
     const groupNames = Object.keys(filteredGroups);
     
-    // Load saved order from localStorage
-    const savedOrder = localStorage.getItem(`groupOrder_${activeTab}`);
-    
-    if (savedOrder) {
-      try {
-        const parsedOrder = JSON.parse(savedOrder);
-        // Sort groups by saved order, put new groups at end (alphabetically)
-        groupNames.sort((a, b) => {
-          const indexA = parsedOrder.indexOf(a);
-          const indexB = parsedOrder.indexOf(b);
-          if (indexA === -1 && indexB === -1) return a.localeCompare(b);
-          if (indexA === -1) return 1;
-          if (indexB === -1) return -1;
-          return indexA - indexB;
-        });
-      } catch (e) {
-        console.error('Error parsing saved group order:', e);
-        groupNames.sort((a, b) => a.localeCompare(b));
+    // Get groupOrder from categories (use first category of each group)
+    const filteredCats = categories.filter(c => c.type === activeTab);
+    const groupOrderMap = {};
+    filteredCats.forEach(cat => {
+      if (cat.group && groupOrderMap[cat.group] === undefined) {
+        groupOrderMap[cat.group] = cat.groupOrder ?? 999;
       }
-    } else {
-      // Default alphabetical sort
-      groupNames.sort((a, b) => a.localeCompare(b));
-    }
+    });
+    
+    // Sort groups by groupOrder
+    groupNames.sort((a, b) => {
+      const orderA = groupOrderMap[a] ?? 999;
+      const orderB = groupOrderMap[b] ?? 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.localeCompare(b); // Fallback to alphabetical
+    });
     
     return groupNames;
-  }, [filteredGroups, activeTab, groupOrderVersion]);
+  }, [filteredGroups, activeTab, categories, groupOrderVersion]);
 
   // Simple click handler - view category detail
   const handleCategoryClick = (cat) => {
@@ -229,7 +223,7 @@ const CategoriesTab = () => {
             <button onClick={() => changeMonth(1)} className="p-2 text-gray-500 hover:bg-gray-100 rounded">→</button>
             <button 
               onClick={() => window.dispatchEvent(new CustomEvent('openSettings'))}
-              className="p-2 text-gray-500 hover:bg-gray-100 rounded"
+              className="p-2 bg-gray-50 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
             >
               ⚙️
             </button>
@@ -238,7 +232,7 @@ const CategoriesTab = () => {
         
         <div className="flex justify-between text-sm mb-2 text-gray-600">
           <span>Income: <span className="text-emerald-600 font-medium">+{formatCurrency(summary.income)}</span></span>
-          <span>Expense: <span className="text-gray-900 font-medium">-{formatCurrency(summary.expense)}</span></span>
+          <span>Expense: <span className="text-red-600 font-medium">-{formatCurrency(summary.expense)}</span></span>
         </div>
         
         <div className="flex justify-between items-center border-t pt-2">
@@ -259,18 +253,12 @@ const CategoriesTab = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           <button
-            onClick={() => setIsReorderModalOpen(true)}
-            className="bg-white text-gray-600 border border-gray-300 w-10 h-10 rounded-lg flex items-center justify-center text-lg hover:bg-gray-50 transition-colors"
-            title="Reorder categories"
-          >
-            ↕️
-          </button>
-          <button
             onClick={() => {
-              setEditingCategory(null);
-              setIsAddModalOpen(true);
+              // Open Add Group modal (EditGroupModal in add mode)
+              setEditingGroup({ isNew: true, type: activeTab });
             }}
-            className="bg-emerald-500 text-white w-10 h-10 rounded-lg flex items-center justify-center text-2xl hover:bg-emerald-600 transition-colors shadow-md"
+            className="bg-emerald-500 text-white w-12 h-12 rounded-lg flex items-center justify-center text-3xl hover:bg-emerald-600 transition-colors shadow-md"
+            title="Add new group"
           >
             +
           </button>
@@ -299,15 +287,19 @@ const CategoriesTab = () => {
           </button>
         </div>
         
-        <div className="flex justify-between items-center mt-2">
-          <div className="text-xs text-gray-400">
-            Tap to view • Hold to edit
-          </div>
+        {/* Reorder buttons row */}
+        <div className="flex gap-2 mt-2">
           <button
             onClick={() => setIsReorderGroupsModalOpen(true)}
-            className="text-xs text-emerald-600 hover:text-emerald-700 font-medium"
+            className="flex-1 py-2 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 font-medium"
           >
             ↕️ Reorder Groups
+          </button>
+          <button
+            onClick={() => setIsReorderModalOpen(true)}
+            className="flex-1 py-2 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 font-medium"
+          >
+            ↕️ Reorder Categories
           </button>
         </div>
       </div>
@@ -320,16 +312,30 @@ const CategoriesTab = () => {
           return (
           <div key={groupName} className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-100">
             <div 
-              className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-gray-500 uppercase tracking-wider cursor-pointer select-none active:bg-gray-100"
-              onTouchStart={(e) => handleLongPressStart(groupName, 'group', e)}
-              onTouchMove={handleLongPressMove}
-              onTouchEnd={handleLongPressEnd}
-              onMouseDown={(e) => handleLongPressStart(groupName, 'group', e)}
-              onMouseUp={handleLongPressEnd}
-              onMouseLeave={handleLongPressEnd}
+              className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-emerald-600 uppercase tracking-wider select-none"
             >
-              <span>{groupName}</span>
-              <span className="text-[10px] opacity-50">Hold to edit</span>
+              <span 
+                className="flex-1 cursor-pointer active:opacity-70"
+                onTouchStart={(e) => handleLongPressStart(groupName, 'group', e)}
+                onTouchMove={handleLongPressMove}
+                onTouchEnd={handleLongPressEnd}
+                onMouseDown={(e) => handleLongPressStart(groupName, 'group', e)}
+                onMouseUp={handleLongPressEnd}
+                onMouseLeave={handleLongPressEnd}
+              >
+                {groupName}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingCategory({ prefilledGroup: groupName, prefilledType: activeTab });
+                  setIsAddModalOpen(true);
+                }}
+                className="w-6 h-6 flex items-center justify-center text-emerald-500 hover:bg-emerald-100 rounded-full text-lg font-bold"
+                title={`Add category to ${groupName}`}
+              >
+                +
+              </button>
             </div>
             
             <div className="divide-y divide-gray-50">
@@ -413,7 +419,7 @@ const CategoriesTab = () => {
         isOpen={editingGroup !== null}
         onClose={() => setEditingGroup(null)}
         onSave={() => setEditingGroup(null)}
-        groupName={editingGroup?.name}
+        groupName={editingGroup?.isNew ? editingGroup : editingGroup?.name}
         groupType={editingGroup?.type}
       />
 

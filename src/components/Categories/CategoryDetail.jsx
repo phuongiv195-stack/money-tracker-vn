@@ -243,15 +243,20 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
                 {items.map((t, index) => {
                   const isSplit = t.type === 'split';
                   let displayAmount;
+                  let splitMemo = null;
                   
                   if (isSplit && t.splits) {
-                    // Sum only splits matching this category
-                    displayAmount = t.splits
-                      .filter(s => s.category === category.name)
-                      .reduce((sum, s) => sum + (t.splitType === 'expense' ? -s.amount : s.amount), 0);
+                    // Sum only splits matching this category and get memo
+                    const matchingSplits = t.splits.filter(s => s.category === category.name);
+                    displayAmount = matchingSplits.reduce((sum, s) => sum + (t.splitType === 'expense' ? -s.amount : s.amount), 0);
+                    // Get memo from the first matching split (if any)
+                    splitMemo = matchingSplits.find(s => s.memo)?.memo;
                   } else {
                     displayAmount = Number(t.amount);
                   }
+                  
+                  // Use split memo if available, otherwise use transaction memo
+                  const displayMemo = isSplit ? (splitMemo || t.memo) : t.memo;
                   
                   const isPositive = displayAmount > 0;
                   const isSelected = selectedItems.has(t.id);
@@ -279,7 +284,7 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
                           </div>
                           <div className="text-xs text-gray-500 truncate">
                             {t.account}
-                            {t.memo && ` • ${t.memo}`}
+                            {displayMemo && ` • ${displayMemo}`}
                           </div>
                         </div>
                       </div>

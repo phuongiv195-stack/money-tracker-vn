@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useData } from '../../contexts/DataContext';
@@ -9,13 +9,98 @@ import { useToast } from '../Toast/ToastProvider';
 
 const AccountsTab = () => {
   const toast = useToast();
-  const { accounts, transactions, accountBalances, isLoading } = useData();
+  const { accounts, transactions, accountBalances, isLoading, hiddenAccounts, setHiddenAccounts } = useData();
   
   const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [showArchivedAccounts, setShowArchivedAccounts] = useState(false);
+  
+  // Net Worth Breakdown Modal
+  const [showNetWorthModal, setShowNetWorthModal] = useState(false);
+  
+  // Account Settings Menu
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showQuickSelectModal, setShowQuickSelectModal] = useState(false);
+  
+  // Long press handling
+  const longPressTimer = useRef(null);
+  const longPressTriggered = useRef(false);
+  const touchStartPos = useRef({ x: 0, y: 0 });
+
+  const triggerHaptic = () => {
+    if (navigator.vibrate) navigator.vibrate(50);
+  };
+
+  const handleLongPressStart = (account, e) => {
+    longPressTriggered.current = false;
+    
+    if (e?.touches?.[0]) {
+      touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e) {
+      touchStartPos.current = { x: e.clientX, y: e.clientY };
+    }
+    
+    longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true;
+      triggerHaptic();
+      // Open Edit Account modal
+      setEditingAccount(account);
+      setIsAddModalOpen(true);
+    }, 400);
+  };
+
+  const handleLongPressMove = (e) => {
+    if (!longPressTimer.current) return;
+    
+    let currentX, currentY;
+    if (e?.touches?.[0]) {
+      currentX = e.touches[0].clientX;
+      currentY = e.touches[0].clientY;
+    } else {
+      currentX = e.clientX;
+      currentY = e.clientY;
+    }
+    
+    const deltaX = Math.abs(currentX - touchStartPos.current.x);
+    const deltaY = Math.abs(currentY - touchStartPos.current.y);
+    
+    if (deltaX > 10 || deltaY > 10) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleAccountClick = (account) => {
+    if (longPressTriggered.current) {
+      longPressTriggered.current = false;
+      return;
+    }
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setSelectedAccount(account);
+  };
+  
+  // Toggle account visibility
+  const toggleAccountVisibility = (accountName) => {
+    setHiddenAccounts(prev => {
+      if (prev.includes(accountName)) {
+        return prev.filter(name => name !== accountName);
+      } else {
+        return [...prev, accountName];
+      }
+    });
+  };
 
   // Use cached balances from DataContext
   const balances = accountBalances;
@@ -25,7 +110,8 @@ const AccountsTab = () => {
     const groups = {
       'SPENDING': [],
       'SAVINGS': [],
-      'INVESTMENTS': []
+      'INVESTMENTS': [],
+      'ASSETS': []
     };
 
     accounts.forEach(acc => {
@@ -39,7 +125,6 @@ const AccountsTab = () => {
         // Tính: startingBalance + tất cả transactions (bao gồm unrealized_gain)
         const accTransactions = transactions.filter(t => {
           if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
-          if (t.type === 'split') return t.account === acc.name;
           return t.account === acc.name;
         });
         
@@ -49,11 +134,7 @@ const AccountsTab = () => {
         balance = startingBalance;
         accTransactions.forEach(t => {
           if (t.type === 'transfer') {
-            const amt = Math.abs(Number(t.amount) || 0);
-            balance += t.fromAccount === acc.name ? -amt : amt;
-          } else if (t.type === 'split') {
-            // Split transactions use totalAmount
-            balance += Number(t.totalAmount) || 0;
+            balance += t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
           } else {
             // Bao gồm unrealized_gain, expense, income...
             balance += Number(t.amount) || 0;
@@ -79,24 +160,39 @@ const AccountsTab = () => {
     return groups;
   }, [accounts, balances, transactions]);
 
-  // Calculate Net Worth
-  const netWorth = useMemo(() => {
-    return Object.values(accountGroups)
+  // Calculate Net Worth and Breakdown
+  const netWorthData = useMemo(() => {
+    const totalAccounts = Object.values(accountGroups)
       .flat()
       .reduce((sum, acc) => sum + acc.balance, 0);
-  }, [accountGroups]);
+    
+    let lendTotal = 0;
+    let borrowTotal = 0;
+    
+    // Calculate loan totals from transactions
+    transactions.forEach(t => {
+      if (t.type === 'loan') {
+        const amt = Number(t.amount) || 0;
+        if (t.loanType === 'lend') {
+          lendTotal += amt;
+        } else if (t.loanType === 'borrow') {
+          borrowTotal += amt;
+        }
+      }
+    });
+    
+    const netWorth = totalAccounts + lendTotal + borrowTotal; // borrowTotal is already negative
+    
+    return {
+      totalAccounts,
+      lendTotal,
+      borrowTotal,
+      netWorth
+    };
+  }, [accountGroups, transactions]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US').format(Math.abs(amount) || 0);
-  };
-
-  const handleAccountClick = (account) => {
-    setSelectedAccount(account);
-  };
-
-  const handleEditAccount = (account) => {
-    setEditingAccount(account);
-    setIsAddModalOpen(true);
   };
 
   // Get archived accounts (isActive = false)
@@ -118,17 +214,48 @@ const AccountsTab = () => {
 
   return (
     <div className="pb-24">
-      {/* Net Worth Header */}
-      <div className="bg-emerald-600 p-6 text-white text-center shadow-sm mb-4">
-        <div className="text-sm opacity-80 uppercase tracking-wider">Net Worth</div>
-        <div className={`text-3xl font-bold mt-1`}>
-          {netWorth >= 0 ? '' : '-'}{formatCurrency(netWorth)} VND
+      {/* Header with buttons */}
+      <div className="bg-emerald-600 p-6 text-white shadow-sm mb-4 relative">
+        {/* Total Balance - Clickable - limited width to avoid overlap */}
+        <div 
+          className="text-center cursor-pointer hover:opacity-90 active:opacity-80 transition-opacity mx-auto max-w-[200px]"
+          onClick={() => setShowNetWorthModal(true)}
+        >
+          <div className="text-sm opacity-80 uppercase tracking-wider font-bold">Total Balance</div>
+          <div className="text-3xl font-bold mt-1">
+            {netWorthData.totalAccounts >= 0 ? '' : '-'}{formatCurrency(netWorthData.totalAccounts)}
+          </div>
+          <div className="text-xs opacity-60 mt-1">Tap to see breakdown</div>
+        </div>
+        
+        {/* Buttons - Top Right Corner - higher z-index */}
+        <div className="absolute top-4 right-4 flex flex-col gap-2 z-20">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSettingsMenu(true);
+            }}
+            className="bg-white/20 hover:bg-white/30 rounded-lg w-10 h-10 flex items-center justify-center text-lg"
+          >
+            ⚙️
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingAccount(null);
+              setIsAddModalOpen(true);
+            }}
+            className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-2 text-sm font-medium"
+          >
+            + New
+          </button>
         </div>
       </div>
 
       {/* Account Groups */}
       <div className="px-4 space-y-6">
-        {Object.entries(accountGroups).map(([groupName, accountList]) => {
+        {['SPENDING', 'SAVINGS', 'INVESTMENTS', 'ASSETS'].map(groupName => {
+          const accountList = accountGroups[groupName] || [];
           if (accountList.length === 0) return null;
           
           const groupTotal = accountList.reduce((sum, acc) => sum + acc.balance, 0);
@@ -154,6 +281,19 @@ const AccountsTab = () => {
                       key={acc.id} 
                       className="p-4 flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors"
                       onClick={() => handleAccountClick(acc)}
+                      onTouchStart={(e) => handleLongPressStart(acc, e)}
+                      onTouchMove={handleLongPressMove}
+                      onTouchEnd={handleLongPressEnd}
+                      onMouseDown={(e) => handleLongPressStart(acc, e)}
+                      onMouseMove={handleLongPressMove}
+                      onMouseUp={handleLongPressEnd}
+                      onMouseLeave={handleLongPressEnd}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        triggerHaptic();
+                        setEditingAccount(acc);
+                        setIsAddModalOpen(true);
+                      }}
                     >
                       <div className="flex items-center gap-3">
                         <span className="text-xl">{acc.icon}</span>
@@ -228,26 +368,146 @@ const AccountsTab = () => {
         </div>
       )}
 
-      {/* Floating Buttons (Top-Right) */}
-      {accounts.length > 0 && (
-        <div className="fixed top-4 right-4 md:right-[calc(50%-200px)] flex gap-2 z-30">
-          {/* Gear/Settings Button */}
-          <button
-            onClick={() => setIsReorderModalOpen(true)}
-            className="bg-white text-gray-600 border border-gray-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-lg hover:bg-gray-50 transition-colors"
-          >
-            ⚙️
-          </button>
-          {/* Add Account Button */}
-          <button
-            onClick={() => {
-              setEditingAccount(null);
-              setIsAddModalOpen(true);
-            }}
-            className="bg-white text-emerald-600 border border-emerald-200 w-10 h-10 rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-emerald-50 transition-colors"
-          >
-            +
-          </button>
+      {/* Account Settings Menu */}
+      {showSettingsMenu && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setShowSettingsMenu(false)}>
+          <div className="bg-white w-full max-w-xs rounded-xl shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-emerald-600 p-4 text-white text-center">
+              <div className="text-2xl mb-1">⚙️</div>
+              <div className="font-bold text-lg">Account Settings</div>
+            </div>
+            <div className="divide-y divide-gray-100">
+              <button
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  setIsReorderModalOpen(true);
+                }}
+                className="w-full p-4 flex items-center gap-3 hover:bg-emerald-50 active:bg-emerald-100 transition-colors"
+              >
+                <span className="text-xl">↕️</span>
+                <span className="text-gray-800 font-medium">Reorder Accounts</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  setShowQuickSelectModal(true);
+                }}
+                className="w-full p-4 flex items-center gap-3 hover:bg-emerald-50 active:bg-emerald-100 transition-colors"
+              >
+                <span className="text-xl">⚡</span>
+                <span className="text-gray-800 font-medium">Quick Select Accounts</span>
+              </button>
+            </div>
+            <div className="p-3 border-t border-gray-100">
+              <button
+                onClick={() => setShowSettingsMenu(false)}
+                className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Select Accounts Modal */}
+      {showQuickSelectModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setShowQuickSelectModal(false)}>
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="bg-amber-500 p-4 text-white text-center">
+              <div className="text-2xl mb-1">⚡</div>
+              <div className="font-bold">Quick Select Accounts</div>
+              <div className="text-amber-100 text-xs mt-1">Local setting for this device</div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {(() => {
+                // Group and sort accounts like in AccountsTab
+                const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'INVESTMENTS': 2, 'ASSETS': 3 };
+                const groupLabels = { 'SPENDING': '💳 Spending', 'SAVINGS': '🏦 Savings', 'INVESTMENTS': '📈 Investments', 'ASSETS': '🏠 Assets' };
+                
+                const sortedAccounts = accounts
+                  .filter(a => a.isActive && a.type !== 'loan')
+                  .sort((a, b) => {
+                    const groupA = groupOrder[a.group] ?? 99;
+                    const groupB = groupOrder[b.group] ?? 99;
+                    if (groupA !== groupB) return groupA - groupB;
+                    return (a.order ?? 999) - (b.order ?? 999);
+                  });
+                
+                // Group accounts
+                const grouped = {};
+                sortedAccounts.forEach(acc => {
+                  const group = acc.group || 'OTHER';
+                  if (!grouped[group]) grouped[group] = [];
+                  grouped[group].push(acc);
+                });
+                
+                return ['SPENDING', 'SAVINGS', 'INVESTMENTS', 'ASSETS'].map(groupKey => {
+                  if (!grouped[groupKey] || grouped[groupKey].length === 0) return null;
+                  return (
+                    <div key={groupKey}>
+                      <div className="px-4 py-2 bg-gray-100 text-xs font-semibold text-gray-500 uppercase">
+                        {groupLabels[groupKey]}
+                      </div>
+                      {grouped[groupKey].map(acc => (
+                        <button
+                          key={acc.id}
+                          onClick={() => toggleAccountVisibility(acc.name)}
+                          className="w-full p-4 flex items-center justify-between hover:bg-gray-50 active:bg-gray-100 border-b border-gray-100"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xl">{acc.icon}</span>
+                            <span className="text-gray-700">{acc.name}</span>
+                          </div>
+                          <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                            !hiddenAccounts.includes(acc.name) 
+                              ? 'bg-emerald-500 border-emerald-500 text-white' 
+                              : 'border-gray-300'
+                          }`}>
+                            {!hiddenAccounts.includes(acc.name) && '✓'}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="p-3 border-t bg-gray-50">
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => {
+                    // Select All - remove all from hiddenAccounts
+                    setHiddenAccounts([]);
+                  }}
+                  className="flex-1 py-2 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-200"
+                >
+                  ✓ Select All
+                </button>
+                <button
+                  onClick={() => {
+                    // Unselect All - add all account names to hiddenAccounts
+                    const allAccountNames = accounts
+                      .filter(a => a.isActive && a.type !== 'loan')
+                      .map(a => a.name);
+                    setHiddenAccounts(allAccountNames);
+                  }}
+                  className="flex-1 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300"
+                >
+                  ✕ Unselect All
+                </button>
+              </div>
+              <div className="text-xs text-gray-500 text-center mb-2">
+                ℹ️ Unchecked accounts won't appear in transaction dropdown
+              </div>
+              <button
+                onClick={() => setShowQuickSelectModal(false)}
+                className="w-full py-2 bg-emerald-500 text-white rounded-lg font-medium"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -284,6 +544,66 @@ const AccountsTab = () => {
           />
         );
       })()}
+
+      {/* Net Worth Breakdown Modal */}
+      {showNetWorthModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="text-3xl mb-1">📊</div>
+              <div className="font-bold text-lg">Net Worth Breakdown</div>
+            </div>
+            <div className="p-6 space-y-3">
+              {/* Total Accounts */}
+              <div className="flex justify-between items-center">
+                <span className="text-gray-700">Total Accounts</span>
+                <span className="font-bold text-gray-900">{formatCurrency(netWorthData.totalAccounts)}</span>
+              </div>
+              
+              {/* Lend Loans */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-gray-700">Lend Loans</span>
+                  <div className="text-xs text-gray-500">(receivable)</div>
+                </div>
+                <span className="font-bold text-emerald-600">
+                  {netWorthData.lendTotal >= 0 ? '+' : ''}{formatCurrency(netWorthData.lendTotal)}
+                </span>
+              </div>
+              
+              {/* Borrow Loans */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-gray-700">Borrow Loans</span>
+                  <div className="text-xs text-gray-500">(liabilities)</div>
+                </div>
+                <span className="font-bold text-red-600">
+                  {netWorthData.borrowTotal >= 0 ? '' : ''}{formatCurrency(netWorthData.borrowTotal)}
+                </span>
+              </div>
+              
+              {/* Divider */}
+              <div className="border-t border-gray-200 my-3"></div>
+              
+              {/* Net Worth */}
+              <div className="flex justify-between items-center bg-emerald-50 -mx-6 px-6 py-3">
+                <span className="font-bold text-emerald-700">Net Worth</span>
+                <span className="font-bold text-2xl text-emerald-700">
+                  {netWorthData.netWorth >= 0 ? '' : '-'}{formatCurrency(netWorthData.netWorth)}
+                </span>
+              </div>
+              
+              {/* Close button */}
+              <button
+                onClick={() => setShowNetWorthModal(false)}
+                className="w-full mt-4 py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
