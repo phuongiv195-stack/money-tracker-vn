@@ -14,6 +14,31 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
   const [customYear, setCustomYear] = useState(new Date().getFullYear());
   const [customMonth, setCustomMonth] = useState(new Date().getMonth() + 1);
   
+  // Expand/Collapse state for each group
+  const [expandedGroups, setExpandedGroups] = useState({
+    cash: true,
+    checking: true,
+    investments: true,
+    fixedAssets: true,
+    loansGiven: true,
+    loansOwed: true
+  });
+  
+  // Exchange rate state
+  const [exchangeRate, setExchangeRate] = useState(() => {
+    const saved = localStorage.getItem('balanceSheetExchangeRate');
+    return saved ? Number(saved) : 25000;
+  });
+  const [displayExchangeRate, setDisplayExchangeRate] = useState(() => {
+    const saved = localStorage.getItem('balanceSheetExchangeRate');
+    if (saved) {
+      const num = Number(saved);
+      // Format naturally - don't force decimal places
+      return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    }
+    return '25,000';
+  });
+  
   // Drag & Drop state
   const [draggedAccount, setDraggedAccount] = useState(null);
   const [dragOverGroup, setDragOverGroup] = useState(null);
@@ -22,28 +47,98 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
   const [config, setConfig] = useState(() => {
     const saved = localStorage.getItem('balanceSheetConfig');
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      if (!parsed.fixedAssets) parsed.fixedAssets = [];
+      return parsed;
     }
     return {
       cash: [],
       checking: [],
-      investments: []
+      investments: [],
+      fixedAssets: []
     };
   });
+
+  // Toggle group expand/collapse
+  const toggleGroup = (groupKey) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
+    }));
+  };
+
+  // Expand All / Collapse All
+  const expandAll = () => {
+    setExpandedGroups({
+      cash: true,
+      checking: true,
+      investments: true,
+      fixedAssets: true,
+      loansGiven: true,
+      loansOwed: true
+    });
+  };
+
+  const collapseAll = () => {
+    setExpandedGroups({
+      cash: false,
+      checking: false,
+      investments: false,
+      fixedAssets: false,
+      loansGiven: false,
+      loansOwed: false
+    });
+  };
 
   // Save config to localStorage
   useEffect(() => {
     localStorage.setItem('balanceSheetConfig', JSON.stringify(config));
   }, [config]);
 
-  // Format currency
+  // Save exchange rate to localStorage
+  useEffect(() => {
+    localStorage.setItem('balanceSheetExchangeRate', exchangeRate.toString());
+  }, [exchangeRate]);
+
+  // Format currency VND
   const formatCurrency = (amount) => {
     const num = Math.round(Math.abs(amount || 0));
     const formatted = num.toLocaleString('en-US');
     return amount < 0 ? `-${formatted}` : formatted;
   };
 
-  // Get end of month date (YYYY-MM-DD format, no timezone issues)
+  // Format currency USD
+  const formatUSD = (amountVND) => {
+    if (!exchangeRate || exchangeRate === 0) return '$0.00';
+    const usd = amountVND / exchangeRate;
+    return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  // Handle exchange rate input (supports decimals like 26,360.55)
+  const handleExchangeRateChange = (e) => {
+    const raw = e.target.value.replace(/,/g, '');
+    // Allow digits and one decimal point with up to 2 decimal places
+    if (raw === '' || /^\d*\.?\d{0,2}$/.test(raw)) {
+      const num = Number(raw) || 0;
+      setExchangeRate(num);
+      // Format display: keep user's input as-is while typing
+      if (raw.endsWith('.') || raw.includes('.')) {
+        // Keep the raw input while user is typing decimal
+        // Just add commas to integer part
+        const parts = raw.split('.');
+        const intPart = parts[0] ? Number(parts[0]).toLocaleString('en-US') : '';
+        const decPart = parts[1] !== undefined ? '.' + parts[1] : '.';
+        setDisplayExchangeRate(intPart + decPart);
+      } else if (num) {
+        // Format with commas for whole numbers
+        setDisplayExchangeRate(num.toLocaleString('en-US'));
+      } else {
+        setDisplayExchangeRate('');
+      }
+    }
+  };
+
+  // Get end of month date (YYYY-MM-DD format)
   const getEndOfMonthDate = (yearMonth) => {
     if (!yearMonth) {
       const now = new Date();
@@ -80,22 +175,9 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     const account = accounts.find(a => a.name === accountName);
     if (!account) return 0;
 
-    // For investment accounts with valueHistory
-    if ((account.group === 'INVESTMENTS' || account.group === 'ASSETS') && account.valueHistory?.length > 0) {
-      const validEntries = account.valueHistory
-        .filter(v => v.date <= asOfDate)
-        .sort((a, b) => b.date.localeCompare(a.date));
-      
-      if (validEntries.length > 0) {
-        return validEntries[0].value || 0;
-      }
-    }
-
-    // Calculate from starting balance + transactions
     let balance = account.startingBalance || 0;
 
     transactions.forEach(t => {
-      // Include transactions on or before asOfDate (use <= not <)
       if (!t.date || t.date > asOfDate) return;
 
       if ((t.type === 'expense' || t.type === 'income') && t.account === accountName) {
@@ -122,12 +204,60 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
       if (t.type === 'split' && t.account === accountName) {
         balance += Number(t.totalAmount) || 0;
       }
+
+      if (t.type === 'unrealized_gain' && t.account === accountName) {
+        balance += Number(t.amount) || 0;
+      }
     });
 
     return balance;
   };
 
-  // Calculate balances for all groups
+  // Calculate loan balances from transactions
+  const calculateLoanBalances = (asOfDate) => {
+    // Group loan transactions by loan name
+    const loanMap = {};
+    
+    transactions.forEach(t => {
+      if (t.type !== 'loan' || !t.loan || !t.date || t.date > asOfDate) return;
+      
+      if (!loanMap[t.loan]) {
+        loanMap[t.loan] = { name: t.loan, loanType: t.loanType, balance: 0 };
+      }
+      
+      // Loan amount is stored as the effect on the loan balance
+      // For borrow: positive = received money (debt increases)
+      // For lend: negative = gave money (receivable increases)
+      const amount = Number(t.amount) || 0;
+      loanMap[t.loan].balance += amount;
+    });
+
+    // Separate into lent (I Lent = assets) and borrowed (I Borrowed = liabilities)
+    const loansGiven = []; // I Lent - these are assets (money owed TO me)
+    const loansOwed = [];  // I Borrowed - these are liabilities (money I OWE)
+
+    Object.values(loanMap).forEach(loan => {
+      if (loan.loanType === 'lend') {
+        // I Lent: balance is negative (money went out), so receivable = -balance
+        const receivable = -loan.balance;
+        if (receivable !== 0) {
+          loansGiven.push({ name: loan.name, balance: receivable });
+        }
+      } else if (loan.loanType === 'borrow') {
+        // I Borrowed: balance is positive (money came in), debt = balance
+        if (loan.balance !== 0) {
+          loansOwed.push({ name: loan.name, balance: loan.balance });
+        }
+      }
+    });
+
+    const totalLoansGiven = loansGiven.reduce((sum, l) => sum + l.balance, 0);
+    const totalLoansOwed = loansOwed.reduce((sum, l) => sum + l.balance, 0);
+
+    return { loansGiven, loansOwed, totalLoansGiven, totalLoansOwed };
+  };
+
+  // Calculate all balance data
   const balanceData = useMemo(() => {
     const asOfDate = getEndOfMonthDate(selectedDate);
     
@@ -151,12 +281,29 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     const cash = calculateGroup(config.cash);
     const checking = calculateGroup(config.checking);
     const investments = calculateGroup(config.investments);
-    const grandTotal = cash.total + checking.total + investments.total;
+    const fixedAssets = calculateGroup(config.fixedAssets);
+    
+    // Calculate loan balances
+    const { loansGiven, loansOwed, totalLoansGiven, totalLoansOwed } = calculateLoanBalances(asOfDate);
+    
+    // Total Assets = Cash + Checking + Investments + Fixed Assets + Loans Given
+    const totalAssets = cash.total + checking.total + investments.total + fixedAssets.total + totalLoansGiven;
+    
+    // Total Liabilities = Loans Owed
+    const totalLiabilities = totalLoansOwed;
+    
+    // Net Worth = Assets - Liabilities
+    const netWorth = totalAssets - totalLiabilities;
 
-    return { cash, checking, investments, grandTotal, asOfDate };
+    return { 
+      cash, checking, investments, fixedAssets, 
+      loansGiven, loansOwed, totalLoansGiven, totalLoansOwed,
+      totalAssets, totalLiabilities, netWorth,
+      asOfDate 
+    };
   }, [selectedDate, config, accounts, transactions]);
 
-  // Get all active accounts grouped like Account Tab
+  // Get all active accounts grouped
   const groupedActiveAccounts = useMemo(() => {
     const activeAccs = accounts.filter(a => a.isActive !== false);
     const groupOrder = ['SPENDING', 'SAVINGS', 'INVESTMENTS', 'ASSETS'];
@@ -177,9 +324,9 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     return { grouped, groupOrder };
   }, [accounts]);
 
-  // Get unassigned accounts (grouped)
+  // Get unassigned accounts
   const unassignedAccounts = useMemo(() => {
-    const assigned = [...config.cash, ...config.checking, ...config.investments];
+    const assigned = [...config.cash, ...config.checking, ...config.investments, ...config.fixedAssets];
     const { grouped, groupOrder } = groupedActiveAccounts;
     
     const result = {};
@@ -190,7 +337,6 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     return { grouped: result, groupOrder };
   }, [groupedActiveAccounts, config]);
 
-  // Check if there are any unassigned accounts
   const hasUnassignedAccounts = useMemo(() => {
     return Object.values(unassignedAccounts.grouped).some(arr => arr.length > 0);
   }, [unassignedAccounts]);
@@ -219,7 +365,8 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
       const newConfig = {
         cash: prev.cash.filter(n => n !== draggedAccount),
         checking: prev.checking.filter(n => n !== draggedAccount),
-        investments: prev.investments.filter(n => n !== draggedAccount)
+        investments: prev.investments.filter(n => n !== draggedAccount),
+        fixedAssets: prev.fixedAssets.filter(n => n !== draggedAccount)
       };
       
       if (groupKey !== 'unassigned') {
@@ -238,33 +385,96 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     setDragOverGroup(null);
   };
 
-  // Render a balance group in main view
-  const renderGroup = (title, icon, data, colorClass) => {
+  // Render account group (Assets section)
+  const renderGroup = (groupKey, title, icon, data, colorClass) => {
     if (data.items.length === 0) return null;
+    const isExpanded = expandedGroups[groupKey];
     
     return (
-      <div className="mb-6">
-        <div className={`flex items-center justify-between py-3 px-4 rounded-lg ${colorClass}`}>
+      <div className="mb-4">
+        <div 
+          className={`flex items-center justify-between py-3 px-4 rounded-lg ${colorClass} cursor-pointer hover:opacity-90 transition-opacity`}
+          onClick={() => toggleGroup(groupKey)}
+        >
           <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">{isExpanded ? '▼' : '▶'}</span>
             <span className="text-xl">{icon}</span>
-            <span className="font-bold text-gray-800 text-lg">{title}</span>
+            <span className="font-bold text-gray-800">{title}</span>
+            {!isExpanded && <span className="text-xs text-gray-500">({data.items.length})</span>}
           </div>
-          <span className="font-bold text-gray-900 text-xl">{formatCurrency(data.total)}</span>
+          <div className="flex items-center gap-6">
+            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(data.total)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(data.total)}</span>
+          </div>
         </div>
         
-        <div className="mt-2 space-y-1">
-          {data.items.map((item, idx) => (
-            <div key={idx} className="flex items-center justify-between py-2 px-4 hover:bg-gray-50 rounded">
-              <div className="flex items-center gap-2">
-                <span>{item.icon}</span>
-                <span className="text-gray-700">{item.name}</span>
+        {isExpanded && (
+          <div className="mt-1 space-y-1 ml-6">
+            {data.items.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded">
+                <div className="flex items-center gap-2">
+                  <span>{item.icon}</span>
+                  <span className="text-gray-700">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-6">
+                  <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                    {formatCurrency(item.balance)}
+                  </span>
+                  <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                    {formatUSD(item.balance)}
+                  </span>
+                </div>
               </div>
-              <span className={`font-medium ${item.balance < 0 ? 'text-red-600' : 'text-gray-800'}`}>
-                {formatCurrency(item.balance)}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render loan group
+  const renderLoanGroup = (groupKey, title, icon, items, total, colorClass) => {
+    if (items.length === 0) return null;
+    const isExpanded = expandedGroups[groupKey];
+    
+    return (
+      <div className="mb-4">
+        <div 
+          className={`flex items-center justify-between py-3 px-4 rounded-lg ${colorClass} cursor-pointer hover:opacity-90 transition-opacity`}
+          onClick={() => toggleGroup(groupKey)}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">{isExpanded ? '▼' : '▶'}</span>
+            <span className="text-xl">{icon}</span>
+            <span className="font-bold text-gray-800">{title}</span>
+            {!isExpanded && <span className="text-xs text-gray-500">({items.length})</span>}
+          </div>
+          <div className="flex items-center gap-6">
+            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(total)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(total)}</span>
+          </div>
         </div>
+        
+        {isExpanded && (
+          <div className="mt-1 space-y-1 ml-6">
+            {items.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded">
+                <div className="flex items-center gap-2">
+                  <span>👤</span>
+                  <span className="text-gray-700">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-6">
+                  <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                    {formatCurrency(item.balance)}
+                  </span>
+                  <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                    {formatUSD(item.balance)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   };
@@ -290,67 +500,68 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     );
   };
 
-  // Render config modal with drag & drop
+  // Render drop zone for config
+  const renderDropZone = (groupKey, title, icon, colorClass) => {
+    const items = config[groupKey] || [];
+    const isOver = dragOverGroup === groupKey;
+    
+    return (
+      <div
+        onDragOver={(e) => handleDragOver(e, groupKey)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, groupKey)}
+        className={`rounded-lg border-2 border-dashed p-4 transition-all min-h-[100px]
+          ${isOver ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200'}
+        `}
+      >
+        <div className={`flex items-center gap-2 mb-3 px-2 py-1 rounded ${colorClass}`}>
+          <span className="text-xl">{icon}</span>
+          <span className="font-bold text-gray-700">{title}</span>
+        </div>
+        
+        {items.length === 0 ? (
+          <div className="text-sm text-gray-400 text-center py-4">
+            Drop accounts here
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {items.map(name => {
+              const account = accounts.find(a => a.name === name);
+              if (!account) return null;
+              return renderDraggableAccount(account);
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Config Modal
   const renderConfigModal = () => {
     if (!showConfig) return null;
-
-    const balanceSheetGroups = [
-      { key: 'cash', title: 'Cash', icon: '💵', color: 'bg-green-50 border-green-200' },
-      { key: 'checking', title: 'Checking', icon: '🏦', color: 'bg-blue-50 border-blue-200' },
-      { key: 'investments', title: 'Investments', icon: '📈', color: 'bg-purple-50 border-purple-200' }
-    ];
-
+    
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowConfig(false)}>
-        <div className="bg-white rounded-xl shadow-2xl w-[700px] max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-          <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-            <h3 className="font-bold text-xl text-gray-800">Configure Balance Sheet</h3>
-            <button onClick={() => setShowConfig(false)} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl max-h-[90vh] flex flex-col">
+          <div className="p-4 border-b flex justify-between items-center shrink-0">
+            <h2 className="text-xl font-bold">⚙️ Configure Balance Sheet</h2>
+            <button onClick={() => setShowConfig(false)} className="text-gray-500 text-xl">✕</button>
           </div>
           
-          <div className="p-4 overflow-auto max-h-[65vh]">
-            <p className="text-sm text-gray-500 mb-4">
-              Drag accounts into the categories below. Each account can only belong to one category.
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <p className="text-gray-600 text-sm">
+              Drag accounts from "Available Accounts" to assign them to categories.
+              Loans are automatically included based on your loan transactions.
             </p>
             
-            {/* Balance Sheet Groups - Drop zones */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {balanceSheetGroups.map(group => {
-                const groupAccounts = config[group.key]
-                  .map(name => accounts.find(a => a.name === name))
-                  .filter(Boolean);
-                const isOver = dragOverGroup === group.key;
-                
-                return (
-                  <div
-                    key={group.key}
-                    onDragOver={(e) => handleDragOver(e, group.key)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, group.key)}
-                    className={`rounded-lg border-2 border-dashed p-3 min-h-[150px] transition-all
-                      ${isOver ? 'border-emerald-500 bg-emerald-50' : `${group.color}`}
-                    `}
-                  >
-                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-200">
-                      <span className="text-xl">{group.icon}</span>
-                      <span className="font-bold text-gray-800">{group.title}</span>
-                      <span className="text-xs text-gray-400 ml-auto">{groupAccounts.length}</span>
-                    </div>
-                    
-                    <div className="space-y-1">
-                      {groupAccounts.map(acc => renderDraggableAccount(acc))}
-                      {groupAccounts.length === 0 && (
-                        <div className="text-sm text-gray-400 text-center py-4">
-                          Drop accounts here
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="grid grid-cols-2 gap-4">
+              {renderDropZone('cash', 'CASH', '💵', 'bg-green-100')}
+              {renderDropZone('checking', 'CHECKING', '🏦', 'bg-blue-100')}
+              {renderDropZone('investments', 'INVESTMENTS', '📈', 'bg-purple-100')}
+              {renderDropZone('fixedAssets', 'FIXED ASSETS', '🏠', 'bg-amber-100')}
             </div>
-
-            {/* Unassigned Accounts - grouped by Account Tab groups */}
+            
+            {/* Unassigned Accounts */}
             <div 
               onDragOver={(e) => handleDragOver(e, 'unassigned')}
               onDragLeave={handleDragLeave}
@@ -402,8 +613,8 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     );
   };
 
-  // Check if any accounts are configured
-  const hasConfiguredAccounts = config.cash.length > 0 || config.checking.length > 0 || config.investments.length > 0;
+  const hasConfiguredAccounts = config.cash.length > 0 || config.checking.length > 0 || config.investments.length > 0 || config.fixedAssets.length > 0;
+  const hasAnyData = hasConfiguredAccounts || balanceData.loansGiven.length > 0 || balanceData.loansOwed.length > 0;
 
   return (
     <div className="fixed inset-0 bg-gray-50 z-50 overflow-auto">
@@ -453,7 +664,6 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                 {!isLastMonth() ? `End of ${formatSelectedDate(selectedDate)}` : 'Custom Date'}
               </button>
               
-              {/* Custom Date Picker Dropdown */}
               {showCustomPicker && (
                 <div className="absolute top-full mt-2 left-0 bg-white rounded-lg shadow-xl p-4 z-20 min-w-[240px] border">
                   <div className="text-gray-700 font-medium mb-3">Select Month & Year</div>
@@ -475,7 +685,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                       className="w-24 px-3 py-2 border rounded-lg text-gray-700"
                     >
                       {Array.from({ length: 10 }, (_, i) => {
-                        const year = 2026 + i;
+                        const year = 2020 + i;
                         return <option key={year} value={year}>{year}</option>;
                       })}
                     </select>
@@ -498,17 +708,30 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
               )}
             </div>
           </div>
+          
+          {/* Exchange Rate Input */}
+          <div className="mt-4 flex justify-center items-center gap-2">
+            <span className="text-gray-600 text-sm">Exchange Rate:</span>
+            <input
+              type="text"
+              value={displayExchangeRate}
+              onChange={handleExchangeRateChange}
+              className="w-28 px-3 py-1.5 border rounded-lg text-center font-medium text-gray-700"
+              placeholder="25,000"
+            />
+            <span className="text-gray-600 text-sm">VND = 1 USD</span>
+          </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="p-6 max-w-4xl mx-auto">
-        {!hasConfiguredAccounts ? (
+        {!hasAnyData ? (
           <div className="bg-white rounded-xl shadow-sm p-12 text-center">
             <div className="text-6xl mb-4">📊</div>
-            <h2 className="text-xl font-bold text-gray-800 mb-2">No Accounts Configured</h2>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">No Data to Display</h2>
             <p className="text-gray-500 mb-6">
-              Click "Configure" to drag accounts into Cash, Checking, or Investments categories.
+              Click "Configure" to assign accounts to categories, or add some loan transactions.
             </p>
             <button 
               onClick={() => setShowConfig(true)}
@@ -523,7 +746,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
             <div className="mb-6 text-center">
               <p className="text-gray-500">
                 Balances as of <span className="font-semibold text-gray-700">
-                  {new Date(balanceData.asOfDate).toLocaleDateString('en-US', { 
+                  {new Date(balanceData.asOfDate + 'T00:00:00').toLocaleDateString('en-US', { 
                     month: 'long', 
                     day: 'numeric', 
                     year: 'numeric' 
@@ -532,18 +755,88 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
               </p>
             </div>
 
-            {/* Balance Groups */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              {renderGroup('CASH', '💵', balanceData.cash, 'bg-green-50')}
-              {renderGroup('CHECKING', '🏦', balanceData.checking, 'bg-blue-50')}
-              {renderGroup('INVESTMENTS', '📈', balanceData.investments, 'bg-purple-50')}
+            {/* CURRENT ASSETS Section */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+              <div className="border-b-2 border-emerald-500 pb-2 mb-4 flex justify-between items-center">
+                <h2 className="text-lg font-bold text-emerald-700">CURRENT ASSETS</h2>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={expandAll}
+                    className="text-xs text-emerald-600 hover:text-emerald-800 px-2 py-1 rounded hover:bg-emerald-50"
+                  >
+                    Expand All
+                  </button>
+                  <button 
+                    onClick={collapseAll}
+                    className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                  >
+                    Collapse All
+                  </button>
+                </div>
+              </div>
               
-              {/* Grand Total */}
-              <div className="mt-6 pt-6 border-t-2 border-gray-200">
-                <div className="flex items-center justify-between py-4 px-4 bg-gray-100 rounded-lg">
-                  <span className="font-bold text-gray-800 text-xl">TOTAL NET WORTH</span>
-                  <span className={`font-bold text-2xl ${balanceData.grandTotal < 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                    {formatCurrency(balanceData.grandTotal)}
+              {renderGroup('cash', 'CASH', '💵', balanceData.cash, 'bg-green-50')}
+              {renderGroup('checking', 'CHECKING', '🏦', balanceData.checking, 'bg-blue-50')}
+              {renderGroup('investments', 'INVESTMENTS', '📈', balanceData.investments, 'bg-purple-50')}
+              {renderGroup('fixedAssets', 'FIXED ASSETS', '🏠', balanceData.fixedAssets, 'bg-amber-50')}
+              {renderLoanGroup('loansGiven', 'LOANS GIVEN', '💰', balanceData.loansGiven, balanceData.totalLoansGiven, 'bg-teal-50')}
+              
+              {/* Total Assets */}
+              <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                <div className="flex items-center justify-between py-3 px-4 bg-emerald-100 rounded-lg">
+                  <span className="font-bold text-emerald-800">TOTAL ASSETS</span>
+                  <div className="flex items-center gap-6">
+                    <span className="font-bold text-emerald-800 text-xl w-32 text-right">{formatCurrency(balanceData.totalAssets)}</span>
+                    <span className="font-bold text-emerald-800 text-xl w-28 text-right">{formatUSD(balanceData.totalAssets)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* CURRENT LIABILITIES Section */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+              <div className="border-b-2 border-red-400 pb-2 mb-4">
+                <h2 className="text-lg font-bold text-red-600">CURRENT LIABILITIES</h2>
+              </div>
+              
+              {renderLoanGroup('loansOwed', 'LOANS OWED', '💸', balanceData.loansOwed, balanceData.totalLoansOwed, 'bg-red-50')}
+              
+              {balanceData.loansOwed.length === 0 && (
+                <div className="text-gray-400 text-center py-4">No liabilities</div>
+              )}
+              
+              {/* Total Liabilities */}
+              <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                <div className="flex items-center justify-between py-3 px-4 bg-red-100 rounded-lg">
+                  <span className="font-bold text-red-800">TOTAL LIABILITIES</span>
+                  <div className="flex items-center gap-6">
+                    <span className="font-bold text-red-800 text-xl w-32 text-right">{formatCurrency(balanceData.totalLiabilities)}</span>
+                    <span className="font-bold text-red-800 text-xl w-28 text-right">{formatUSD(balanceData.totalLiabilities)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* NET WORTH */}
+            <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl shadow-lg p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">💎</span>
+                    <div>
+                      <div className="text-white text-xl font-bold uppercase tracking-wide">Total Net Worth</div>
+                      <div className="text-emerald-200 text-sm">
+                        (Total Assets − Total Liabilities)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-6">
+                  <span className="text-white text-2xl font-bold w-36 text-right">
+                    {formatCurrency(balanceData.netWorth)}
+                  </span>
+                  <span className="text-white text-2xl font-bold w-32 text-right">
+                    {formatUSD(balanceData.netWorth)}
                   </span>
                 </div>
               </div>

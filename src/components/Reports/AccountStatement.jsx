@@ -90,6 +90,7 @@ const AccountStatement = ({
       const isTransfer = t.type === 'transfer';
       const isSplit = t.type === 'split';
       const isLoan = t.type === 'loan';
+      const isUnrealizedGain = t.type === 'unrealized_gain';
       const isOutgoing = isTransfer && t.fromAccount === selectedAccount;
       
       let payee, category, categoryIcon, outflow, inflow;
@@ -123,6 +124,19 @@ const AccountStatement = ({
         category = t.loan || 'Loan';
         categoryIcon = '🏦';
         const amount = Number(t.amount) || 0;
+        if (amount < 0) {
+          outflow = Math.abs(amount);
+          inflow = 0;
+        } else {
+          outflow = 0;
+          inflow = amount;
+        }
+      } else if (isUnrealizedGain) {
+        // Unrealized Gain/Loss transaction (for investments)
+        const amount = Number(t.amount) || 0;
+        payee = amount >= 0 ? 'Unrealized Gain' : 'Unrealized Loss';
+        category = 'Value Update';
+        categoryIcon = amount >= 0 ? '📈' : '📉';
         if (amount < 0) {
           outflow = Math.abs(amount);
           inflow = 0;

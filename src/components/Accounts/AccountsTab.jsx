@@ -17,9 +17,6 @@ const AccountsTab = () => {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [showArchivedAccounts, setShowArchivedAccounts] = useState(false);
   
-  // Net Worth Breakdown Modal
-  const [showNetWorthModal, setShowNetWorthModal] = useState(false);
-  
   // Account Settings Menu
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showQuickSelectModal, setShowQuickSelectModal] = useState(false);
@@ -216,16 +213,12 @@ const AccountsTab = () => {
     <div className="pb-24">
       {/* Header with buttons */}
       <div className="bg-emerald-600 p-6 text-white shadow-sm mb-4 relative">
-        {/* Total Balance - Clickable - limited width to avoid overlap */}
-        <div 
-          className="text-center cursor-pointer hover:opacity-90 active:opacity-80 transition-opacity mx-auto max-w-[200px]"
-          onClick={() => setShowNetWorthModal(true)}
-        >
+        {/* Total Balance - No longer clickable */}
+        <div className="text-center mx-auto max-w-[200px]">
           <div className="text-sm opacity-80 uppercase tracking-wider font-bold">Total Balance</div>
           <div className="text-3xl font-bold mt-1">
             {netWorthData.totalAccounts >= 0 ? '' : '-'}{formatCurrency(netWorthData.totalAccounts)}
           </div>
-          <div className="text-xs opacity-60 mt-1">Tap to see breakdown</div>
         </div>
         
         {/* Buttons - Top Right Corner - higher z-index */}
@@ -545,65 +538,6 @@ const AccountsTab = () => {
         );
       })()}
 
-      {/* Net Worth Breakdown Modal */}
-      {showNetWorthModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
-            <div className="bg-emerald-500 p-4 text-white text-center">
-              <div className="text-3xl mb-1">📊</div>
-              <div className="font-bold text-lg">Net Worth Breakdown</div>
-            </div>
-            <div className="p-6 space-y-3">
-              {/* Total Accounts */}
-              <div className="flex justify-between items-center">
-                <span className="text-gray-700">Total Accounts</span>
-                <span className="font-bold text-gray-900">{formatCurrency(netWorthData.totalAccounts)}</span>
-              </div>
-              
-              {/* Lend Loans */}
-              <div className="flex justify-between items-center">
-                <div>
-                  <span className="text-gray-700">Lend Loans</span>
-                  <div className="text-xs text-gray-500">(receivable)</div>
-                </div>
-                <span className="font-bold text-emerald-600">
-                  {netWorthData.lendTotal >= 0 ? '+' : ''}{formatCurrency(netWorthData.lendTotal)}
-                </span>
-              </div>
-              
-              {/* Borrow Loans */}
-              <div className="flex justify-between items-center">
-                <div>
-                  <span className="text-gray-700">Borrow Loans</span>
-                  <div className="text-xs text-gray-500">(liabilities)</div>
-                </div>
-                <span className="font-bold text-red-600">
-                  {netWorthData.borrowTotal >= 0 ? '' : ''}{formatCurrency(netWorthData.borrowTotal)}
-                </span>
-              </div>
-              
-              {/* Divider */}
-              <div className="border-t border-gray-200 my-3"></div>
-              
-              {/* Net Worth */}
-              <div className="flex justify-between items-center bg-emerald-50 -mx-6 px-6 py-3">
-                <span className="font-bold text-emerald-700">Net Worth</span>
-                <span className="font-bold text-2xl text-emerald-700">
-                  {netWorthData.netWorth >= 0 ? '' : '-'}{formatCurrency(netWorthData.netWorth)}
-                </span>
-              </div>
-              
-              {/* Close button */}
-              <button
-                onClick={() => setShowNetWorthModal(false)}
-                className="w-full mt-4 py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
