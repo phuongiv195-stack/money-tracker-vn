@@ -4,7 +4,6 @@ import useBackHandler from '../../hooks/useBackHandler';
 import DesktopReports from './DesktopReports';
 import AccountStatement from './AccountStatement';
 import SpendingBreakdown from './SpendingBreakdown';
-import BalanceSheet from './BalanceSheet';
 
 const ReportsTab = () => {
   const { 
@@ -244,7 +243,7 @@ const ReportsTab = () => {
       });
 
       return {
-        month: isToday ? 'Today' : `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
+        month: isToday ? 'Today' : `${month + 1}/${String(year).slice(2)}`,
         monthKey: monthStr,
         needs,
         wants,
@@ -303,7 +302,7 @@ const ReportsTab = () => {
 
       return {
         monthStr,
-        label: `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
+        label: `${month + 1}/${String(year).slice(2)}`,
         fullLabel: new Date(year, month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
         income,
         expense,
@@ -471,7 +470,7 @@ const ReportsTab = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-medium text-gray-900">-{formatCurrency(item.value)}</span>
-                <span className="text-xs text-gray-400 w-10 text-right">{item.percent < 1 && item.percent > 0 ? '<1' : item.percent.toFixed(0)}%</span>
+                <span className="text-xs text-gray-400 w-10 text-right">{item.percent.toFixed(0)}%</span>
               </div>
             </div>
           ))}
@@ -693,17 +692,6 @@ const ReportsTab = () => {
       <SpendingBreakdown 
         transactions={transactions}
         categories={categories}
-        accounts={accounts}
-        onBack={() => setDetailView(null)} 
-      />
-    );
-  }
-
-  // Balance Sheet - Desktop Full Screen
-  if (detailView === 'balance-sheet' && isDesktop) {
-    return (
-      <BalanceSheet 
-        transactions={transactions}
         accounts={accounts}
         onBack={() => setDetailView(null)} 
       />
@@ -1366,56 +1354,7 @@ const ReportsTab = () => {
           </div>
         </div>
 
-        {/* Card 6: Balance Sheet - Desktop Only */}
-        <div 
-          onClick={() => {
-            if (isDesktop) {
-              setDetailView('balance-sheet');
-            }
-          }}
-          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
-        >
-          <div className="flex gap-4 items-center">
-            <div className="w-24 h-24 bg-gradient-to-br from-amber-50 to-orange-100 rounded-xl flex items-center justify-center p-2">
-              {/* Balance Sheet Icon */}
-              <svg viewBox="0 0 64 64" className="w-full h-full">
-                {/* Background */}
-                <rect x="8" y="8" width="48" height="48" rx="4" fill="#FEF3C7" stroke="#D97706" strokeWidth="2"/>
-                {/* Cash section */}
-                <rect x="12" y="14" width="40" height="10" rx="2" fill="#10B981"/>
-                <text x="16" y="21" fontSize="6" fill="white" fontWeight="bold">💵 CASH</text>
-                <text x="42" y="21" fontSize="5" fill="white">5.5M</text>
-                {/* Checking section */}
-                <rect x="12" y="26" width="40" height="10" rx="2" fill="#3B82F6"/>
-                <text x="16" y="33" fontSize="6" fill="white" fontWeight="bold">🏦 CHECK</text>
-                <text x="42" y="33" fontSize="5" fill="white">45M</text>
-                {/* Investment section */}
-                <rect x="12" y="38" width="40" height="10" rx="2" fill="#8B5CF6"/>
-                <text x="16" y="45" fontSize="6" fill="white" fontWeight="bold">📈 INVEST</text>
-                <text x="42" y="45" fontSize="5" fill="white">120M</text>
-                {/* Total */}
-                <text x="16" y="54" fontSize="6" fill="#1E3A5F" fontWeight="bold">TOTAL</text>
-                <text x="36" y="54" fontSize="6" fill="#D97706" fontWeight="bold">170.5M</text>
-              </svg>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-gray-800">Balance Sheet</h3>
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Desktop Only</span>
-              </div>
-              <p className="text-sm text-gray-500 mt-1">
-                Net worth snapshot by Cash, Checking, Investments
-              </p>
-              {!isDesktop && (
-                <p className="text-xs text-orange-600 mt-2">
-                  🖥️ Open on desktop (screen width ≥ 1024px) to access
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Card 7: Detailed Reports - Desktop Only */}
+        {/* Card 6: Detailed Reports - Desktop Only */}
         <div 
           onClick={() => {
             if (isDesktop) {
