@@ -1,6 +1,12 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { useUserId } from '../../contexts/AuthContext';
 
 const BalanceSheet = ({ transactions, accounts, onBack }) => {
+  const userId = useUserId();
+  const configLoadedRef = useRef(false);
+  
   // Get end of last month as default
   const getLastMonthValue = () => {
     const now = new Date();
@@ -43,21 +49,68 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
   const [draggedAccount, setDraggedAccount] = useState(null);
   const [dragOverGroup, setDragOverGroup] = useState(null);
   
-  // Load config from localStorage
-  const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('balanceSheetConfig');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (!parsed.fixedAssets) parsed.fixedAssets = [];
-      return parsed;
-    }
-    return {
-      cash: [],
-      checking: [],
-      investments: [],
-      fixedAssets: []
-    };
+  // Config state - will be loaded from Firestore
+  const [config, setConfig] = useState({
+    cash: [],
+    checking: [],
+    investments: [],
+    fixedAssets: []
   });
+
+  // Load config from Firestore once
+  useEffect(() => {
+    if (!userId || configLoadedRef.current) return;
+    
+    const loadConfig = async () => {
+      try {
+        const docRef = doc(db, 'userSettings', userId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists() && docSnap.data().balanceSheetConfig) {
+          const savedConfig = docSnap.data().balanceSheetConfig;
+          // Ensure all keys exist
+          setConfig({
+            cash: savedConfig.cash || [],
+            checking: savedConfig.checking || [],
+            investments: savedConfig.investments || [],
+            fixedAssets: savedConfig.fixedAssets || []
+          });
+        }
+        configLoadedRef.current = true;
+      } catch (error) {
+        console.error('Error loading balance sheet config:', error);
+        configLoadedRef.current = true;
+      }
+    };
+    
+    loadConfig();
+  }, [userId]);
+
+  // Save config to Firestore when changed (debounced)
+  const saveConfigTimeoutRef = useRef(null);
+  useEffect(() => {
+    if (!userId || !configLoadedRef.current) return;
+    
+    // Debounce save to avoid too many writes
+    if (saveConfigTimeoutRef.current) {
+      clearTimeout(saveConfigTimeoutRef.current);
+    }
+    
+    saveConfigTimeoutRef.current = setTimeout(async () => {
+      try {
+        const docRef = doc(db, 'userSettings', userId);
+        await setDoc(docRef, { balanceSheetConfig: config }, { merge: true });
+      } catch (error) {
+        console.error('Error saving balance sheet config:', error);
+      }
+    }, 500);
+    
+    return () => {
+      if (saveConfigTimeoutRef.current) {
+        clearTimeout(saveConfigTimeoutRef.current);
+      }
+    };
+  }, [config, userId]);
 
   // Toggle group expand/collapse
   const toggleGroup = (groupKey) => {
@@ -90,12 +143,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     });
   };
 
-  // Save config to localStorage
-  useEffect(() => {
-    localStorage.setItem('balanceSheetConfig', JSON.stringify(config));
-  }, [config]);
-
-  // Save exchange rate to localStorage
+  // Save exchange rate to localStorage (this one stays local as it's display preference)
   useEffect(() => {
     localStorage.setItem('balanceSheetExchangeRate', exchangeRate.toString());
   }, [exchangeRate]);

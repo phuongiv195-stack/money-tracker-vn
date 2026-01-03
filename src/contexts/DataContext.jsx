@@ -92,9 +92,16 @@ export const DataProvider = ({ children }) => {
         const realtimeIds = new Set(realtimeTrans.map(t => t.id));
         const olderFiltered = olderTransactionsRef.current.filter(t => !realtimeIds.has(t.id));
         
-        // Combine and sort
+        // Combine and sort by date (desc), then by createdAt (desc) for same date
         const allTrans = [...realtimeTrans, ...olderFiltered]
-          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          .sort((a, b) => {
+            const dateCompare = (b.date || '').localeCompare(a.date || '');
+            if (dateCompare !== 0) return dateCompare;
+            // Same date - sort by createdAt (newer first)
+            const aTime = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+            const bTime = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+            return bTime - aTime;
+          });
         
         setTransactions(allTrans);
         setHasMoreTransactions(snapshot.docs.length >= REALTIME_LIMIT);
@@ -168,7 +175,13 @@ export const DataProvider = ({ children }) => {
         const olderFiltered = olderTransactionsRef.current.filter(t => !realtimeIds.has(t.id));
         
         const allTrans = [...realtimeTransactionsRef.current, ...olderFiltered]
-          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          .sort((a, b) => {
+            const dateCompare = (b.date || '').localeCompare(a.date || '');
+            if (dateCompare !== 0) return dateCompare;
+            const aTime = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+            const bTime = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+            return bTime - aTime;
+          });
         
         setTransactions(allTrans);
       }
