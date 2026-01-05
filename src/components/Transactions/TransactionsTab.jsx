@@ -9,7 +9,8 @@ const TransactionsTab = () => {
   const userId = useUserId();
   const { 
     transactions, 
-    accountNames, 
+    accountNames,
+    groupedAccounts,
     categoryNames, 
     tagSuggestions, 
     isLoading,
@@ -30,8 +31,9 @@ const TransactionsTab = () => {
   const [filterType, setFilterType] = useState('all');
   const [filterAccount, setFilterAccount] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
-  const [filterTime, setFilterTime] = useState('all');
+  const [filterTime, setFilterTime] = useState('month');
   const [filterTag, setFilterTag] = useState('all');
+  const [filterSpendingType, setFilterSpendingType] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
   // Debounce search query (300ms delay)
@@ -99,6 +101,17 @@ const TransactionsTab = () => {
         if (!transactionTags.includes(filterTag)) return false;
       }
 
+      // Spending type filter (want/need)
+      if (filterSpendingType !== 'all') {
+        if (t.type === 'split') {
+          // For split transactions, check if any split has the spending type
+          const hasSpendingType = t.splits?.some(s => s.spendingType === filterSpendingType);
+          if (!hasSpendingType) return false;
+        } else {
+          if (t.spendingType !== filterSpendingType) return false;
+        }
+      }
+
       if (debouncedSearch.trim()) {
         const lowerQuery = debouncedSearch.toLowerCase();
         const tagsString = (t.tags || (t.tag ? [t.tag] : [])).join(' ');
@@ -116,7 +129,7 @@ const TransactionsTab = () => {
 
       return true;
     });
-  }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, debouncedSearch]);
+  }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, filterSpendingType, debouncedSearch]);
 
   const totals = useMemo(() => {
     let income = 0, expense = 0;
@@ -159,7 +172,7 @@ const TransactionsTab = () => {
     return groups;
   }, [filteredTransactions]);
 
-  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all';
+  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all' || filterSpendingType !== 'all';
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0';
@@ -357,8 +370,12 @@ const TransactionsTab = () => {
                     className="p-2 rounded border border-gray-200 text-sm"
                   >
                     <option value="all">All Accounts</option>
-                    {accountNames.map(acc => (
-                      <option key={acc} value={acc}>{acc}</option>
+                    {groupedAccounts.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.accounts.map(acc => (
+                          <option key={acc.name} value={acc.name}>{acc.icon} {acc.name}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                   <select 
@@ -372,19 +389,30 @@ const TransactionsTab = () => {
                     ))}
                   </select>
                 </div>
-                {/* Tag Filter - Full Width */}
-                {tagSuggestions.length > 0 && (
+                {/* Tag & Wants/Needs Filter - Same Row */}
+                <div className="flex gap-2">
+                  {tagSuggestions.length > 0 && (
+                    <select 
+                      value={filterTag} 
+                      onChange={(e) => setFilterTag(e.target.value)}
+                      className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
+                    >
+                      <option value="all">🏷️ All Tags</option>
+                      {tagSuggestions.map(tag => (
+                        <option key={tag} value={tag}>🏷️ {tag}</option>
+                      ))}
+                    </select>
+                  )}
                   <select 
-                    value={filterTag} 
-                    onChange={(e) => setFilterTag(e.target.value)}
-                    className="w-full p-2 rounded border border-gray-200 text-sm"
+                    value={filterSpendingType} 
+                    onChange={(e) => setFilterSpendingType(e.target.value)}
+                    className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
                   >
-                    <option value="all">🏷️ All Tags</option>
-                    {tagSuggestions.map(tag => (
-                      <option key={tag} value={tag}>🏷️ {tag}</option>
-                    ))}
+                    <option value="all">All Needs/Wants</option>
+                    <option value="need">🔵 Needs</option>
+                    <option value="want">🟣 Wants</option>
                   </select>
-                )}
+                </div>
                 {hasActiveFilters && (
                   <button
                     onClick={() => {
@@ -393,6 +421,7 @@ const TransactionsTab = () => {
                       setFilterCategory('all');
                       setFilterTime('all');
                       setFilterTag('all');
+                      setFilterSpendingType('all');
                     }}
                     className="text-xs text-red-500 font-medium"
                   >

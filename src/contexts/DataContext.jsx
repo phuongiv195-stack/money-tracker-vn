@@ -413,7 +413,7 @@ export const DataProvider = ({ children }) => {
 
   // Category names for dropdowns
   const categoryNames = useMemo(() => {
-    return categories.map(c => c.name).filter(Boolean);
+    return categories.map(c => c.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [categories]);
 
   // Expense categories

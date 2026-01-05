@@ -66,7 +66,7 @@ const ReportsTab = () => {
   });
 
   // Colors for pie chart
-  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#9ca3af'];
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#ef4444', '#0ea5e9', '#a855f7', '#9ca3af'];
 
   // Get date range based on selection
   const getDateRangeMonths = () => {
@@ -335,8 +335,8 @@ const ReportsTab = () => {
     const { categoryData, expense } = currentMonthSummary;
     if (expense === 0) return <div className="w-24 h-24 rounded-full bg-emerald-100 flex items-center justify-center"></div>;
 
-    const chartData = categoryData.slice(0, 5);
-    const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
+    const chartData = categoryData.slice(0, 10);
+    const otherValue = categoryData.slice(10).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / expense) * 100 });
     }
@@ -422,8 +422,8 @@ const ReportsTab = () => {
 
     if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10 text-center">No data</div>;
 
-    const chartData = categoryData.slice(0, 5);
-    const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
+    const chartData = categoryData.slice(0, 12);
+    const otherValue = categoryData.slice(12).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalExpense) * 100 });
     }

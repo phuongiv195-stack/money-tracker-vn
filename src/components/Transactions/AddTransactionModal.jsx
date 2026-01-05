@@ -615,7 +615,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           
           {/* Amount + Split Button */}
           <div className="flex items-center gap-2">
-            <div className="flex-1 text-center py-2">
+            <div className="flex-1 text-center py-2 relative">
               <input
                 type="text"
                 inputMode="numeric"
@@ -624,9 +624,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                 onChange={handleAmountChange}
                 className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
                   activeTab === 'expense' ? 'text-red-500' : activeTab === 'income' ? 'text-emerald-600' : 'text-blue-600'
-                }`}
+                } ${isDuplicating && displayAmount ? 'pr-10' : ''}`}
                 
               />
+              {/* Clear amount button - only show when duplicating and has value */}
+              {isDuplicating && displayAmount && (
+                <button
+                  type="button"
+                  onClick={() => setDisplayAmount('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                  title="Clear amount"
+                >
+                  ✕
+                </button>
+              )}
             </div>
             
             {activeTab !== 'transfer' && (

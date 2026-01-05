@@ -205,19 +205,32 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
         <div className="p-4 space-y-4 overflow-y-auto">
           
           {/* Amount */}
-          <div className="text-center py-2">
+          <div className="text-center py-2 relative">
             <label className="text-xs text-gray-500 uppercase font-semibold block mb-2">Amount</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="0"
-              value={displayAmount}
-              onChange={handleAmountChange}
-              className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
-                direction === 'out' ? 'text-red-600' : 'text-emerald-600'
-              }`}
-              
-            />
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="0"
+                value={displayAmount}
+                onChange={handleAmountChange}
+                className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
+                  direction === 'out' ? 'text-red-600' : 'text-emerald-600'
+                } ${isDuplicating && displayAmount ? 'pr-10' : ''}`}
+                
+              />
+              {/* Clear amount button - only show when duplicating and has value */}
+              {isDuplicating && displayAmount && (
+                <button
+                  type="button"
+                  onClick={() => setDisplayAmount('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                  title="Clear amount"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Account */}
