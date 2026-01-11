@@ -244,13 +244,47 @@ const LoansTab = () => {
   // Loan action handlers
   const handleRenameLoan = async () => {
     if (!actionLoan || !editLoanName.trim()) return;
+    const oldName = actionLoan.name;
+    const newName = editLoanName.trim();
+    
+    if (oldName === newName) {
+      setShowEditModal(false);
+      return;
+    }
+    
     try {
       const batch = writeBatch(db);
+      
+      // Update regular loan transactions
       actionLoan.transactions.forEach(t => {
         if (!t.isSplitPart) {
-          batch.update(doc(db, 'transactions', t.id), { loan: editLoanName.trim() });
+          batch.update(doc(db, 'transactions', t.id), { loan: newName });
         }
       });
+      
+      // Update split transactions that contain this loan
+      // Find parent split transactions and update the loan name in splits array
+      const splitParentIds = new Set();
+      actionLoan.transactions.forEach(t => {
+        if (t.isSplitPart && t.parentSplitId) {
+          splitParentIds.add(t.parentSplitId);
+        }
+      });
+      
+      // Get parent split transactions and update their splits array
+      splitParentIds.forEach(parentId => {
+        const parentTx = splitTransactions.find(st => st.id === parentId);
+        if (parentTx && parentTx.splits) {
+          const updatedSplits = parentTx.splits.map(split => {
+            if (split.loan === oldName) {
+              return { ...split, loan: newName };
+            }
+            return split;
+          });
+          batch.update(doc(db, 'transactions', parentId), { splits: updatedSplits });
+        }
+      });
+      
       await batch.commit();
       setShowEditModal(false);
       setActionLoan(null);

@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { writeBatch, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useData } from '../../contexts/DataContext';
 import AddLoanTransactionModal from './AddLoanTransactionModal';
 import EditLoanTransactionModal from './EditLoanTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
@@ -8,6 +9,7 @@ import { useToast } from '../Toast/ToastProvider';
 
 const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   const toast = useToast();
+  const { splitTransactions } = useData();
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   
@@ -26,6 +28,9 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   
   // Reconcile state
   const [isReconciling, setIsReconciling] = useState(false);
+  
+  // Filter uncleared transactions during reconcile
+  const [showUnclearedOnly, setShowUnclearedOnly] = useState(false);
 
   // Smart back handler - close menu/modals first, then select mode, then close detail
   const handleBackPress = useCallback(() => {
@@ -54,9 +59,10 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   if (!loan) return null;
 
   // Calculate cleared and uncleared balance
-  const { clearedBalance, unclearedBalance } = useMemo(() => {
+  const { clearedBalance, unclearedBalance, unclearedCount } = useMemo(() => {
     let cleared = 0;
     let uncleared = 0;
+    let unclearedTxCount = 0;
     
     loan.transactions.forEach(t => {
       const amt = Number(t.amount) || 0;
@@ -64,10 +70,11 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
         cleared += amt;
       } else {
         uncleared += amt;
+        unclearedTxCount++;
       }
     });
     
-    return { clearedBalance: cleared, unclearedBalance: uncleared };
+    return { clearedBalance: cleared, unclearedBalance: uncleared, unclearedCount: unclearedTxCount };
   }, [loan.transactions]);
 
   // Group transactions by date
@@ -79,6 +86,24 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
     });
     return groups;
   }, [loan.transactions]);
+
+  // Filtered transactions for display (when showUnclearedOnly is true)
+  const displayTransactions = useMemo(() => {
+    if (!showUnclearedOnly) return loan.transactions;
+    return loan.transactions.filter(t => 
+      t.clearStatus !== 'cleared' && t.clearStatus !== 'reconciled'
+    );
+  }, [loan.transactions, showUnclearedOnly]);
+
+  // Grouped display transactions
+  const groupedDisplayTransactions = useMemo(() => {
+    const groups = {};
+    displayTransactions.forEach(t => {
+      if (!groups[t.date]) groups[t.date] = [];
+      groups[t.date].push(t);
+    });
+    return groups;
+  }, [displayTransactions]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US').format(Math.abs(amount));
@@ -96,16 +121,28 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
       return; 
     }
     
+    const newStatus = t.clearStatus === 'cleared' ? 'uncleared' : 'cleared';
+    
     try {
       // For split part transactions, update the parent split transaction
       if (t.isSplitPart && t.parentSplitId) {
         await updateDoc(doc(db, 'transactions', t.parentSplitId), { 
-          clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' 
+          clearStatus: newStatus 
         });
       } else {
         await updateDoc(doc(db, 'transactions', t.id), { 
-          clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' 
+          clearStatus: newStatus 
         });
+      }
+      
+      // Auto turn off filter when all uncleared are cleared
+      if (showUnclearedOnly && newStatus === 'cleared') {
+        const remainingUncleared = loan.transactions.filter(tx => 
+          tx.id !== t.id && tx.clearStatus !== 'cleared' && tx.clearStatus !== 'reconciled'
+        );
+        if (remainingUncleared.length === 0) {
+          setShowUnclearedOnly(false);
+        }
       }
     } catch (err) {
       toast.error('Error: ' + err.message);
@@ -229,23 +266,51 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   // Loan action handlers
   const handleEditLoan = async () => {
     if (!editLoanName.trim()) return;
-    if (editLoanName.trim() === loan.name) {
+    const oldName = loan.name;
+    const newName = editLoanName.trim();
+    
+    if (oldName === newName) {
       setShowEditLoan(false);
       return;
     }
+    
     try {
       const batch = writeBatch(db);
-      // Update all transactions with old loan name to new name
+      
+      // Update regular loan transactions
       loan.transactions.forEach(t => {
         if (!t.isSplitPart) {
-          batch.update(doc(db, 'transactions', t.id), { loan: editLoanName.trim() });
+          batch.update(doc(db, 'transactions', t.id), { loan: newName });
         }
       });
+      
+      // Update split transactions that contain this loan
+      const splitParentIds = new Set();
+      loan.transactions.forEach(t => {
+        if (t.isSplitPart && t.parentSplitId) {
+          splitParentIds.add(t.parentSplitId);
+        }
+      });
+      
+      // Get parent split transactions and update their splits array
+      splitParentIds.forEach(parentId => {
+        const parentTx = splitTransactions.find(st => st.id === parentId);
+        if (parentTx && parentTx.splits) {
+          const updatedSplits = parentTx.splits.map(split => {
+            if (split.loan === oldName) {
+              return { ...split, loan: newName };
+            }
+            return split;
+          });
+          batch.update(doc(db, 'transactions', parentId), { splits: updatedSplits });
+        }
+      });
+      
       await batch.commit();
       
       // Notify parent to update selectedLoan
       if (onLoanRenamed) {
-        onLoanRenamed(editLoanName.trim());
+        onLoanRenamed(newName);
       }
       
       setShowEditLoan(false);
@@ -383,7 +448,7 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   const isBorrow = loan.loanType === 'borrow';
 
   return (
-    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col">
+    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col no-pull-refresh">
       {/* Header - changes based on select mode */}
       {isSelectMode ? (
         <div className="bg-indigo-600 p-4 shadow-sm flex items-center justify-between sticky top-0">
@@ -503,7 +568,7 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
         {/* Reconcile button */}
         {!isSelectMode && !isReconciling && (
           <div className="mt-2 flex justify-center gap-2">
-            <button onClick={() => setIsReconciling(true)} className="bg-white/20 px-3 py-1.5 rounded-lg text-xs font-medium">Reconcile</button>
+            <button onClick={() => { setShowUnclearedOnly(false); setIsReconciling(true); }} className="bg-white/20 px-3 py-1.5 rounded-lg text-xs font-medium">Reconcile</button>
             {hasReconciledTrans && <button onClick={handleUnreconcile} className="bg-white/10 px-3 py-1.5 rounded-lg text-xs font-medium">🔓 Undo Last</button>}
           </div>
         )}
@@ -552,7 +617,13 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
                   <div className="flex items-start gap-2">
                     <span className="text-amber-500">⚠️</span>
                     <div className="text-sm text-amber-700">
-                      You have uncleared transactions. Clear them first or they will remain uncleared after reconciliation.
+                      You have {unclearedCount} uncleared transaction{unclearedCount > 1 ? 's' : ''}. Clear them first or they will remain uncleared after reconciliation.
+                      <button 
+                        onClick={() => { setShowUnclearedOnly(true); setIsReconciling(false); }}
+                        className="block mt-2 text-emerald-600 font-bold hover:underline"
+                      >
+                        👉 Click here to see uncleared transactions
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -599,14 +670,23 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
 
       {/* Transaction History */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Uncleared Filter Banner */}
+        {showUnclearedOnly && (
+          <div className="bg-amber-100 border border-amber-300 rounded-lg p-3">
+            <div className="text-sm text-amber-800 text-center">
+              <span className="font-medium">Showing {unclearedCount} uncleared transaction{unclearedCount > 1 ? 's' : ''}</span>
+            </div>
+          </div>
+        )}
+        
         <div className="text-xs font-bold text-gray-500 uppercase ml-1">
-          Transaction History ({loan.transactions.length})
+          Transaction History ({showUnclearedOnly ? displayTransactions.length : loan.transactions.length})
         </div>
 
-        {Object.keys(groupedTransactions).length === 0 ? (
+        {Object.keys(groupedDisplayTransactions).length === 0 ? (
           <div className="text-center text-gray-400 mt-10">No transactions yet</div>
         ) : (
-          Object.entries(groupedTransactions).map(([date, items]) => (
+          Object.entries(groupedDisplayTransactions).map(([date, items]) => (
             <div key={date}>
               <div className="text-xs font-bold text-gray-500 mb-2 uppercase ml-1">
                 {formatDateLabel(date)}

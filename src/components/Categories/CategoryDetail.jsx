@@ -198,7 +198,7 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
   );
 
   return (
-    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col">
+    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col no-pull-refresh">
       {/* Header - changes based on select mode */}
       {isSelectMode ? (
         <div className="bg-indigo-600 p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">

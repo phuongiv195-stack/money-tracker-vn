@@ -316,6 +316,7 @@ const AccountStatement = ({
     let reconciled = 0;
     let cleared = 0;
     let uncleared = 0;
+    let unclearedCount = 0;
 
     transactionsWithBalance.forEach(t => {
       const net = t.inflow - t.outflow;
@@ -325,13 +326,14 @@ const AccountStatement = ({
         cleared += net;
       } else {
         uncleared += net;
+        unclearedCount++;
       }
     });
 
     const working = reconciled + cleared + uncleared;
     const clearedBalance = reconciled + cleared;
 
-    return { reconciled, cleared, uncleared, working, clearedBalance };
+    return { reconciled, cleared, uncleared, working, clearedBalance, unclearedCount };
   }, [transactionsWithBalance]);
 
   // Toggle clear status
@@ -356,6 +358,17 @@ const AccountStatement = ({
       await updateDoc(doc(db, 'transactions', transaction.id), {
         clearStatus: nextStatus
       });
+      
+      // Auto turn off uncleared filter when all uncleared are cleared
+      if (statusFilter === 'uncleared' && nextStatus === 'cleared') {
+        // Check if this was the last uncleared transaction
+        const remainingUncleared = transactionsWithBalance.filter(t => 
+          t.id !== transaction.id && t.clearStatus !== 'cleared' && t.clearStatus !== 'reconciled'
+        );
+        if (remainingUncleared.length === 0) {
+          setStatusFilter('all');
+        }
+      }
     } catch (err) {
       console.error('Error updating clear status:', err);
     }
@@ -905,7 +918,7 @@ const AccountStatement = ({
                   <div className="flex items-start gap-2">
                     <span className="text-amber-500">⚠️</span>
                     <div className="text-sm text-amber-700">
-                      <div>You have uncleared transactions. Clear them first or they will remain uncleared after reconciliation.</div>
+                      <div>You have {summary.unclearedCount} uncleared transaction{summary.unclearedCount > 1 ? 's' : ''}. Clear them first or they will remain uncleared after reconciliation.</div>
                       <button 
                         onClick={() => {
                           setShowReconcileModal(false);

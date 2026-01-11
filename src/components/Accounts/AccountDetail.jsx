@@ -40,6 +40,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   
   // Loan notice modal state
   const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
+  
+  // Filter uncleared transactions during reconcile
+  const [showUnclearedOnly, setShowUnclearedOnly] = useState(false);
 
   // Smart back handler - close menu/modals first
   const handleBackPress = useCallback(() => {
@@ -96,6 +99,14 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       });
   }, [account, transactions]);
 
+  // Filtered transactions for display (when showUnclearedOnly is true)
+  const displayTransactions = useMemo(() => {
+    if (!showUnclearedOnly) return accountTransactions;
+    return accountTransactions.filter(t => 
+      t.clearStatus !== 'cleared' && t.clearStatus !== 'reconciled'
+    );
+  }, [accountTransactions, showUnclearedOnly]);
+
   const groupedTransactions = useMemo(() => {
     const groups = {};
     accountTransactions.forEach(t => {
@@ -105,12 +116,13 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     return groups;
   }, [accountTransactions]);
 
-  const { balance, clearedBalance, unclearedBalance } = useMemo(() => {
+  const { balance, clearedBalance, unclearedBalance, unclearedCount } = useMemo(() => {
     // Add starting balance for all accounts (except loan handled separately)
     const startingBalance = account.startingBalance || 0;
     let bal = startingBalance;
     let cleared = startingBalance; // Starting balance is considered cleared
     let uncleared = 0;
+    let unclearedTxCount = 0;
     
     accountTransactions.forEach(t => {
       let amt = 0;
@@ -123,9 +135,12 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       }
       bal += amt;
       if (t.clearStatus === 'cleared' || t.clearStatus === 'reconciled') cleared += amt;
-      else uncleared += amt;
+      else {
+        uncleared += amt;
+        unclearedTxCount++;
+      }
     });
-    return { balance: bal, clearedBalance: cleared, unclearedBalance: uncleared };
+    return { balance: bal, clearedBalance: cleared, unclearedBalance: uncleared, unclearedCount: unclearedTxCount };
   }, [accountTransactions, account]);
 
   // Tính Current Value cho investment accounts - cộng tất cả transactions (bao gồm unrealized_gain)
@@ -251,7 +266,19 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     e.stopPropagation();
     if (t.clearStatus === 'reconciled') { toast.warning('🔒 Locked'); return; }
     try {
-      await updateDoc(doc(db, 'transactions', t.id), { clearStatus: t.clearStatus === 'cleared' ? 'uncleared' : 'cleared' });
+      const newStatus = t.clearStatus === 'cleared' ? 'uncleared' : 'cleared';
+      await updateDoc(doc(db, 'transactions', t.id), { clearStatus: newStatus });
+      
+      // Auto turn off filter when all uncleared are cleared
+      if (showUnclearedOnly && newStatus === 'cleared') {
+        // Check if this was the last uncleared transaction
+        const remainingUncleared = accountTransactions.filter(tx => 
+          tx.id !== t.id && tx.clearStatus !== 'cleared' && tx.clearStatus !== 'reconciled'
+        );
+        if (remainingUncleared.length === 0) {
+          setShowUnclearedOnly(false);
+        }
+      }
     } catch (err) { toast.error('Error: ' + err.message); }
   };
 
@@ -424,7 +451,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col">
+    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col no-pull-refresh">
       {/* Header - changes based on select mode */}
       {isSelectMode ? (
         <div className="bg-indigo-600 p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">
@@ -494,7 +521,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 📊 Update Value
               </button>
               {!isReconciling && (
-                <button onClick={() => setIsReconciling(true)} className="bg-white/20 px-4 py-2 rounded-lg text-sm font-medium">Reconcile</button>
+                <button onClick={() => { setShowUnclearedOnly(false); setIsReconciling(true); }} className="bg-white/20 px-4 py-2 rounded-lg text-sm font-medium">Reconcile</button>
               )}
               {account.lastReconcileDate && !isReconciling && (
                 <button onClick={handleUnreconcile} className="bg-white/10 px-4 py-2 rounded-lg text-sm font-medium">🔓 Undo</button>
@@ -511,7 +538,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         )}
         {!isMarketValue && !isReconciling && (
           <div className="mt-3 flex justify-center gap-2">
-            <button onClick={() => setIsReconciling(true)} className="bg-white/20 px-4 py-2 rounded-lg text-sm font-medium">Reconcile</button>
+            <button onClick={() => { setShowUnclearedOnly(false); setIsReconciling(true); }} className="bg-white/20 px-4 py-2 rounded-lg text-sm font-medium">Reconcile</button>
             {account.lastReconcileDate && <button onClick={handleUnreconcile} className="bg-white/10 px-4 py-2 rounded-lg text-sm font-medium">🔓 Undo Last</button>}
           </div>
         )}
@@ -560,7 +587,13 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                   <div className="flex items-start gap-2">
                     <span className="text-amber-500">⚠️</span>
                     <div className="text-sm text-amber-700">
-                      You have uncleared transactions. Clear them first or they will remain uncleared after reconciliation.
+                      You have {unclearedCount} uncleared transaction{unclearedCount > 1 ? 's' : ''}. Clear them first or they will remain uncleared after reconciliation.
+                      <button 
+                        onClick={() => { setShowUnclearedOnly(true); setIsReconciling(false); }}
+                        className="block mt-2 text-emerald-600 font-bold hover:underline"
+                      >
+                        👉 Click here to see uncleared transactions
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -644,12 +677,20 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Uncleared Filter Banner */}
+        {showUnclearedOnly && (
+          <div className="bg-amber-100 border border-amber-300 rounded-lg p-3">
+            <div className="text-sm text-amber-800 text-center">
+              <span className="font-medium">Showing {unclearedCount} uncleared transaction{unclearedCount > 1 ? 's' : ''}</span>
+            </div>
+          </div>
+        )}
         {(() => {
           // Gộp transactions thành 1 list (bỏ valueHistory vì đã có unrealized_gain transactions)
           const allItems = [];
           
-          // Thêm transactions
-          accountTransactions.forEach(t => {
+          // Thêm transactions (use displayTransactions for filtered view)
+          displayTransactions.forEach(t => {
             // Lấy timestamp từ createdAt nếu có, fallback về date
             let ts;
             if (t.createdAt?.seconds) {
@@ -668,8 +709,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             });
           });
           
-          // Thêm Starting Balance cho tất cả accounts trừ loan
-          if (account.type !== 'loan' && (account.startingBalance || 0) !== 0) {
+          // Thêm Starting Balance cho tất cả accounts trừ loan (ẩn khi filter uncleared)
+          if (!showUnclearedOnly && account.type !== 'loan' && (account.startingBalance || 0) !== 0) {
             // Ưu tiên startingBalanceDate, fallback về createdAt
             let sbDate;
             if (account.startingBalanceDate) {

@@ -241,6 +241,15 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
               value={formData.account}
               onChange={(e) => setFormData({...formData, account: e.target.value})}
             >
+              {/* Show original account if it's hidden from quick select */}
+              {transaction && transaction.account && 
+               !quickSelectGroupedAccounts.some(g => g.accounts.some(a => a.name === transaction.account)) && (
+                <optgroup label="📌 Current">
+                  <option value={transaction.account}>
+                    {groupedAccounts.flatMap(g => g.accounts).find(a => a.name === transaction.account)?.icon || '💳'} {transaction.account}
+                  </option>
+                </optgroup>
+              )}
               {quickSelectGroupedAccounts.map(group => (
                 <optgroup key={group.label} label={group.label}>
                   {group.accounts.map(acc => (

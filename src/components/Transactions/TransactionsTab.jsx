@@ -329,11 +329,7 @@ const TransactionsTab = () => {
               />
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className={`p-2 rounded-lg border transition-colors ${
-                  hasActiveFilters 
-                    ? 'bg-emerald-500 text-white border-emerald-500' 
-                    : 'bg-gray-50 text-gray-600 border-gray-300'
-                }`}
+                className="p-2 bg-gray-50 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 ⚙️
               </button>

@@ -12,6 +12,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Disable pull-to-refresh only on detail views */
+.no-pull-refresh {
+  overscroll-behavior: none;
+}
+
 /* ========== FONT SIZE SETTINGS ========== */
 /* Normal size (default) - 15px for better readability */
 :root.font-size-normal {

@@ -1166,6 +1166,15 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                   value={formData.fromAccount}
                   onChange={(e) => setFormData({...formData, fromAccount: e.target.value})}
                 >
+                  {/* When editing: show original account if it's hidden from quick select */}
+                  {editTransaction && editTransaction.fromAccount && 
+                   !quickSelectGroupedAccounts.some(g => g.accounts.some(a => a.name === editTransaction.fromAccount)) && (
+                    <optgroup label="📌 Current">
+                      <option value={editTransaction.fromAccount}>
+                        {groupedAccounts.flatMap(g => g.accounts).find(a => a.name === editTransaction.fromAccount)?.icon || '💳'} {editTransaction.fromAccount}
+                      </option>
+                    </optgroup>
+                  )}
                   {quickSelectGroupedAccounts.map(group => (
                     <optgroup key={group.label} label={group.label}>
                       {group.accounts.map(acc => (
@@ -1218,15 +1227,26 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                   {accounts.length === 0 ? (
                     <option value="">Loading...</option>
                   ) : (
-                    quickSelectGroupedAccounts.map(group => (
-                      <optgroup key={group.label} label={group.label}>
-                        {group.accounts.map(acc => (
-                          <option key={acc.name} value={acc.name}>
-                            {acc.icon} {acc.name}
+                    <>
+                      {/* When editing: show original account if it's hidden from quick select */}
+                      {editTransaction && editTransaction.account && 
+                       !quickSelectGroupedAccounts.some(g => g.accounts.some(a => a.name === editTransaction.account)) && (
+                        <optgroup label="📌 Current">
+                          <option value={editTransaction.account}>
+                            {groupedAccounts.flatMap(g => g.accounts).find(a => a.name === editTransaction.account)?.icon || '💳'} {editTransaction.account}
                           </option>
-                        ))}
-                      </optgroup>
-                    ))
+                        </optgroup>
+                      )}
+                      {quickSelectGroupedAccounts.map(group => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.accounts.map(acc => (
+                            <option key={acc.name} value={acc.name}>
+                              {acc.icon} {acc.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </>
                   )}
                 </select>
               )}
