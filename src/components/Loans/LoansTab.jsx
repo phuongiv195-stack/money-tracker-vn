@@ -43,6 +43,14 @@ const LoansTab = () => {
   // Calculate loan data including splits
   const loanData = useMemo(() => {
     const loans = {};
+    
+    // First, get list of archived loan names from loan transactions
+    const archivedLoanNames = new Set();
+    loanTransactions.forEach(t => {
+      if (t.archived && t.loan) {
+        archivedLoanNames.add(t.loan);
+      }
+    });
 
     // Process regular loan transactions
     loanTransactions.forEach(t => {
@@ -51,6 +59,9 @@ const LoansTab = () => {
       
       const loanName = t.loan;
       if (!loanName) return;
+      
+      // Skip if this loan name is archived (some transactions might not have archived flag yet)
+      if (archivedLoanNames.has(loanName)) return;
 
       if (!loans[loanName]) {
         loans[loanName] = {
@@ -83,6 +94,9 @@ const LoansTab = () => {
         if (!split.isLoan || !split.loan) return;
         
         const loanName = split.loan;
+        
+        // Skip if this loan name is archived
+        if (archivedLoanNames.has(loanName)) return;
         
         if (!loans[loanName]) {
           // Check if there's an existing loan transaction with this name
@@ -153,6 +167,14 @@ const LoansTab = () => {
   // Calculate ARCHIVED loan data
   const archivedLoanData = useMemo(() => {
     const loans = {};
+    
+    // Get list of archived loan names
+    const archivedLoanNames = new Set();
+    loanTransactions.forEach(t => {
+      if (t.archived && t.loan) {
+        archivedLoanNames.add(t.loan);
+      }
+    });
 
     // Process archived loan transactions
     loanTransactions.forEach(t => {
@@ -183,6 +205,60 @@ const LoansTab = () => {
 
       loans[loanName].transactions.push(t);
     });
+    
+    // Also include split transactions for archived loans
+    splitTransactions.forEach(t => {
+      if (!t.splits || t.archived) return;
+      
+      t.splits.forEach((split, splitIndex) => {
+        if (!split.isLoan || !split.loan) return;
+        
+        const loanName = split.loan;
+        
+        // Only include if this loan name is archived
+        if (!archivedLoanNames.has(loanName)) return;
+        
+        if (!loans[loanName]) {
+          // Get loanType from existing archived loan transaction
+          const existingLoan = loanTransactions.find(lt => lt.loan === loanName && lt.archived);
+          
+          loans[loanName] = {
+            name: loanName,
+            loanType: existingLoan?.loanType || split.loanType || 'borrow',
+            balance: 0,
+            paidBack: 0,
+            received: 0,
+            transactions: []
+          };
+        }
+
+        const isIncomeParent = Number(t.totalAmount) > 0;
+        const splitAmt = Number(split.amount) || 0;
+        const signedAmt = isIncomeParent ? splitAmt : -splitAmt;
+        loans[loanName].balance += signedAmt;
+
+        if (loans[loanName].loanType === 'borrow' && signedAmt < 0) {
+          loans[loanName].paidBack += Math.abs(signedAmt);
+        } else if (loans[loanName].loanType === 'lend' && signedAmt > 0) {
+          loans[loanName].received += signedAmt;
+        }
+
+        loans[loanName].transactions.push({
+          id: `${t.id}-split-${splitIndex}-${split.loan}`,
+          type: 'loan',
+          loan: loanName,
+          loanType: loans[loanName].loanType,
+          amount: signedAmt,
+          date: t.date,
+          payee: t.payee || null,
+          memo: split.memo || null,
+          account: t.account,
+          isSplitPart: true,
+          parentSplitId: t.id,
+          clearStatus: t.clearStatus || 'uncleared'
+        });
+      });
+    });
 
     // Sort transactions by date desc
     Object.values(loans).forEach(loan => {
@@ -190,7 +266,7 @@ const LoansTab = () => {
     });
 
     return loans;
-  }, [loanTransactions]);
+  }, [loanTransactions, splitTransactions]);
 
   // Get archived loans as array
   const archivedLoans = useMemo(() => {
