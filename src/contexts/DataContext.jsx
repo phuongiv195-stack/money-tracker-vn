@@ -6,7 +6,6 @@ import { useUserId } from './AuthContext';
 const DataContext = createContext(null);
 
 // Configuration
-const REALTIME_LIMIT = 200;    // Real-time listener for recent transactions
 const LOAD_MORE_BATCH = 300;   // Load more in batches
 const MAX_TRANSACTIONS = 2000; // Maximum to keep in memory
 
@@ -70,12 +69,13 @@ export const DataProvider = ({ children }) => {
     setLoading(prev => ({ ...prev, transactions: true }));
     setErrors(prev => ({ ...prev, transactions: null }));
 
-    // Real-time query for recent transactions
+    // Real-time query for ALL transactions (no limit)
+    // This ensures NEW transactions will always trigger the listener
+    // Note: If you have >2000 transactions and performance issues, consider pagination
     const q = query(
       collection(db, 'transactions'),
       where('userId', '==', userId),
-      orderBy('date', 'desc'),
-      limit(REALTIME_LIMIT)
+      orderBy('date', 'desc')
     );
 
     const unsubscribe = onSnapshot(
@@ -104,7 +104,8 @@ export const DataProvider = ({ children }) => {
           });
         
         setTransactions(allTrans);
-        setHasMoreTransactions(snapshot.docs.length >= REALTIME_LIMIT);
+        // Since we're loading all transactions, no need for pagination
+        setHasMoreTransactions(false);
         setLoading(prev => ({ ...prev, transactions: false }));
       },
       (error) => {

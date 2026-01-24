@@ -207,7 +207,18 @@ const AccountsTab = () => {
     }
   };
 
-  if (isLoading) return <div className="p-4 text-center">Loading accounts...</div>;
+  // Wait for both accounts AND transactions to load before showing balance
+  // This prevents showing incorrect starting balance before transactions sync
+  if (isLoading || (accounts.length > 0 && transactions.length === 0)) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto mb-3"></div>
+          <div className="text-gray-600">Loading account data...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pb-24">

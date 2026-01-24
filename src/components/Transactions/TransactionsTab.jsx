@@ -621,7 +621,7 @@ const TransactionsTab = () => {
         )}
 
         {/* Load More Button */}
-        {hasMoreTransactions && !isLoading && (
+        {hasMoreTransactions && !isLoading && transactionCount > 0 && (
           <div className="p-4 text-center">
             <button
               onClick={loadMoreTransactions}
