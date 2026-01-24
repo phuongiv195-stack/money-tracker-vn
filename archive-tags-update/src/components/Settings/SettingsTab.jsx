@@ -11,18 +11,14 @@ export default function SettingsTab() {
   const { settings, updateFontSize } = useSettings();
   const { currentUser, logout } = useAuth();
   const { 
-    tagSuggestions, 
-    userTags,
+    tagSuggestions,
+    activeTagSuggestions,
+    archivedTags,
     addUserTag, 
     removeUserTag, 
     renameUserTag,
     archiveUserTag,
     restoreUserTag,
-    archivedTags,
-    tagHierarchy,
-    addSubTag,
-    removeSubTag,
-    renameSubTag,
     transactions,
     accounts,
     categories,
@@ -40,12 +36,7 @@ export default function SettingsTab() {
   const [newTagName, setNewTagName] = useState('');
   const [tagLoading, setTagLoading] = useState(false);
   const [newTagInput, setNewTagInput] = useState(''); // For adding new tag
-  const [showArchivedTags, setShowArchivedTags] = useState(false); // Toggle archived tags
-  const [addingSubTagFor, setAddingSubTagFor] = useState(null); // Parent tag for adding sub tag
-  const [newSubTagInput, setNewSubTagInput] = useState(''); // Sub tag name input
-  const [expandedTags, setExpandedTags] = useState({}); // Track which tags are expanded
-  const [editingSubTag, setEditingSubTag] = useState(null); // { parent: 'Trip', subTag: 'Hotel' }
-  const [newSubTagName, setNewSubTagName] = useState(''); // New name for sub tag being edited
+  const [showArchivedTags, setShowArchivedTags] = useState(false); // Toggle archived tags view
 
   // Export/Import state
   const [exporting, setExporting] = useState(false);
@@ -213,6 +204,39 @@ export default function SettingsTab() {
       await removeUserTag(tagName);
       
       toast.success(`Deleted tag "${tagName}" from ${updatedCount} transactions`);
+    } catch (error) {
+      toast.error('Error: ' + error.message);
+    }
+    setTagLoading(false);
+  };
+
+  // Archive tag (hide from new transactions but keep in history)
+  const handleArchiveTag = async (tagName) => {
+    const confirmed = await toast.confirm({
+      title: 'Archive Tag',
+      message: `Archive tag "${tagName}"? It will be hidden when adding new transactions but existing transactions will keep this tag.`,
+      confirmText: 'Archive',
+      type: 'warning'
+    });
+    
+    if (!confirmed) return;
+
+    setTagLoading(true);
+    try {
+      await archiveUserTag(tagName);
+      toast.success(`Archived tag "${tagName}"`);
+    } catch (error) {
+      toast.error('Error: ' + error.message);
+    }
+    setTagLoading(false);
+  };
+
+  // Restore archived tag
+  const handleRestoreTag = async (tagName) => {
+    setTagLoading(true);
+    try {
+      await restoreUserTag(tagName);
+      toast.success(`Restored tag "${tagName}"`);
     } catch (error) {
       toast.error('Error: ' + error.message);
     }
@@ -498,7 +522,7 @@ export default function SettingsTab() {
           <div className="px-4 py-3 border-b border-gray-100">
             <h2 className="font-medium text-gray-800">🏷️ Manage Tags</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              Add, rename or delete tags
+              Add, rename, archive or delete tags
             </p>
           </div>
 
@@ -523,23 +547,43 @@ export default function SettingsTab() {
             </div>
           </div>
 
-          {userTags.length === 0 ? (
-            <div className="px-4 py-6 text-center text-gray-400">
-              <div className="text-2xl mb-2">🏷️</div>
-              <p className="text-sm">No tags yet</p>
-              <p className="text-xs mt-1">Add a tag above or create when adding transactions</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {userTags.map(tag => {
-                const subTags = tagHierarchy[tag] || [];
-                const hasSubTags = subTags.length > 0;
-                const isExpanded = expandedTags[tag];
-                
-                return (
-                  <div key={tag}>
-                    {/* Parent Tag Row */}
-                    <div className="px-4 py-3">
+          {/* Active/Archived Toggle */}
+          <div className="px-4 py-2 border-b border-gray-100 flex gap-2">
+            <button
+              onClick={() => setShowArchivedTags(false)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                !showArchivedTags 
+                  ? 'bg-emerald-500 text-white' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Active ({activeTagSuggestions.length})
+            </button>
+            <button
+              onClick={() => setShowArchivedTags(true)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                showArchivedTags 
+                  ? 'bg-amber-500 text-white' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Archived ({archivedTags.length})
+            </button>
+          </div>
+
+          {/* Active Tags List */}
+          {!showArchivedTags && (
+            <>
+              {activeTagSuggestions.length === 0 ? (
+                <div className="px-4 py-6 text-center text-gray-400">
+                  <div className="text-2xl mb-2">🏷️</div>
+                  <p className="text-sm">No active tags</p>
+                  <p className="text-xs mt-1">Add a tag above or create when adding transactions</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {activeTagSuggestions.map(tag => (
+                    <div key={tag} className="px-4 py-3">
                       {editingTag === tag ? (
                         <div className="flex items-center gap-2">
                           <input
@@ -567,32 +611,10 @@ export default function SettingsTab() {
                       ) : (
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            {/* Expand/Collapse button if has sub tags */}
-                            {hasSubTags ? (
-                              <button
-                                onClick={() => setExpandedTags(prev => ({ ...prev, [tag]: !prev[tag] }))}
-                                className="text-gray-400 hover:text-gray-600 w-5"
-                              >
-                                {isExpanded ? '▼' : '▶'}
-                              </button>
-                            ) : (
-                              <span className="w-5"></span>
-                            )}
                             <span className="text-emerald-500">🏷️</span>
                             <span className="text-gray-800">{tag}</span>
-                            {hasSubTags && (
-                              <span className="text-xs text-gray-400">({subTags.length})</span>
-                            )}
                           </div>
                           <div className="flex items-center gap-1">
-                            {/* Add Sub Tag button */}
-                            <button
-                              onClick={() => { setAddingSubTagFor(tag); setNewSubTagInput(''); }}
-                              className="p-2 text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors"
-                              title="Add Sub Tag"
-                            >
-                              ➕
-                            </button>
                             <button
                               onClick={() => { setEditingTag(tag); setNewTagName(tag); }}
                               className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
@@ -601,10 +623,7 @@ export default function SettingsTab() {
                               ✏️
                             </button>
                             <button
-                              onClick={async () => {
-                                await archiveUserTag(tag);
-                                toast.success(`Archived "${tag}"`);
-                              }}
+                              onClick={() => handleArchiveTag(tag)}
                               disabled={tagLoading}
                               className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50"
                               title="Archive"
@@ -623,177 +642,62 @@ export default function SettingsTab() {
                         </div>
                       )}
                     </div>
-                    
-                    {/* Add Sub Tag Input */}
-                    {addingSubTagFor === tag && (
-                      <div className="px-4 py-2 pl-12 bg-gray-50 border-t border-gray-100">
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Archived Tags List */}
+          {showArchivedTags && (
+            <>
+              {archivedTags.length === 0 ? (
+                <div className="px-4 py-6 text-center text-gray-400">
+                  <div className="text-2xl mb-2">📦</div>
+                  <p className="text-sm">No archived tags</p>
+                  <p className="text-xs mt-1">Archived tags won't show when adding new transactions</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {archivedTags.map(tag => (
+                    <div key={tag} className="px-4 py-3">
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={newSubTagInput}
-                            onChange={(e) => setNewSubTagInput(e.target.value)}
-                            placeholder={`Add sub tag under "${tag}"...`}
-                            className="flex-1 p-2 border border-gray-300 rounded-lg outline-none focus:border-emerald-500 bg-white text-sm"
-                            autoFocus
-                            onKeyDown={async (e) => {
-                              if (e.key === 'Enter' && newSubTagInput.trim()) {
-                                await addSubTag(tag, newSubTagInput.trim());
-                                toast.success(`Added "${tag} > ${newSubTagInput.trim()}"`);
-                                setNewSubTagInput('');
-                                setAddingSubTagFor(null);
-                                setExpandedTags(prev => ({ ...prev, [tag]: true }));
-                              }
-                            }}
-                          />
+                          <span className="text-amber-500">📦</span>
+                          <span className="text-gray-500">{tag}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={async () => {
-                              if (newSubTagInput.trim()) {
-                                await addSubTag(tag, newSubTagInput.trim());
-                                toast.success(`Added "${tag} > ${newSubTagInput.trim()}"`);
-                                setNewSubTagInput('');
-                                setAddingSubTagFor(null);
-                                setExpandedTags(prev => ({ ...prev, [tag]: true }));
-                              }
-                            }}
-                            disabled={!newSubTagInput.trim()}
-                            className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-50"
+                            onClick={() => handleRestoreTag(tag)}
+                            disabled={tagLoading}
+                            className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-200 disabled:opacity-50 flex items-center gap-1"
+                            title="Restore"
                           >
-                            Add
+                            <span>↩️</span>
+                            Restore
                           </button>
                           <button
-                            onClick={() => { setAddingSubTagFor(null); setNewSubTagInput(''); }}
-                            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200"
+                            onClick={() => handleDeleteTag(tag)}
+                            disabled={tagLoading}
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Delete permanently"
                           >
-                            ✕
+                            🗑️
                           </button>
                         </div>
                       </div>
-                    )}
-                    
-                    {/* Sub Tags List */}
-                    {isExpanded && subTags.length > 0 && (
-                      <div className="bg-gray-50 border-t border-gray-100">
-                        {subTags.map(subTag => (
-                          <div key={subTag} className="px-4 py-2 pl-12 flex items-center justify-between border-b border-gray-100 last:border-b-0">
-                            {editingSubTag?.parent === tag && editingSubTag?.subTag === subTag ? (
-                              /* Edit Mode */
-                              <div className="flex items-center gap-2 flex-1">
-                                <span className="text-gray-400">└</span>
-                                <input
-                                  type="text"
-                                  value={newSubTagName}
-                                  onChange={(e) => setNewSubTagName(e.target.value)}
-                                  className="flex-1 p-1.5 border border-gray-300 rounded-lg outline-none focus:border-emerald-500 text-sm"
-                                  autoFocus
-                                  onKeyDown={async (e) => {
-                                    if (e.key === 'Enter' && newSubTagName.trim()) {
-                                      await renameSubTag(tag, subTag, newSubTagName.trim());
-                                      toast.success(`Renamed to "${tag} > ${newSubTagName.trim()}"`);
-                                      setEditingSubTag(null);
-                                      setNewSubTagName('');
-                                    } else if (e.key === 'Escape') {
-                                      setEditingSubTag(null);
-                                      setNewSubTagName('');
-                                    }
-                                  }}
-                                />
-                                <button
-                                  onClick={async () => {
-                                    if (newSubTagName.trim()) {
-                                      await renameSubTag(tag, subTag, newSubTagName.trim());
-                                      toast.success(`Renamed to "${tag} > ${newSubTagName.trim()}"`);
-                                      setEditingSubTag(null);
-                                      setNewSubTagName('');
-                                    }
-                                  }}
-                                  disabled={!newSubTagName.trim()}
-                                  className="px-2 py-1 bg-emerald-500 text-white rounded text-sm hover:bg-emerald-600 disabled:opacity-50"
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  onClick={() => { setEditingSubTag(null); setNewSubTagName(''); }}
-                                  className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-sm hover:bg-gray-200"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            ) : (
-                              /* Display Mode */
-                              <>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-gray-400">└</span>
-                                  <span className="text-gray-400">🏷️</span>
-                                  <span className="text-gray-600 text-sm">{subTag}</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    onClick={() => { setEditingSubTag({ parent: tag, subTag }); setNewSubTagName(subTag); }}
-                                    className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                                    title="Edit Sub Tag"
-                                  >
-                                    ✏️
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      await removeSubTag(tag, subTag);
-                                      toast.success(`Removed "${tag} > ${subTag}"`);
-                                    }}
-                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                    title="Remove Sub Tag"
-                                  >
-                                    🗑️
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          
-          {/* Archived Tags Section */}
-          {archivedTags.length > 0 && (
-            <div className="border-t border-gray-200">
-              <button
-                onClick={() => setShowArchivedTags(!showArchivedTags)}
-                className="w-full px-4 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
-              >
-                <span className="text-sm font-medium text-gray-600">
-                  📦 Archived Tags ({archivedTags.length})
-                </span>
-                <span className="text-gray-400">
-                  {showArchivedTags ? '▼' : '▶'}
-                </span>
-              </button>
-              
-              {showArchivedTags && (
-                <div className="divide-y divide-gray-100 bg-gray-50">
-                  {archivedTags.map(tag => (
-                    <div key={tag} className="px-4 py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-400">🏷️</span>
-                        <span className="text-gray-500">{tag}</span>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          await restoreUserTag(tag);
-                          toast.success(`Restored "${tag}"`);
-                        }}
-                        className="px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors font-medium"
-                      >
-                        ↩️ Restore
-                      </button>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
+              
+              {/* Info about archived tags */}
+              <div className="px-4 py-3 bg-amber-50 border-t border-amber-100">
+                <p className="text-xs text-amber-700">
+                  💡 Archived tags won't appear when adding new transactions, but existing transactions will keep them.
+                </p>
+              </div>
+            </>
           )}
         </div>
 

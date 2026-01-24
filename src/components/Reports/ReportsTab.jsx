@@ -9,7 +9,9 @@ import BalanceSheet from './BalanceSheet';
 const ReportsTab = () => {
   const { 
     transactions, 
-    tagSuggestions, 
+    tagSuggestions,
+    userTags,
+    tagHierarchy,
     isLoading, 
     accounts, 
     categories, 
@@ -732,12 +734,25 @@ const ReportsTab = () => {
 
   // Tag Report Detail View
   if (detailView === 'tag-report') {
-    // Calculate tag report data
+    // Check if selected tag is a parent tag with sub tags
+    const isParentTag = selectedTag && userTags.includes(selectedTag);
+    const subTags = isParentTag ? (tagHierarchy[selectedTag] || []) : [];
+    const hasSubTags = subTags.length > 0;
+    
+    // Get all tags to filter by (parent + all sub tags if parent selected)
+    const tagsToFilter = selectedTag 
+      ? hasSubTags 
+        ? [selectedTag, ...subTags.map(st => `${selectedTag} > ${st}`)]
+        : [selectedTag]
+      : [];
+    
+    // Calculate tag report data - filter by parent tag OR any of its sub tags
     const tagTransactions = selectedTag 
       ? transactions.filter(t => {
           // Support both old 'tag' and new 'tags' fields
           const transactionTags = t.tags || (t.tag ? [t.tag] : []);
-          return transactionTags.includes(selectedTag);
+          // Match if transaction has parent tag, or any sub tag format
+          return tagsToFilter.some(filterTag => transactionTags.includes(filterTag));
         })
       : [];
     
@@ -750,12 +765,49 @@ const ReportsTab = () => {
     const categoryTransactions = {}; // Store transactions by category
     const loanBreakdown = {};
     const loanTransactionsList = []; // Store loan transactions
+    
+    // Sub tag breakdown (only if parent tag with sub tags)
+    const subTagBreakdown = {}; // { subTagName: { expense: 0, income: 0, transactions: [] } }
+    if (hasSubTags) {
+      // Initialize with "No Sub Tag" for parent-only transactions
+      subTagBreakdown['(No Sub Tag)'] = { expense: 0, income: 0, transactions: [] };
+      subTags.forEach(st => {
+        subTagBreakdown[st] = { expense: 0, income: 0, transactions: [] };
+      });
+    }
 
     tagTransactions.forEach(t => {
+      // Determine which sub tag this transaction belongs to (if tracking sub tags)
+      const getSubTagForTransaction = (trans) => {
+        if (!hasSubTags) return null;
+        const transactionTags = trans.tags || (trans.tag ? [trans.tag] : []);
+        // Check if has specific sub tag
+        for (const st of subTags) {
+          const fullSubTag = `${selectedTag} > ${st}`;
+          if (transactionTags.includes(fullSubTag)) {
+            return st;
+          }
+        }
+        // Has parent tag but no sub tag
+        if (transactionTags.includes(selectedTag)) {
+          return '(No Sub Tag)';
+        }
+        return '(No Sub Tag)';
+      };
+      
+      const subTagKey = getSubTagForTransaction(t);
+      
       if (t.type === 'split') {
         const amt = Number(t.totalAmount) || 0;
         if (amt > 0) tagIncome += amt;
         else tagExpense += Math.abs(amt);
+        
+        // Track sub tag
+        if (hasSubTags && subTagKey) {
+          if (amt > 0) subTagBreakdown[subTagKey].income += amt;
+          else subTagBreakdown[subTagKey].expense += Math.abs(amt);
+          subTagBreakdown[subTagKey].transactions.push(t);
+        }
         
         // Process splits
         t.splits?.forEach(s => {
@@ -796,6 +848,13 @@ const ReportsTab = () => {
           loanBreakdown[t.loan] = (loanBreakdown[t.loan] || 0) + amt;
         }
         loanTransactionsList.push(t);
+        
+        // Track sub tag for loans
+        if (hasSubTags && subTagKey) {
+          if (amt < 0) subTagBreakdown[subTagKey].expense += Math.abs(amt);
+          else subTagBreakdown[subTagKey].income += amt;
+          subTagBreakdown[subTagKey].transactions.push(t);
+        }
       } else if (t.type === 'income') {
         tagIncome += Math.abs(Number(t.amount));
         if (t.category) {
@@ -807,6 +866,11 @@ const ReportsTab = () => {
             displayAmount: Math.abs(Number(t.amount)),
             displayName: t.payee || t.category
           });
+        }
+        // Track sub tag
+        if (hasSubTags && subTagKey) {
+          subTagBreakdown[subTagKey].income += Math.abs(Number(t.amount));
+          subTagBreakdown[subTagKey].transactions.push(t);
         }
       } else if (t.type === 'expense') {
         tagExpense += Math.abs(Number(t.amount));
@@ -820,6 +884,11 @@ const ReportsTab = () => {
             displayName: t.payee || t.category
           });
         }
+        // Track sub tag
+        if (hasSubTags && subTagKey) {
+          subTagBreakdown[subTagKey].expense += Math.abs(Number(t.amount));
+          subTagBreakdown[subTagKey].transactions.push(t);
+        }
       }
     });
 
@@ -832,6 +901,13 @@ const ReportsTab = () => {
     const sortedLoans = Object.entries(loanBreakdown)
       .filter(([_, v]) => v !== 0)
       .sort((a, b) => b[1] - a[1]);
+    
+    // Sort sub tags by expense (highest first), filter out empty ones
+    const sortedSubTags = hasSubTags 
+      ? Object.entries(subTagBreakdown)
+          .filter(([_, data]) => data.expense > 0 || data.income > 0 || data.transactions.length > 0)
+          .sort((a, b) => b[1].expense - a[1].expense)
+      : [];
 
     // Toggle category expansion
     const toggleCategory = (cat) => {
@@ -958,6 +1034,103 @@ const ReportsTab = () => {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* 3.5. By Sub Tag - Only show if parent tag has sub tags */}
+              {hasSubTags && sortedSubTags.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-center gap-4 mb-3">
+                    <h3 className="font-semibold text-gray-800">🏷️ By Sub Tag</h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          const allExpanded = { ...expandedCategories };
+                          sortedSubTags.forEach(([subTagName]) => { 
+                            allExpanded[`subtag_${subTagName}`] = true; 
+                          });
+                          setExpandedCategories(allExpanded);
+                        }}
+                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                      >
+                        Expand All
+                      </button>
+                      <button
+                        onClick={() => {
+                          const collapsed = { ...expandedCategories };
+                          sortedSubTags.forEach(([subTagName]) => { 
+                            collapsed[`subtag_${subTagName}`] = false; 
+                          });
+                          setExpandedCategories(collapsed);
+                        }}
+                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                      >
+                        Collapse All
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-0">
+                    {sortedSubTags.map(([subTagName, data]) => {
+                      const isSubExpanded = expandedCategories[`subtag_${subTagName}`];
+                      const netAmount = data.expense - data.income;
+                      
+                      return (
+                        <div key={subTagName}>
+                          {/* Sub Tag Row */}
+                          <div 
+                            className="flex items-center py-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                            onClick={() => setExpandedCategories(prev => ({
+                              ...prev,
+                              [`subtag_${subTagName}`]: !prev[`subtag_${subTagName}`]
+                            }))}
+                          >
+                            <span className={`text-gray-400 text-xs w-4 transition-transform ${isSubExpanded ? 'rotate-90' : ''}`}>▶</span>
+                            <span className="text-gray-700 min-w-0 flex-shrink">
+                              {subTagName === '(No Sub Tag)' ? (
+                                <span className="text-gray-400 italic">{subTagName}</span>
+                              ) : (
+                                <span>└ {subTagName}</span>
+                              )}
+                            </span>
+                            <span className="text-gray-400 text-xs mx-2">({data.transactions.length})</span>
+                            <span className="text-red-600 font-medium ml-auto">{formatCurrency(data.expense)}</span>
+                          </div>
+                          
+                          {/* Expanded Sub Tag Transactions */}
+                          {isSubExpanded && data.transactions.length > 0 && (
+                            <div className="border-l-2 border-emerald-200 ml-2 bg-emerald-50/30">
+                              {data.transactions
+                                .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                .map((t, idx) => {
+                                  const amt = t.type === 'split' 
+                                    ? Math.abs(Number(t.totalAmount) || 0)
+                                    : Math.abs(Number(t.amount) || 0);
+                                  const isIncome = t.type === 'income' || (t.type === 'split' && Number(t.totalAmount) > 0);
+                                  
+                                  return (
+                                    <div key={t.id || idx} className="flex items-center py-1.5 pl-3 pr-1 text-sm border-b border-gray-100 last:border-b-0">
+                                      <span className="text-gray-600 min-w-0 flex-shrink truncate">
+                                        {t.payee || t.category || (t.type === 'loan' ? t.loan : 'Transaction')}
+                                      </span>
+                                      <span className="text-gray-400 text-xs mx-2 flex-shrink-0">{t.date}</span>
+                                      <span className={`ml-auto flex-shrink-0 ${isIncome ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {isIncome ? '+' : '-'}{formatCurrency(amt)}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Sub Tag Summary */}
+                  <div className="mt-3 pt-3 border-t border-gray-200 text-sm text-gray-500">
+                    Total: {sortedSubTags.length} sub tags • {tagTransactions.length} transactions
                   </div>
                 </div>
               )}
