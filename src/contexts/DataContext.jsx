@@ -17,7 +17,7 @@ export const DataProvider = ({ children }) => {
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [userTags, setUserTags] = useState([]); // Tags saved by user
+  const [userTags, setUserTags] = useState([]); // Tags saved by user - now supports {name, parentTagId}
   
   // Quick Select Accounts - stored in localStorage (per device)
   const [hiddenAccounts, setHiddenAccounts] = useState(() => {
@@ -287,13 +287,13 @@ export const DataProvider = ({ children }) => {
 
   // User Tags listener - tags saved independently (not just from transactions)
   const [archivedTags, setArchivedTags] = useState([]);
-  const [tagHierarchy, setTagHierarchy] = useState({}); // { parentTag: [childTags] }
+  const [archivedTagObjects, setArchivedTagObjects] = useState([]);
   
   useEffect(() => {
     if (!userId) {
       setUserTags([]);
       setArchivedTags([]);
-      setTagHierarchy({});
+      setArchivedTagObjects([]);
       return;
     }
 
@@ -304,18 +304,18 @@ export const DataProvider = ({ children }) => {
         if (docSnap.exists()) {
           setUserTags(docSnap.data().tags || []);
           setArchivedTags(docSnap.data().archivedTags || []);
-          setTagHierarchy(docSnap.data().tagHierarchy || {});
+          setArchivedTagObjects(docSnap.data().archivedTagObjects || []);
         } else {
           setUserTags([]);
           setArchivedTags([]);
-          setTagHierarchy({});
+          setArchivedTagObjects([]);
         }
       },
       (error) => {
         console.error('UserTags listener error:', error);
         setUserTags([]);
         setArchivedTags([]);
-        setTagHierarchy({});
+        setArchivedTagObjects([]);
       }
     );
 
@@ -513,22 +513,15 @@ export const DataProvider = ({ children }) => {
 
   // Tag suggestions - combine userTags (saved separately) and tags from transactions
   // Excludes archived tags from suggestions
-  // Includes sub tags with parent prefix (e.g., "Trip2025 > Hotel")
+  // Now supports both old string format and new object format {id, name, parentTagId}
   const tagSuggestions = useMemo(() => {
     const tags = new Set();
     
     // Add user-saved tags (excluding archived)
-    userTags.forEach(tag => tags.add(tag));
-    
-    // Add sub tags with parent prefix
-    Object.entries(tagHierarchy).forEach(([parent, children]) => {
-      if (!archivedTags.includes(parent)) {
-        children.forEach(child => {
-          if (!archivedTags.includes(child)) {
-            tags.add(`${parent} > ${child}`);
-          }
-        });
-      }
+    // Support both old string format and new object format
+    userTags.forEach(tag => {
+      const tagName = typeof tag === 'string' ? tag : tag.name;
+      if (tagName) tags.add(tagName);
     });
     
     // Add tags from transactions (supports both old 'tag' and new 'tags' fields)
@@ -543,36 +536,41 @@ export const DataProvider = ({ children }) => {
     });
     
     return Array.from(tags).sort();
-  }, [transactions, userTags, archivedTags, tagHierarchy]);
+  }, [transactions, userTags, archivedTags]);
 
-  // Get all tags including sub tags (flat list for filtering/reports)
-  const allTagsFlat = useMemo(() => {
-    const tags = new Set();
-    
-    // Add parent tags
-    userTags.forEach(tag => tags.add(tag));
-    
-    // Add sub tags (both with and without prefix)
-    Object.entries(tagHierarchy).forEach(([parent, children]) => {
-      children.forEach(child => {
-        tags.add(child); // Just the child name
-        tags.add(`${parent} > ${child}`); // With prefix
-      });
-    });
-    
-    // Add from transactions
-    transactions.forEach(t => {
-      if (t.tag) tags.add(t.tag);
-      if (t.tags && Array.isArray(t.tags)) {
-        t.tags.forEach(tag => tags.add(tag));
-      }
-    });
-    
-    return Array.from(tags).sort();
-  }, [transactions, userTags, tagHierarchy]);
+  // Get parent tags (tags without parentTagId)
+  const parentTags = useMemo(() => {
+    return userTags
+      .map(tag => typeof tag === 'string' ? { id: tag, name: tag } : tag)
+      .filter(tag => !tag.parentTagId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [userTags]);
+
+  // Get archived parent tags (for hierarchical display in archived section)
+  const archivedParentTags = useMemo(() => {
+    return archivedTagObjects
+      .filter(tag => !tag.parentTagId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [archivedTagObjects]);
+
+  // Get sub-tags for a parent tag
+  const getSubTags = useCallback((parentTagId) => {
+    return userTags
+      .map(tag => typeof tag === 'string' ? null : tag)
+      .filter(tag => tag && tag.parentTagId === parentTagId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [userTags]);
+
+  // Get archived sub-tags for a parent tag
+  const getArchivedSubTags = useCallback((parentTagId) => {
+    return archivedTagObjects
+      .filter(tag => tag.parentTagId === parentTagId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [archivedTagObjects]);
 
   // Function to add a new tag to userTags
-  const addUserTag = useCallback(async (newTag) => {
+  // Can be a parent tag (no parentTagId) or sub-tag (with parentTagId)
+  const addUserTag = useCallback(async (newTag, parentTagId = null) => {
     if (!userId || !newTag) return;
     const trimmedTag = newTag.trim();
     if (!trimmedTag) return;
@@ -582,108 +580,37 @@ export const DataProvider = ({ children }) => {
       const docSnap = await getDoc(docRef);
       const currentTags = docSnap.exists() ? (docSnap.data().tags || []) : [];
       
-      // Check if tag already exists
-      if (currentTags.includes(trimmedTag)) {
-        return; // Already exists, no need to save
+      // Normalize current tags to object format
+      const normalizedTags = currentTags.map(tag => 
+        typeof tag === 'string' ? { id: tag, name: tag } : tag
+      );
+      
+      // Check if tag already exists (by name and parent)
+      const exists = normalizedTags.some(t => 
+        t.name === trimmedTag && (t.parentTagId || null) === parentTagId
+      );
+      
+      if (exists) {
+        return; // Already exists
       }
       
-      const updatedTags = [...currentTags, trimmedTag].sort();
+      // Create new tag object
+      const newTagObj = {
+        id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: trimmedTag,
+        ...(parentTagId && { parentTagId })
+      };
+      
+      const updatedTags = [...normalizedTags, newTagObj];
       await setDoc(docRef, { tags: updatedTags }, { merge: true });
-      console.log('Tag saved successfully:', trimmedTag);
+      console.log('Tag saved successfully:', trimmedTag, parentTagId ? `(parent: ${parentTagId})` : '');
     } catch (error) {
       console.error('Error adding tag:', error);
     }
   }, [userId]);
 
-  // Function to add a sub tag under a parent tag
-  const addSubTag = useCallback(async (parentTag, subTagName) => {
-    if (!userId || !parentTag || !subTagName) return;
-    const trimmedSub = subTagName.trim();
-    if (!trimmedSub) return;
-    
-    try {
-      const docRef = doc(db, 'userTags', userId);
-      const docSnap = await getDoc(docRef);
-      const currentHierarchy = docSnap.exists() ? (docSnap.data().tagHierarchy || {}) : {};
-      
-      // Get current children of this parent
-      const currentChildren = currentHierarchy[parentTag] || [];
-      
-      // Check if sub tag already exists under this parent
-      if (currentChildren.includes(trimmedSub)) {
-        return; // Already exists
-      }
-      
-      // Add sub tag
-      const updatedChildren = [...currentChildren, trimmedSub].sort();
-      const updatedHierarchy = {
-        ...currentHierarchy,
-        [parentTag]: updatedChildren
-      };
-      
-      await setDoc(docRef, { tagHierarchy: updatedHierarchy }, { merge: true });
-      console.log('Sub tag saved successfully:', `${parentTag} > ${trimmedSub}`);
-    } catch (error) {
-      console.error('Error adding sub tag:', error);
-    }
-  }, [userId]);
-
-  // Function to remove a sub tag
-  const removeSubTag = useCallback(async (parentTag, subTagName) => {
-    if (!userId || !parentTag || !subTagName) return;
-    
-    try {
-      const docRef = doc(db, 'userTags', userId);
-      const docSnap = await getDoc(docRef);
-      const currentHierarchy = docSnap.exists() ? (docSnap.data().tagHierarchy || {}) : {};
-      
-      const currentChildren = currentHierarchy[parentTag] || [];
-      const updatedChildren = currentChildren.filter(c => c !== subTagName);
-      
-      let updatedHierarchy;
-      if (updatedChildren.length === 0) {
-        // Remove the parent key if no children left
-        const { [parentTag]: removed, ...rest } = currentHierarchy;
-        updatedHierarchy = rest;
-      } else {
-        updatedHierarchy = {
-          ...currentHierarchy,
-          [parentTag]: updatedChildren
-        };
-      }
-      
-      await setDoc(docRef, { tagHierarchy: updatedHierarchy }, { merge: true });
-    } catch (error) {
-      console.error('Error removing sub tag:', error);
-    }
-  }, [userId]);
-
-  // Function to rename a sub tag
-  const renameSubTag = useCallback(async (parentTag, oldSubTag, newSubTag) => {
-    if (!userId || !parentTag || !oldSubTag || !newSubTag) return;
-    const trimmedNew = newSubTag.trim();
-    if (!trimmedNew || oldSubTag === trimmedNew) return;
-    
-    try {
-      const docRef = doc(db, 'userTags', userId);
-      const docSnap = await getDoc(docRef);
-      const currentHierarchy = docSnap.exists() ? (docSnap.data().tagHierarchy || {}) : {};
-      
-      const currentChildren = currentHierarchy[parentTag] || [];
-      const updatedChildren = currentChildren.map(c => c === oldSubTag ? trimmedNew : c).sort();
-      
-      const updatedHierarchy = {
-        ...currentHierarchy,
-        [parentTag]: updatedChildren
-      };
-      
-      await setDoc(docRef, { tagHierarchy: updatedHierarchy }, { merge: true });
-    } catch (error) {
-      console.error('Error renaming sub tag:', error);
-    }
-  }, [userId]);
-
-  // Function to remove a tag from userTags
+  // Function to remove a tag from userTags (works with both name and id)
+  // If removing a parent tag, also removes all its sub-tags
   const removeUserTag = useCallback(async (tagToRemove) => {
     if (!userId || !tagToRemove) return;
     
@@ -691,8 +618,25 @@ export const DataProvider = ({ children }) => {
       const docRef = doc(db, 'userTags', userId);
       const docSnap = await getDoc(docRef);
       const currentTags = docSnap.exists() ? (docSnap.data().tags || []) : [];
-      const updatedTags = currentTags.filter(t => t !== tagToRemove);
-      await setDoc(docRef, { tags: updatedTags });
+      
+      // Normalize to object format
+      const normalizedTags = currentTags.map(tag => 
+        typeof tag === 'string' ? { id: tag, name: tag } : tag
+      );
+      
+      // Find the tag to remove (by name or id)
+      const tagObj = normalizedTags.find(t => 
+        t.name === tagToRemove || t.id === tagToRemove
+      );
+      
+      if (!tagObj) return;
+      
+      // Remove the tag and all its sub-tags if it's a parent
+      const updatedTags = normalizedTags.filter(t => 
+        t.id !== tagObj.id && t.parentTagId !== tagObj.id
+      );
+      
+      await setDoc(docRef, { tags: updatedTags }, { merge: true });
     } catch (error) {
       console.error('Error removing tag:', error);
     }
@@ -708,15 +652,25 @@ export const DataProvider = ({ children }) => {
       const docRef = doc(db, 'userTags', userId);
       const docSnap = await getDoc(docRef);
       const currentTags = docSnap.exists() ? (docSnap.data().tags || []) : [];
-      const updatedTags = currentTags.map(t => t === oldTag ? trimmedNew : t);
-      const uniqueTags = [...new Set(updatedTags)].sort();
-      await setDoc(docRef, { tags: uniqueTags }, { merge: true });
+      
+      // Normalize to object format
+      const normalizedTags = currentTags.map(tag => 
+        typeof tag === 'string' ? { id: tag, name: tag } : tag
+      );
+      
+      // Update the tag name
+      const updatedTags = normalizedTags.map(t => 
+        (t.name === oldTag || t.id === oldTag) ? { ...t, name: trimmedNew } : t
+      );
+      
+      await setDoc(docRef, { tags: updatedTags }, { merge: true });
     } catch (error) {
       console.error('Error renaming tag:', error);
     }
   }, [userId]);
 
   // Function to archive a tag (move from tags to archivedTags)
+  // If archiving a parent tag, also archives all its sub-tags
   const archiveUserTag = useCallback(async (tagToArchive) => {
     if (!userId || !tagToArchive) return;
     
@@ -725,17 +679,46 @@ export const DataProvider = ({ children }) => {
       const docSnap = await getDoc(docRef);
       const currentTags = docSnap.exists() ? (docSnap.data().tags || []) : [];
       const currentArchived = docSnap.exists() ? (docSnap.data().archivedTags || []) : [];
+      const currentArchivedObjects = docSnap.exists() ? (docSnap.data().archivedTagObjects || []) : [];
+      
+      // Normalize to object format
+      const normalizedTags = currentTags.map(tag => 
+        typeof tag === 'string' ? { id: tag, name: tag } : tag
+      );
+      
+      // Find the tag to archive
+      const tagObj = normalizedTags.find(t => 
+        t.name === tagToArchive || t.id === tagToArchive
+      );
+      
+      if (!tagObj) return;
+      
+      // Collect tags to archive (parent + all sub-tags) - preserve full objects
+      const tagsToArchive = [tagObj];
+      const namesToArchive = [tagObj.name];
+      
+      normalizedTags.forEach(t => {
+        if (t.parentTagId === tagObj.id) {
+          tagsToArchive.push(t);
+          namesToArchive.push(t.name);
+        }
+      });
       
       // Remove from active tags
-      const updatedTags = currentTags.filter(t => t !== tagToArchive);
-      // Add to archived tags if not already there
-      const updatedArchived = currentArchived.includes(tagToArchive) 
-        ? currentArchived 
-        : [...currentArchived, tagToArchive].sort();
+      const updatedTags = normalizedTags.filter(t => 
+        t.id !== tagObj.id && t.parentTagId !== tagObj.id
+      );
+      
+      // Add to archived tags (strings for backward compatibility)
+      const updatedArchived = [...new Set([...currentArchived, ...namesToArchive])].sort();
+      
+      // Add to archived tag objects (preserve structure)
+      const updatedArchivedObjects = [...currentArchivedObjects, ...tagsToArchive];
       
       await setDoc(docRef, { 
         tags: updatedTags, 
-        archivedTags: updatedArchived 
+        archivedTags: updatedArchived,
+        archivedTagObjects: updatedArchivedObjects
       }, { merge: true });
     } catch (error) {
       console.error('Error archiving tag:', error);
@@ -743,6 +726,8 @@ export const DataProvider = ({ children }) => {
   }, [userId]);
 
   // Function to restore an archived tag (move from archivedTags to tags)
+  // Restores full tag structure including parentTagId
+  // If restoring parent tag, also restores all its sub-tags
   const restoreUserTag = useCallback(async (tagToRestore) => {
     if (!userId || !tagToRestore) return;
     
@@ -751,17 +736,63 @@ export const DataProvider = ({ children }) => {
       const docSnap = await getDoc(docRef);
       const currentTags = docSnap.exists() ? (docSnap.data().tags || []) : [];
       const currentArchived = docSnap.exists() ? (docSnap.data().archivedTags || []) : [];
+      const currentArchivedObjects = docSnap.exists() ? (docSnap.data().archivedTagObjects || []) : [];
       
-      // Remove from archived tags
-      const updatedArchived = currentArchived.filter(t => t !== tagToRestore);
-      // Add to active tags if not already there
-      const updatedTags = currentTags.includes(tagToRestore)
-        ? currentTags
-        : [...currentTags, tagToRestore].sort();
+      // Normalize to object format
+      const normalizedTags = currentTags.map(tag => 
+        typeof tag === 'string' ? { id: tag, name: tag } : tag
+      );
+      
+      // Find the archived tag object to restore
+      const archivedTagObj = currentArchivedObjects.find(t => t.name === tagToRestore);
+      
+      if (!archivedTagObj) {
+        // Fallback for old archives without objects
+        const updatedArchived = currentArchived.filter(t => t !== tagToRestore);
+        const restoredTag = {
+          id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: tagToRestore
+        };
+        normalizedTags.push(restoredTag);
+        
+        await setDoc(docRef, { 
+          tags: normalizedTags, 
+          archivedTags: updatedArchived
+        }, { merge: true });
+        return;
+      }
+      
+      // Collect tags to restore (the tag + all its sub-tags if it's a parent)
+      const tagsToRestore = [archivedTagObj];
+      const namesToRestore = [archivedTagObj.name];
+      
+      // If restoring a parent tag, also restore all its sub-tags
+      currentArchivedObjects.forEach(t => {
+        if (t.parentTagId === archivedTagObj.id) {
+          tagsToRestore.push(t);
+          namesToRestore.push(t.name);
+        }
+      });
+      
+      // Remove from archived tags (string array)
+      const updatedArchived = currentArchived.filter(t => !namesToRestore.includes(t));
+      
+      // Remove from archived tag objects
+      const tagIdsToRemove = new Set(tagsToRestore.map(t => t.id));
+      const updatedArchivedObjects = currentArchivedObjects.filter(t => !tagIdsToRemove.has(t.id));
+      
+      // Add to active tags (only if not already exists)
+      tagsToRestore.forEach(tag => {
+        const exists = normalizedTags.some(t => t.id === tag.id);
+        if (!exists) {
+          normalizedTags.push(tag);
+        }
+      });
       
       await setDoc(docRef, { 
-        tags: updatedTags, 
-        archivedTags: updatedArchived 
+        tags: normalizedTags, 
+        archivedTags: updatedArchived,
+        archivedTagObjects: updatedArchivedObjects
       }, { merge: true });
     } catch (error) {
       console.error('Error restoring tag:', error);
@@ -891,16 +922,16 @@ export const DataProvider = ({ children }) => {
     
     // Derived data - Tags
     tagSuggestions,
-    allTagsFlat,
     userTags,
     archivedTags,
-    tagHierarchy,
+    archivedTagObjects,
+    parentTags,
+    archivedParentTags,
+    getSubTags,
+    getArchivedSubTags,
     addUserTag,
-    addSubTag,
     removeUserTag,
-    removeSubTag,
     renameUserTag,
-    renameSubTag,
     archiveUserTag,
     restoreUserTag,
     
@@ -918,7 +949,7 @@ export const DataProvider = ({ children }) => {
     categoryNames, expenseCategories, incomeCategories,
     loanTransactions, splitTransactions, nonLoanTransactions, futureTransactions, loanNames,
     payeeSuggestions, payeeToCategoryMap, payeeToAccountMap, 
-    tagSuggestions, allTagsFlat, userTags, archivedTags, tagHierarchy, addUserTag, addSubTag, removeUserTag, removeSubTag, renameUserTag, renameSubTag, archiveUserTag, restoreUserTag,
+    tagSuggestions, userTags, archivedTags, archivedTagObjects, parentTags, archivedParentTags, getSubTags, getArchivedSubTags, addUserTag, removeUserTag, renameUserTag, archiveUserTag, restoreUserTag,
     getTransactionsByMonth, getTransactionsByAccount, getTransactionsByCategory,
     getAccountByName, getCategoryByName
   ]);

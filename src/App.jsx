@@ -215,7 +215,7 @@ const NavButton = ({ active, onClick, icon, label }) => (
 
 function App() {
   return (
-    <Router>
+    <Router future={{ v7_relativeSplatPath: true }}>
       <NavigationProvider>
         <DataProvider>
           <AppContent />

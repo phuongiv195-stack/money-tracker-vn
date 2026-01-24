@@ -12,13 +12,63 @@ const TransactionsTab = () => {
     accountNames,
     groupedAccounts,
     categoryNames, 
-    tagSuggestions, 
+    tagSuggestions,
+    parentTags,
+    getSubTags,
     isLoading,
     hasMoreTransactions,
     loadingMore,
     loadMoreTransactions,
     transactionCount
   } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - map each sub to "Parent > Sub"
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        // Parent has no sub-tags - map to itself
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
+
+  // Create selectable tags for filter dropdown
+  const selectableTagsForFilter = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - add each sub-tag
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,
+            display: `${parent.name} > ${sub.name}`
+          });
+        });
+      } else {
+        // Parent has no sub-tags - add parent itself
+        tags.push({
+          value: parent.name,
+          display: parent.name
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
   
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -387,18 +437,16 @@ const TransactionsTab = () => {
                 </div>
                 {/* Tag & Wants/Needs Filter - Same Row */}
                 <div className="flex gap-2">
-                  {tagSuggestions.length > 0 && (
-                    <select 
-                      value={filterTag} 
-                      onChange={(e) => setFilterTag(e.target.value)}
-                      className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
-                    >
-                      <option value="all">🏷️ All Tags</option>
-                      {tagSuggestions.map(tag => (
-                        <option key={tag} value={tag}>🏷️ {tag}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select 
+                    value={filterTag} 
+                    onChange={(e) => setFilterTag(e.target.value)}
+                    className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
+                  >
+                    <option value="all">🏷️ All Tags</option>
+                    {selectableTagsForFilter.map(tag => (
+                      <option key={tag.value} value={tag.value}>🏷️ {tag.display}</option>
+                    ))}
+                  </select>
                   <select 
                     value={filterSpendingType} 
                     onChange={(e) => setFilterSpendingType(e.target.value)}
@@ -540,7 +588,7 @@ const TransactionsTab = () => {
                             <div className="flex flex-wrap gap-1 justify-end mt-0.5">
                               {(t.tags || (t.tag ? [t.tag] : [])).map(tag => (
                                 <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded inline-block">
-                                  🏷️ {tag}
+                                  🏷️ {tagDisplayMap[tag] || tag}
                                 </span>
                               ))}
                             </div>

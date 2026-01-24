@@ -17,6 +17,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     loanNames,
     loanTransactions,
     tagSuggestions,
+    parentTags,
+    getSubTags,
     addUserTag,
     payeeSuggestions: cachedPayeeSuggestions, 
     payeeToCategoryMap: cachedPayeeToCategoryMap,
@@ -50,6 +52,46 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     setLoanTypeMap(prev => ({...initialLoanTypeMap, ...prev}));
   }, [initialLoanTypeMap]);
   
+  // Create selectable tags list
+  // - If a parent has sub-tags, only show the sub-tags (not the parent)
+  // - Display format: "ParentName > SubName" for sub-tags, "TagName" for parent without subs
+  const selectableTags = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - only show sub-tags
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,  // The actual tag name saved to DB
+            display: `${parent.name} > ${sub.name}`,  // Display format
+            parentName: parent.name
+          });
+        });
+      } else {
+        // Parent has no sub-tags - show the parent itself
+        tags.push({
+          value: parent.name,
+          display: parent.name,
+          parentName: null
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
+
+  // Create lookup map for tag display names
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    selectableTags.forEach(tag => {
+      map[tag.value] = tag.display;
+    });
+    return map;
+  }, [selectableTags]);
+
   const [activeTab, setActiveTab] = useState('expense');
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -1302,21 +1344,21 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
 
             {/* Available tags - above input */}
-            {tagSuggestions.filter(tag => !formData.tags.includes(tag)).length > 0 && (
+            {selectableTags.filter(tag => !formData.tags.includes(tag.value)).length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
-                {tagSuggestions
-                  .filter(tag => !formData.tags.includes(tag))
+                {selectableTags
+                  .filter(tag => !formData.tags.includes(tag.value))
                   .map(tag => (
                     <button
-                      key={tag}
+                      key={tag.value}
                       type="button"
                       onClick={() => setFormData({
                         ...formData,
-                        tags: [...formData.tags, tag]
+                        tags: [...formData.tags, tag.value]
                       })}
                       className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm hover:bg-emerald-200 transition-colors"
                     >
-                      🏷️ {tag}
+                      🏷️ {tag.display}
                     </button>
                   ))}
               </div>
@@ -1325,17 +1367,17 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             {/* Input box with selected tags inside */}
             <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg border border-gray-200 focus-within:border-emerald-400 min-h-[44px]">
               {/* Selected tags */}
-              {formData.tags.map(tag => (
+              {formData.tags.map(tagValue => (
                 <span 
-                  key={tag}
+                  key={tagValue}
                   className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-sm"
                 >
-                  🏷️ {tag}
+                  🏷️ {tagDisplayMap[tagValue] || tagValue}
                   <button
                     type="button"
                     onClick={() => setFormData({
                       ...formData, 
-                      tags: formData.tags.filter(t => t !== tag)
+                      tags: formData.tags.filter(t => t !== tagValue)
                     })}
                     className="text-emerald-500 hover:text-emerald-700"
                   >
