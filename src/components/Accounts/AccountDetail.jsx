@@ -38,6 +38,11 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   // Edit Unrealized Gain state
   const [editUnrealizedGain, setEditUnrealizedGain] = useState(null);
   
+  // Manual Reference Amount state (user's own record from bank statement)
+  const [showEditManualRef, setShowEditManualRef] = useState(false);
+  const [manualRefAmount, setManualRefAmount] = useState('');
+  const [manualRefDate, setManualRefDate] = useState('');
+  
   // Loan notice modal state
   const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
   
@@ -56,6 +61,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       setShowArchiveModal(false);
     } else if (showDeleteAccountModal) {
       setShowDeleteAccountModal(false);
+    } else if (showEditManualRef) {
+      setShowEditManualRef(false);
     } else if (isReconciling) {
       setIsReconciling(false);
     } else if (showManualReconcile) {
@@ -68,7 +75,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     } else {
       onClose();
     }
-  }, [loanNoticeModal.show, showMenu, showEditAccountModal, showArchiveModal, showDeleteAccountModal, isReconciling, showManualReconcile, showDeleteConfirm, isSelectMode, onClose]);
+  }, [loanNoticeModal.show, showMenu, showEditAccountModal, showArchiveModal, showDeleteAccountModal, showEditManualRef, isReconciling, showManualReconcile, showDeleteConfirm, isSelectMode, onClose]);
 
   useBackHandler(!!account, handleBackPress);
 
@@ -438,6 +445,35 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
 
   const getClearIcon = (s) => s === 'reconciled' ? '🔒' : s === 'cleared' ? '✓' : '○';
   const getClearColor = (s) => s === 'reconciled' ? 'text-gray-400' : s === 'cleared' ? 'text-emerald-600' : 'text-gray-300';
+
+  // Save Manual Reference Amount (user's own record)
+  const handleSaveManualRef = async () => {
+    if (!manualRefAmount) return;
+    
+    try {
+      const amount = parseFloat(manualRefAmount.replace(/,/g, ''));
+      await updateDoc(doc(db, 'accounts', account.id), {
+        manualReconcileAmount: amount,
+        manualReconcileDate: manualRefDate || new Date().toISOString().split('T')[0]
+      });
+      
+      toast.success('Manual reference saved!');
+      setShowEditManualRef(false);
+      setManualRefAmount('');
+      setManualRefDate('');
+      
+      if (onAccountUpdated) onAccountUpdated();
+    } catch (error) {
+      toast.error('Error: ' + error.message);
+    }
+  };
+
+  // Open edit manual ref with current values
+  const openEditManualRef = () => {
+    setManualRefAmount(account.manualReconcileAmount ? String(account.manualReconcileAmount) : '');
+    setManualRefDate(account.manualReconcileDate || new Date().toISOString().split('T')[0]);
+    setShowEditManualRef(true);
+  };
   const isMarketValue = ['investment','property','vehicle','asset'].includes(account.type);
   const SplitIcon = () => (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600 inline-block mr-1"><path d="M12 22v-10"/><path d="M12 12C12 8 8 5 4 3"/><path d="M12 12C12 8 16 5 20 3"/><polyline points="6 6 4 3 1 5"/><polyline points="18 6 20 3 23 5"/></svg>);
 
@@ -550,6 +586,143 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           <div className="flex items-start gap-2">
             <span className="text-gray-400">📝</span>
             <div className="text-sm text-gray-600 whitespace-pre-wrap">{account.memo}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Reference Card - User's own record from bank statement */}
+      <div className="mx-4 mt-3 p-3 bg-white rounded-lg shadow-sm border border-emerald-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-500">🏦</span>
+            <span className="text-sm font-medium text-gray-700">My Bank Statement</span>
+          </div>
+          <button 
+            onClick={openEditManualRef}
+            className="text-emerald-500 text-xs font-medium hover:underline"
+          >
+            {account.manualReconcileAmount ? 'Edit' : '+ Add'}
+          </button>
+        </div>
+        
+        {account.manualReconcileAmount ? (
+          <div className="mt-2 pl-6">
+            <div className="flex items-baseline gap-2">
+              <span className={`text-lg font-bold ${account.manualReconcileAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                {account.manualReconcileAmount >= 0 ? '+' : ''}{formatCurrency(account.manualReconcileAmount)}
+              </span>
+              <span className="text-xs text-gray-400">
+                ({formatDateForDisplay(account.manualReconcileDate)})
+              </span>
+            </div>
+            
+            {/* Compare with system balance */}
+            {(() => {
+              const diff = clearedBalance - account.manualReconcileAmount;
+              if (Math.abs(diff) < 1) return (
+                <div className="text-xs text-emerald-600 mt-1">✅ Matches system cleared balance</div>
+              );
+              return (
+                <div className="text-xs text-amber-600 mt-1">
+                  ⚠️ Difference: {diff >= 0 ? '+' : ''}{formatCurrency(diff)} from system
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
+          <div className="mt-2 pl-6 text-xs text-gray-400">
+            Add your bank statement balance for reference
+          </div>
+        )}
+      </div>
+
+      {/* Edit Manual Reference Modal */}
+      {showEditManualRef && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="font-bold text-lg">🏦 My Bank Statement</div>
+              <div className="text-sm opacity-90">Record your actual bank balance</div>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="text-center text-gray-600 text-sm">
+                Enter the balance from your actual bank statement. This is your reference to compare with system.
+              </div>
+              
+              {/* Amount Input - FIRST */}
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Balance Amount</label>
+                <input 
+                  type="text" 
+                  inputMode="numeric" 
+                  placeholder="Enter amount..." 
+                  value={manualRefAmount ? formatNumberInput(manualRefAmount) : ''} 
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/,/g, '');
+                    if (!isNaN(value) || value === '' || value === '-') setManualRefAmount(value);
+                  }}
+                  autoFocus
+                  className="w-full text-xl font-bold text-center p-3 border-2 border-emerald-200 rounded-lg focus:border-emerald-500 outline-none" 
+                />
+              </div>
+              
+              {/* Date Input - Button style to prevent auto calendar */}
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Statement Date</label>
+                <div className="relative">
+                  <input 
+                    id="manualRefDateInput"
+                    type="date" 
+                    value={manualRefDate} 
+                    onChange={(e) => setManualRefDate(e.target.value)}
+                    className="absolute opacity-0 w-full h-full cursor-pointer"
+                    style={{ zIndex: 1 }}
+                  />
+                  <div className="w-full p-3 border-2 border-gray-200 rounded-lg bg-white flex items-center justify-between">
+                    <span className={manualRefDate ? 'text-gray-800' : 'text-gray-400'}>
+                      {manualRefDate ? formatDateForDisplay(manualRefDate) : 'Select date...'}
+                    </span>
+                    <span>📅</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* System comparison */}
+              <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">System Cleared Balance:</span>
+                  <span className="font-medium">{clearedBalance >= 0 ? '+' : ''}{formatCurrency(clearedBalance)}</span>
+                </div>
+                {manualRefAmount && (
+                  <div className="flex justify-between mt-1 pt-1 border-t">
+                    <span className="text-gray-500">Difference:</span>
+                    <span className={`font-medium ${Math.abs(clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0)) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {(() => {
+                        const diff = clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0);
+                        return `${diff >= 0 ? '+' : ''}${formatCurrency(diff)}`;
+                      })()}
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => { setShowEditManualRef(false); setManualRefAmount(''); setManualRefDate(''); }} 
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveManualRef}
+                  disabled={!manualRefAmount}
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

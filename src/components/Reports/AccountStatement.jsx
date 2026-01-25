@@ -37,6 +37,16 @@ const AccountStatement = ({
   // Loan notice modal state
   const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
 
+  // Reorder modal state - for fixing transaction order within same day
+  const [showReorderModal, setShowReorderModal] = useState(false);
+  const [reorderDate, setReorderDate] = useState(null);
+  const [reorderItems, setReorderItems] = useState([]);
+
+  // Manual Reference state (user's own record from bank statement)
+  const [showEditManualRef, setShowEditManualRef] = useState(false);
+  const [manualRefAmount, setManualRefAmount] = useState('');
+  const [manualRefDate, setManualRefDate] = useState('');
+
   // Get current account data
   const currentAccount = useMemo(() => {
     return accounts.find(a => a.name === selectedAccount);
@@ -220,7 +230,21 @@ const AccountStatement = ({
       // Starting balance should be first on its date
       if (a.isStartingBalance) return -1;
       if (b.isStartingBalance) return 1;
-      // Secondary sort by createdAt if same date
+      
+      // For same date: use orderIndex if available (for precise ordering)
+      // orderIndex is set when user wants specific transaction order within a day
+      const aOrderIndex = a.originalTransaction?.orderIndex;
+      const bOrderIndex = b.originalTransaction?.orderIndex;
+      
+      // If both have orderIndex, use it
+      if (aOrderIndex !== undefined && bOrderIndex !== undefined) {
+        return aOrderIndex - bOrderIndex;
+      }
+      // If only one has orderIndex, put it first (explicit order takes priority)
+      if (aOrderIndex !== undefined) return -1;
+      if (bOrderIndex !== undefined) return 1;
+      
+      // Fallback: sort by createdAt if same date
       const aTime = a.originalTransaction?.createdAt?.seconds || 0;
       const bTime = b.originalTransaction?.createdAt?.seconds || 0;
       return aTime - bTime;
@@ -307,6 +331,27 @@ const AccountStatement = ({
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
+
+    // Recalculate display balance based on sort direction
+    // When DESC: start from working balance and subtract/add backwards
+    // When ASC: use original calculated balance
+    if (sortConfig.key === 'date' && sortConfig.direction === 'desc' && result.length > 0) {
+      // Get working balance (final balance after all transactions)
+      const workingBalance = transactionsWithBalance.length > 0 
+        ? transactionsWithBalance[transactionsWithBalance.length - 1].balance 
+        : 0;
+      
+      let runningBalance = workingBalance;
+      result = result.map((t, index) => {
+        const displayBalance = runningBalance;
+        // For next row: subtract inflow, add outflow (going backwards in time)
+        runningBalance = runningBalance - t.inflow + t.outflow;
+        return { ...t, displayBalance };
+      });
+    } else {
+      // ASC or other sort: use original balance
+      result = result.map(t => ({ ...t, displayBalance: t.balance }));
+    }
 
     return result;
   }, [transactionsWithBalance, searchQuery, statusFilter, flowFilter, sortConfig]);
@@ -593,6 +638,158 @@ const AccountStatement = ({
     }
   };
 
+  // Get transactions grouped by date for reorder
+  const getTransactionsForDate = (date) => {
+    return transactionsWithBalance
+      .filter(t => t.date === date && !t.isStartingBalance)
+      .sort((a, b) => {
+        // Sort by current order (as displayed)
+        const aIdx = a.originalTransaction?.orderIndex;
+        const bIdx = b.originalTransaction?.orderIndex;
+        if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
+        if (aIdx !== undefined) return -1;
+        if (bIdx !== undefined) return 1;
+        const aTime = a.originalTransaction?.createdAt?.seconds || 0;
+        const bTime = b.originalTransaction?.createdAt?.seconds || 0;
+        return aTime - bTime;
+      });
+  };
+
+  // Open reorder modal for a specific date
+  const handleOpenReorder = (date) => {
+    const items = getTransactionsForDate(date);
+    if (items.length < 2) return; // Need at least 2 items to reorder
+    setReorderDate(date);
+    setReorderItems(items.map((t, idx) => ({ ...t, newIndex: idx })));
+    setShowReorderModal(true);
+  };
+
+  // Move item up in reorder list
+  const handleMoveUp = (index) => {
+    if (index === 0) return;
+    setReorderItems(prev => {
+      const newItems = [...prev];
+      [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
+      return newItems.map((item, idx) => ({ ...item, newIndex: idx }));
+    });
+  };
+
+  // Move item down in reorder list
+  const handleMoveDown = (index) => {
+    if (index === reorderItems.length - 1) return;
+    setReorderItems(prev => {
+      const newItems = [...prev];
+      [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
+      return newItems.map((item, idx) => ({ ...item, newIndex: idx }));
+    });
+  };
+
+  // Save reorder to Firebase
+  const handleSaveReorder = async () => {
+    try {
+      await Promise.all(reorderItems.map((item, idx) => 
+        updateDoc(doc(db, 'transactions', item.id), {
+          orderIndex: idx
+        })
+      ));
+      setShowReorderModal(false);
+      setReorderDate(null);
+      setReorderItems([]);
+    } catch (err) {
+      console.error('Error saving reorder:', err);
+    }
+  };
+
+  // Check if date has multiple transactions (can be reordered)
+  const canReorderDate = (date) => {
+    const count = transactionsWithBalance.filter(t => t.date === date && !t.isStartingBalance).length;
+    return count > 1;
+  };
+
+  // Export to CSV function
+  const handleExportCSV = () => {
+    if (!selectedAccount || transactionsWithBalance.length === 0) return;
+
+    // Sort by date ascending for export
+    const sortedForExport = [...transactionsWithBalance].sort((a, b) => {
+      const dateCompare = (a.date || '').localeCompare(b.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      if (a.isStartingBalance) return -1;
+      if (b.isStartingBalance) return 1;
+      return 0;
+    });
+
+    // Create CSV content
+    const headers = ['Date', 'Payee', 'Category', 'Memo', 'Outflow', 'Inflow', 'Balance', 'Status'];
+    const rows = sortedForExport.map(t => [
+      t.date || '',
+      `"${(t.payee || '').replace(/"/g, '""')}"`,
+      `"${(t.category || '').replace(/"/g, '""')}"`,
+      `"${(t.memo || '').replace(/"/g, '""')}"`,
+      t.outflow || 0,
+      t.inflow || 0,
+      t.balance || 0,
+      t.clearStatus || 'uncleared'
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Add BOM for Excel UTF-8 compatibility
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${selectedAccount}_ledger_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Format date for display
+  const formatDateForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // Format number input with commas
+  const formatNumberInput = (value) => {
+    if (!value) return '';
+    return new Intl.NumberFormat('en-US').format(value.toString().replace(/,/g, ''));
+  };
+
+  // Save Manual Reference Amount (user's own record)
+  const handleSaveManualRef = async () => {
+    if (!manualRefAmount || !currentAccount) return;
+    
+    try {
+      const amount = parseFloat(manualRefAmount.replace(/,/g, ''));
+      await updateDoc(doc(db, 'accounts', currentAccount.id), {
+        manualReconcileAmount: amount,
+        manualReconcileDate: manualRefDate || new Date().toISOString().split('T')[0]
+      });
+      
+      setShowEditManualRef(false);
+      setManualRefAmount('');
+      setManualRefDate('');
+    } catch (error) {
+      console.error('Error saving manual reference:', error);
+    }
+  };
+
+  // Open edit manual ref with current values
+  const openEditManualRef = () => {
+    if (!currentAccount) return;
+    setManualRefAmount(currentAccount.manualReconcileAmount ? String(currentAccount.manualReconcileAmount) : '');
+    setManualRefDate(currentAccount.manualReconcileDate || new Date().toISOString().split('T')[0]);
+    setShowEditManualRef(true);
+  };
+
   return (
     <div className="fixed inset-0 bg-gray-100 z-50 overflow-auto">
       <div className="p-4">
@@ -673,6 +870,37 @@ const AccountStatement = ({
                 <div className="text-xl font-bold text-blue-600">{formatBalance(summary.working)}</div>
                 <div className="text-xs text-gray-500">Working Balance</div>
               </div>
+              
+              {/* Manual Reference - User's bank statement */}
+              <div className="ml-auto flex items-center gap-3 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-emerald-500">🏦</span>
+                  <span className="text-sm text-gray-600">My Statement:</span>
+                </div>
+                {currentAccount?.manualReconcileAmount ? (
+                  <>
+                    <span className={`font-bold ${currentAccount.manualReconcileAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                      {formatBalance(currentAccount.manualReconcileAmount)}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      ({formatDateForDisplay(currentAccount.manualReconcileDate)})
+                    </span>
+                    {(() => {
+                      const diff = summary.clearedBalance - currentAccount.manualReconcileAmount;
+                      if (Math.abs(diff) < 1) return <span className="text-emerald-600 text-xs">✅</span>;
+                      return <span className="text-amber-600 text-xs">⚠️ Diff: {diff >= 0 ? '+' : ''}{formatBalance(diff)}</span>;
+                    })()}
+                  </>
+                ) : (
+                  <span className="text-gray-400 text-sm">Not set</span>
+                )}
+                <button 
+                  onClick={openEditManualRef}
+                  className="text-emerald-600 text-xs font-medium hover:underline ml-2"
+                >
+                  {currentAccount?.manualReconcileAmount ? 'Edit' : '+ Add'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -715,6 +943,16 @@ const AccountStatement = ({
                 className="px-4 py-2 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 flex items-center gap-1"
               >
                 <span>➕</span> Add
+              </button>
+            )}
+
+            {/* Export CSV Button */}
+            {selectedAccount && transactionsWithBalance.length > 0 && (
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 flex items-center gap-1"
+              >
+                <span>📥</span> Export CSV
               </button>
             )}
 
@@ -830,7 +1068,21 @@ const AccountStatement = ({
                         }}
                       >
                         <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
-                          {formatDate(t.date)}
+                          <div className="flex items-center gap-1">
+                            <span>{formatDate(t.date)}</span>
+                            {!t.isStartingBalance && canReorderDate(t.date) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenReorder(t.date);
+                                }}
+                                className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded p-0.5 text-xs"
+                                title="Reorder transactions for this date"
+                              >
+                                ↕️
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className={`px-3 py-2 font-medium ${t.isStartingBalance ? 'text-emerald-700' : 'text-gray-800'}`}>
                           <span className="flex items-center gap-2">
@@ -854,7 +1106,7 @@ const AccountStatement = ({
                           {t.isStartingBalance ? formatCurrency(t.inflow) : (t.inflow > 0 ? formatCurrency(t.inflow) : '')}
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-gray-800 whitespace-nowrap">
-                          {formatBalance(t.balance)}
+                          {formatBalance(t.displayBalance)}
                         </td>
                         <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                           <button
@@ -1120,6 +1372,169 @@ const AccountStatement = ({
                   className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600"
                 >
                   Go to Loans →
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reorder Transactions Modal */}
+      {showReorderModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-xl shadow-xl overflow-hidden max-h-[80vh] flex flex-col">
+            <div className="bg-blue-500 p-4 text-white text-center shrink-0">
+              <div className="text-3xl mb-1">↕️</div>
+              <div className="font-bold">Reorder Transactions</div>
+              <div className="text-sm text-blue-100">{formatDate(reorderDate)}</div>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <p className="text-sm text-gray-600 mb-4">
+                Drag to reorder transactions so balance matches your bank statement. 
+                First transaction in the list will be processed first.
+              </p>
+              <div className="space-y-2">
+                {reorderItems.map((item, index) => (
+                  <div 
+                    key={item.id}
+                    className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg border"
+                  >
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={() => handleMoveUp(index)}
+                        disabled={index === 0}
+                        className={`text-xs px-2 py-1 rounded ${index === 0 ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-100'}`}
+                      >
+                        ▲
+                      </button>
+                      <button
+                        onClick={() => handleMoveDown(index)}
+                        disabled={index === reorderItems.length - 1}
+                        className={`text-xs px-2 py-1 rounded ${index === reorderItems.length - 1 ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-100'}`}
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-800 truncate">{item.payee}</div>
+                      <div className="text-xs text-gray-500 flex gap-2">
+                        {item.outflow > 0 && <span className="text-red-600">-{formatCurrency(item.outflow)}</span>}
+                        {item.inflow > 0 && <span className="text-emerald-600">+{formatCurrency(item.inflow)}</span>}
+                        {item.category && <span>• {item.category}</span>}
+                      </div>
+                    </div>
+                    <div className="text-sm font-bold text-gray-400">
+                      #{index + 1}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 border-t flex gap-2 shrink-0">
+              <button 
+                onClick={() => {
+                  setShowReorderModal(false);
+                  setReorderDate(null);
+                  setReorderItems([]);
+                }}
+                className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveReorder}
+                className="flex-1 bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600"
+              >
+                💾 Save Order
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Manual Reference Modal */}
+      {showEditManualRef && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="font-bold text-lg">🏦 My Bank Statement</div>
+              <div className="text-sm opacity-90">Record your actual bank balance</div>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="text-center text-gray-600 text-sm">
+                Enter the balance from your actual bank statement. This is your reference to compare with system.
+              </div>
+              
+              {/* Amount Input */}
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Balance Amount</label>
+                <input 
+                  type="text" 
+                  inputMode="numeric" 
+                  placeholder="Enter amount..." 
+                  value={manualRefAmount ? formatNumberInput(manualRefAmount) : ''} 
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/,/g, '');
+                    if (!isNaN(value) || value === '' || value === '-') setManualRefAmount(value);
+                  }}
+                  autoFocus
+                  className="w-full text-xl font-bold text-center p-3 border-2 border-emerald-200 rounded-lg focus:border-emerald-500 outline-none" 
+                />
+              </div>
+              
+              {/* Date Input - Button style to prevent auto calendar */}
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Statement Date</label>
+                <div className="relative">
+                  <input 
+                    type="date" 
+                    value={manualRefDate} 
+                    onChange={(e) => setManualRefDate(e.target.value)}
+                    className="absolute opacity-0 w-full h-full cursor-pointer"
+                    style={{ zIndex: 1 }}
+                  />
+                  <div className="w-full p-3 border-2 border-gray-200 rounded-lg bg-white flex items-center justify-between">
+                    <span className={manualRefDate ? 'text-gray-800' : 'text-gray-400'}>
+                      {manualRefDate ? formatDateForDisplay(manualRefDate) : 'Select date...'}
+                    </span>
+                    <span>📅</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* System comparison */}
+              <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">System Cleared Balance:</span>
+                  <span className="font-medium">{summary.clearedBalance >= 0 ? '+' : ''}{formatBalance(summary.clearedBalance)}</span>
+                </div>
+                {manualRefAmount && (
+                  <div className="flex justify-between mt-1 pt-1 border-t">
+                    <span className="text-gray-500">Difference:</span>
+                    <span className={`font-medium ${Math.abs(summary.clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0)) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {(() => {
+                        const diff = summary.clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0);
+                        return `${diff >= 0 ? '+' : ''}${formatBalance(diff)}`;
+                      })()}
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => { setShowEditManualRef(false); setManualRefAmount(''); setManualRefDate(''); }} 
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveManualRef}
+                  disabled={!manualRefAmount}
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                >
+                  Save
                 </button>
               </div>
             </div>
