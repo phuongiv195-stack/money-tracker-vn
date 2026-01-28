@@ -1,20 +1,19 @@
 import React, { useState, useMemo } from 'react';
 
-// Pie chart colors
+// Pie chart colors - same as SpendingBreakdown for consistency
 const COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
   '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
   '#14b8a6', '#a855f7', '#f43f5e', '#0ea5e9', '#22c55e'
 ];
 
-const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
+const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
   const [dateRange, setDateRange] = useState('this-month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [viewMode, setViewMode] = useState('categories'); // 'categories' | 'groups'
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [spendingTypeFilter, setSpendingTypeFilter] = useState('all'); // 'all' | 'want' | 'need'
   const [hoveredSegment, setHoveredSegment] = useState(null);
 
   // Format currency - use comma as thousand separator, no decimals
@@ -126,24 +125,18 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
     });
   }, [transactions, getDateRange]);
 
-  // Calculate spending data
-  const spendingData = useMemo(() => {
+  // Calculate income data
+  const incomeData = useMemo(() => {
     const categoryTotals = {};
     const categoryTransactions = {};
     const groupTotals = {};
-    let totalSpending = 0;
     let totalIncome = 0;
-    let largestOutflow = { amount: 0, payee: '', category: '' };
+    let largestInflow = { amount: 0, payee: '', category: '' };
     const categoryFrequency = {};
 
     filteredTransactions.forEach(t => {
-      // Handle regular expense
-      if (t.type === 'expense') {
-        // Filter by spending type
-        if (spendingTypeFilter !== 'all' && t.spendingType !== spendingTypeFilter) {
-          return;
-        }
-        
+      // Handle regular income
+      if (t.type === 'income') {
         const amount = Math.abs(Number(t.amount) || 0);
         const cat = t.category || 'Uncategorized';
         
@@ -151,23 +144,18 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
         if (!categoryTransactions[cat]) categoryTransactions[cat] = [];
         categoryTransactions[cat].push(t);
         
-        totalSpending += amount;
+        totalIncome += amount;
         categoryFrequency[cat] = (categoryFrequency[cat] || 0) + 1;
         
-        if (amount > largestOutflow.amount) {
-          largestOutflow = { amount, payee: t.payee || 'Unknown', category: cat };
+        if (amount > largestInflow.amount) {
+          largestInflow = { amount, payee: t.payee || 'Unknown', category: cat };
         }
       }
       
-      // Handle split transactions
-      if (t.type === 'split' && t.splitType === 'expense') {
+      // Handle split transactions with income type
+      if (t.type === 'split' && t.splitType === 'income') {
         t.splits?.forEach(s => {
           if (!s.isLoan && s.category) {
-            // Filter by spending type
-            if (spendingTypeFilter !== 'all' && s.spendingType !== spendingTypeFilter) {
-              return;
-            }
-            
             const amount = Math.abs(Number(s.amount) || 0);
             const cat = s.category;
             
@@ -175,15 +163,10 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             if (!categoryTransactions[cat]) categoryTransactions[cat] = [];
             categoryTransactions[cat].push({ ...t, splitAmount: amount, splitCategory: cat });
             
-            totalSpending += amount;
+            totalIncome += amount;
             categoryFrequency[cat] = (categoryFrequency[cat] || 0) + 1;
           }
         });
-      }
-
-      // Track income
-      if (t.type === 'income') {
-        totalIncome += Math.abs(Number(t.amount) || 0);
       }
     });
 
@@ -201,9 +184,9 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
         return {
           name,
           value,
-          icon: catInfo?.icon || '📦',
+          icon: catInfo?.icon || '💰',
           group: catInfo?.group || 'Other',
-          percent: totalSpending > 0 ? (value / totalSpending * 100) : 0,
+          percent: totalIncome > 0 ? (value / totalIncome * 100) : 0,
           transactions: categoryTransactions[name] || []
         };
       })
@@ -213,7 +196,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
       .map(([name, value]) => ({
         name,
         value,
-        percent: totalSpending > 0 ? (value / totalSpending * 100) : 0
+        percent: totalIncome > 0 ? (value / totalIncome * 100) : 0
       }))
       .sort((a, b) => b.value - a.value);
 
@@ -233,16 +216,15 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
     return {
       categoryData,
       groupData,
-      totalSpending,
       totalIncome,
-      largestOutflow,
+      largestInflow,
       mostFrequent,
-      avgMonthly: totalSpending / monthsDiff,
-      avgDaily: totalSpending / daysDiff
+      avgMonthly: totalIncome / monthsDiff,
+      avgDaily: totalIncome / daysDiff
     };
-  }, [filteredTransactions, categories, spendingTypeFilter, getDateRange]);
+  }, [filteredTransactions, categories, getDateRange]);
 
-  const displayData = viewMode === 'categories' ? spendingData.categoryData : spendingData.groupData;
+  const displayData = viewMode === 'categories' ? incomeData.categoryData : incomeData.groupData;
   const maxValue = Math.max(...displayData.map(d => d.value), 1);
 
   // Date range label
@@ -261,7 +243,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
         <div className="flex items-center justify-center h-[500px]">
           <div className="text-gray-400 text-center">
             <div className="text-6xl mb-4">📊</div>
-            <div className="text-xl">No spending data</div>
+            <div className="text-xl">No income data</div>
           </div>
         </div>
       );
@@ -370,8 +352,8 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
         dashOffset: circumference - combinedOffset,
         percent: everythingElsePercent * 100,
         isEverythingElse: true,
-        smallSegments: smallSegments, // Keep reference for tooltip/details
-        index: segments.length // Use unique index
+        smallSegments: smallSegments,
+        index: segments.length
       });
     }
 
@@ -421,8 +403,8 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             height: 100
           }}
         >
-          <div className="text-gray-600 text-base font-medium">Total Spending</div>
-          <div className="text-4xl font-bold text-gray-900 mt-1">{formatCurrency(total)}</div>
+          <div className="text-gray-600 text-base font-medium">Total Income</div>
+          <div className="text-4xl font-bold text-emerald-600 mt-1">{formatCurrency(total)}</div>
         </div>
         
         {/* Labels for large segments */}
@@ -483,7 +465,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
           <div
             key={item.name}
             className={`p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition ${
-              selectedCategory?.name === item.name ? 'bg-blue-50' : ''
+              selectedCategory?.name === item.name ? 'bg-emerald-50' : ''
             }`}
             onClick={() => viewMode === 'categories' && setSelectedCategory(item)}
           >
@@ -516,16 +498,6 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             </div>
           </div>
         ))}
-        
-        {/* Positive Inflow */}
-        {spendingData.totalIncome > 0 && (
-          <div className="mt-4 pt-4 border-t">
-            <div className="flex items-center justify-between p-3">
-              <span className="text-sm font-medium text-gray-600">Positive Inflow Categories</span>
-              <span className="text-emerald-600 font-bold text-base">{formatCurrency(spendingData.totalIncome)}</span>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -538,9 +510,9 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setSelectedCategory(null)}>
         <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 max-h-[80vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-          <div className="p-4 border-b bg-gray-50">
-            <h3 className="font-bold text-xl">{selectedCategory.icon} {selectedCategory.name}</h3>
-            <div className="text-sm text-gray-500">{trans.length} transactions • {formatCurrency(selectedCategory.value)} total</div>
+          <div className="p-4 border-b bg-emerald-50">
+            <h3 className="font-bold text-xl text-emerald-800">{selectedCategory.icon} {selectedCategory.name}</h3>
+            <div className="text-sm text-emerald-600">{trans.length} transactions • {formatCurrency(selectedCategory.value)} total</div>
           </div>
           
           <div className="overflow-auto max-h-[60vh]">
@@ -561,7 +533,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
                     <td className="p-3 text-gray-600">{t.date}</td>
                     <td className="p-3 text-gray-700">{t.payee || '-'}</td>
                     <td className="p-3 text-gray-500">{t.memo || '-'}</td>
-                    <td className="p-3 text-right font-medium">{formatCurrency(t.splitAmount || Math.abs(t.amount))}</td>
+                    <td className="p-3 text-right font-medium text-emerald-600">+{formatCurrency(t.splitAmount || Math.abs(t.amount))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -569,7 +541,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
           </div>
           
           <div className="p-4 border-t">
-            <button onClick={() => setSelectedCategory(null)} className="w-full py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium">
+            <button onClick={() => setSelectedCategory(null)} className="w-full py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium">
               Close
             </button>
           </div>
@@ -604,7 +576,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             {options.map(opt => (
               <div
                 key={opt.value}
-                className={`p-3 rounded-lg cursor-pointer transition ${dateRange === opt.value ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+                className={`p-3 rounded-lg cursor-pointer transition ${dateRange === opt.value ? 'bg-emerald-50 text-emerald-600' : 'hover:bg-gray-50'}`}
                 onClick={() => {
                   setDateRange(opt.value);
                   if (opt.value !== 'custom') setShowDatePicker(false);
@@ -639,7 +611,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
           
           <div className="p-4 border-t flex gap-3">
             <button onClick={() => setShowDatePicker(false)} className="flex-1 py-2.5 bg-gray-100 rounded-lg hover:bg-gray-200 font-medium">Cancel</button>
-            <button onClick={() => setShowDatePicker(false)} className="flex-1 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium">Apply</button>
+            <button onClick={() => setShowDatePicker(false)} className="flex-1 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium">Apply</button>
           </div>
         </div>
       </div>
@@ -656,7 +628,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
               <button onClick={onBack} className="text-gray-500 hover:text-gray-700">
                 ← Back
               </button>
-              <h1 className="text-xl font-bold text-gray-800">Spending Breakdown</h1>
+              <h1 className="text-xl font-bold text-gray-800">Income Breakdown</h1>
               
               {/* Date Range Button */}
               <button
@@ -667,20 +639,9 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
                 <span className="font-medium">{getDateRangeLabel()}</span>
                 <span>▼</span>
               </button>
-              
-              {/* Wants/Needs Filter */}
-              <select
-                value={spendingTypeFilter}
-                onChange={e => setSpendingTypeFilter(e.target.value)}
-                className="px-4 py-2 bg-gray-100 rounded-lg border-0 font-medium"
-              >
-                <option value="all">All Spending</option>
-                <option value="want">Wants Only</option>
-                <option value="need">Needs Only</option>
-              </select>
             </div>
             
-            <button className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium">
+            <button className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium">
               📥 Export
             </button>
           </div>
@@ -696,8 +657,8 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
               {/* Header with Toggle */}
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <div className="text-gray-600 text-base font-medium">Total Spending</div>
-                  <div className="text-5xl font-bold text-gray-900">{formatCurrency(spendingData.totalSpending)}</div>
+                  <div className="text-gray-600 text-base font-medium">Total Income</div>
+                  <div className="text-5xl font-bold text-emerald-600">{formatCurrency(incomeData.totalIncome)}</div>
                 </div>
                 
                 <div className="flex bg-gray-100 rounded-lg p-1">
@@ -725,22 +686,22 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4 mt-6">
               <div className="bg-white rounded-xl shadow-sm p-5">
-                <div className="text-gray-600 text-sm font-medium">Average Monthly Spending</div>
-                <div className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(spendingData.avgMonthly)}</div>
+                <div className="text-gray-600 text-sm font-medium">Average Monthly Income</div>
+                <div className="text-2xl font-bold text-emerald-600 mt-2">{formatCurrency(incomeData.avgMonthly)}</div>
               </div>
               <div className="bg-white rounded-xl shadow-sm p-5">
-                <div className="text-gray-600 text-sm font-medium">Average Daily Spending</div>
-                <div className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(spendingData.avgDaily)}</div>
+                <div className="text-gray-600 text-sm font-medium">Average Daily Income</div>
+                <div className="text-2xl font-bold text-emerald-600 mt-2">{formatCurrency(incomeData.avgDaily)}</div>
               </div>
               <div className="bg-white rounded-xl shadow-sm p-5">
                 <div className="text-gray-600 text-sm font-medium">Most Frequent Category</div>
-                <div className="text-xl font-bold text-gray-900 mt-2 truncate">{spendingData.mostFrequent.name}</div>
-                <div className="text-sm text-gray-600 font-medium">{spendingData.mostFrequent.count} transactions</div>
+                <div className="text-xl font-bold text-gray-900 mt-2 truncate">{incomeData.mostFrequent.name}</div>
+                <div className="text-sm text-gray-600 font-medium">{incomeData.mostFrequent.count} transactions</div>
               </div>
               <div className="bg-white rounded-xl shadow-sm p-5">
-                <div className="text-gray-600 text-sm font-medium">Largest Outflow</div>
-                <div className="text-xl font-bold text-gray-900 mt-2 truncate">{spendingData.largestOutflow.payee}</div>
-                <div className="text-sm text-gray-600 font-medium">{formatCurrency(spendingData.largestOutflow.amount)}</div>
+                <div className="text-gray-600 text-sm font-medium">Largest Inflow</div>
+                <div className="text-xl font-bold text-gray-900 mt-2 truncate">{incomeData.largestInflow.payee}</div>
+                <div className="text-sm text-emerald-600 font-medium">+{formatCurrency(incomeData.largestInflow.amount)}</div>
               </div>
             </div>
           </div>
@@ -750,7 +711,7 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
             <div className="bg-white rounded-xl shadow-sm p-4 sticky top-24">
               <div className="flex justify-between items-center mb-4 pb-3 border-b">
                 <h3 className="font-bold text-gray-900 text-lg">{viewMode === 'categories' ? 'Categories' : 'Groups'}</h3>
-                <span className="text-sm font-medium text-gray-600">Total Spending</span>
+                <span className="text-sm font-medium text-gray-600">Total Income</span>
               </div>
               
               <div className="max-h-[calc(100vh-220px)] overflow-auto">
@@ -767,4 +728,4 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
   );
 };
 
-export default SpendingBreakdown;
+export default IncomeBreakdown;

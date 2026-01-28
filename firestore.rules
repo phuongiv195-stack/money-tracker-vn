@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // DEFAULT: DENY ALL (Security first approach)
+    // ============================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user owns the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Check if user owns the document being written
+    function isOwnerWrite() {
+      return isAuthenticated() && request.auth.uid == request.resource.data.userId;
+    }
+    
+    // Validate that userId field matches authenticated user
+    function hasValidUserId() {
+      return request.resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // TRANSACTIONS COLLECTION
+    // ============================================================================
+    match /transactions/{transactionId} {
+      // Read: Only if user owns the transaction
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // Create: Only if authenticated and userId matches
+      allow create: if isAuthenticated() && 
+                       hasValidUserId() &&
+                       request.resource.data.keys().hasAll(['userId', 'date', 'amount']);
+      
+      // Update: Only if user owns the transaction and userId doesn't change
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Delete: Only if user owns the transaction
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // ACCOUNTS COLLECTION
+    // ============================================================================
+    match /accounts/{accountId} {
+      // Read: Only if user owns the account
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // Create: Only if authenticated and userId matches
+      allow create: if isAuthenticated() && 
+                       hasValidUserId() &&
+                       request.resource.data.keys().hasAll(['userId', 'name']);
+      
+      // Update: Only if user owns the account and userId doesn't change
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Delete: Only if user owns the account
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // CATEGORIES COLLECTION
+    // ============================================================================
+    match /categories/{categoryId} {
+      // Read: Only if user owns the category
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // Create: Only if authenticated and userId matches
+      allow create: if isAuthenticated() && 
+                       hasValidUserId() &&
+                       request.resource.data.keys().hasAll(['userId', 'name']);
+      
+      // Update: Only if user owns the category and userId doesn't change
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Delete: Only if user owns the category
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // LOANS COLLECTION
+    // ============================================================================
+    match /loans/{loanId} {
+      // Read: Only if user owns the loan
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // Create: Only if authenticated and userId matches
+      allow create: if isAuthenticated() && 
+                       hasValidUserId();
+      
+      // Update: Only if user owns the loan and userId doesn't change
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Delete: Only if user owns the loan
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // LOAN TRANSACTIONS SUB-COLLECTION
+    // ============================================================================
+    match /loans/{loanId}/transactions/{transactionId} {
+      // Read: Only if user owns the parent loan
+      allow read: if isAuthenticated() && 
+                     get(/databases/$(database)/documents/loans/$(loanId)).data.userId == request.auth.uid;
+      
+      // Create: Only if user owns the parent loan
+      allow create: if isAuthenticated() && 
+                       get(/databases/$(database)/documents/loans/$(loanId)).data.userId == request.auth.uid;
+      
+      // Update: Only if user owns the parent loan
+      allow update: if isAuthenticated() && 
+                       get(/databases/$(database)/documents/loans/$(loanId)).data.userId == request.auth.uid;
+      
+      // Delete: Only if user owns the parent loan
+      allow delete: if isAuthenticated() && 
+                       get(/databases/$(database)/documents/loans/$(loanId)).data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // USER SETTINGS/PREFERENCES (if you add this later)
+    // ============================================================================
+    match /users/{userId} {
+      // Read: Only own user document
+      allow read: if isAuthenticated() && 
+                     request.auth.uid == userId;
+      
+      // Write: Only own user document
+      allow write: if isAuthenticated() && 
+                      request.auth.uid == userId;
+    }
+    
+    // ============================================================================
+    // NOTES:
+    // ============================================================================
+    // 1. All collections require authentication
+    // 2. Users can ONLY access their own data
+    // 3. userId field cannot be changed after creation
+    // 4. All write operations validate userId matches authenticated user
+    // 5. Sub-collections (loan transactions) check parent document ownership
+    // ============================================================================
+  }
+}

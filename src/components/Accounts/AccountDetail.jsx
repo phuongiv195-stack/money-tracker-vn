@@ -487,7 +487,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col no-pull-refresh">
+    <div className="fixed inset-0 bg-gray-50 z-40 overflow-y-auto no-pull-refresh">
       {/* Header - changes based on select mode */}
       {isSelectMode ? (
         <div className="bg-indigo-600 p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">
@@ -500,7 +500,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           </div>
         </div>
       ) : (
-        <div className="bg-white p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">
+        <div className="bg-white p-4 shadow-sm flex items-center justify-between">
           <button onClick={onClose} className="text-gray-600 text-lg p-2 -ml-2">← Back</button>
           <div className="font-bold text-lg flex items-center gap-2"><span>{account.icon}</span><span>{account.name}</span></div>
           <div className="relative">
@@ -849,7 +849,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="p-4 space-y-4 pb-20">
         {/* Uncleared Filter Banner */}
         {showUnclearedOnly && (
           <div className="bg-amber-100 border border-amber-300 rounded-lg p-3">

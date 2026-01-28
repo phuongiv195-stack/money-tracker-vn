@@ -30,20 +30,10 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     loansOwed: true
   });
   
-  // Exchange rate state
-  const [exchangeRate, setExchangeRate] = useState(() => {
-    const saved = localStorage.getItem('balanceSheetExchangeRate');
-    return saved ? Number(saved) : 25000;
-  });
-  const [displayExchangeRate, setDisplayExchangeRate] = useState(() => {
-    const saved = localStorage.getItem('balanceSheetExchangeRate');
-    if (saved) {
-      const num = Number(saved);
-      // Format naturally - don't force decimal places
-      return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
-    }
-    return '25,000';
-  });
+  // Exchange rate state - will be loaded from Firebase
+  const [exchangeRate, setExchangeRate] = useState(25000);
+  const [displayExchangeRate, setDisplayExchangeRate] = useState('25,000');
+  const exchangeRateLoadedRef = useRef(false);
   
   // Drag & Drop state
   const [draggedAccount, setDraggedAccount] = useState(null);
@@ -66,20 +56,33 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
         const docRef = doc(db, 'userSettings', userId);
         const docSnap = await getDoc(docRef);
         
-        if (docSnap.exists() && docSnap.data().balanceSheetConfig) {
-          const savedConfig = docSnap.data().balanceSheetConfig;
-          // Ensure all keys exist
-          setConfig({
-            cash: savedConfig.cash || [],
-            checking: savedConfig.checking || [],
-            investments: savedConfig.investments || [],
-            fixedAssets: savedConfig.fixedAssets || []
-          });
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          
+          // Load balance sheet config
+          if (data.balanceSheetConfig) {
+            const savedConfig = data.balanceSheetConfig;
+            setConfig({
+              cash: savedConfig.cash || [],
+              checking: savedConfig.checking || [],
+              investments: savedConfig.investments || [],
+              fixedAssets: savedConfig.fixedAssets || []
+            });
+          }
+          
+          // Load exchange rate
+          if (data.balanceSheetExchangeRate !== undefined) {
+            const rate = Number(data.balanceSheetExchangeRate);
+            setExchangeRate(rate);
+            setDisplayExchangeRate(rate.toLocaleString('en-US', { maximumFractionDigits: 2 }));
+          }
         }
         configLoadedRef.current = true;
+        exchangeRateLoadedRef.current = true;
       } catch (error) {
         console.error('Error loading balance sheet config:', error);
         configLoadedRef.current = true;
+        exchangeRateLoadedRef.current = true;
       }
     };
     
@@ -143,10 +146,30 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     });
   };
 
-  // Save exchange rate to localStorage (this one stays local as it's display preference)
+  // Save exchange rate to Firebase when changed (debounced)
+  const saveExchangeRateTimeoutRef = useRef(null);
   useEffect(() => {
-    localStorage.setItem('balanceSheetExchangeRate', exchangeRate.toString());
-  }, [exchangeRate]);
+    if (!userId || !exchangeRateLoadedRef.current) return;
+    
+    if (saveExchangeRateTimeoutRef.current) {
+      clearTimeout(saveExchangeRateTimeoutRef.current);
+    }
+    
+    saveExchangeRateTimeoutRef.current = setTimeout(async () => {
+      try {
+        const docRef = doc(db, 'userSettings', userId);
+        await setDoc(docRef, { balanceSheetExchangeRate: exchangeRate }, { merge: true });
+      } catch (error) {
+        console.error('Error saving exchange rate:', error);
+      }
+    }, 500);
+    
+    return () => {
+      if (saveExchangeRateTimeoutRef.current) {
+        clearTimeout(saveExchangeRateTimeoutRef.current);
+      }
+    };
+  }, [exchangeRate, userId]);
 
   // Format currency VND
   const formatCurrency = (amount) => {

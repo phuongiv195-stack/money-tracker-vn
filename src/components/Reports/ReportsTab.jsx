@@ -4,6 +4,7 @@ import useBackHandler from '../../hooks/useBackHandler';
 import DesktopReports from './DesktopReports';
 import AccountStatement from './AccountStatement';
 import SpendingBreakdown from './SpendingBreakdown';
+import IncomeBreakdown from './IncomeBreakdown';
 import BalanceSheet from './BalanceSheet';
 
 const ReportsTab = () => {
@@ -156,10 +157,16 @@ const ReportsTab = () => {
 
     let income = 0, expense = 0;
     const catMap = {};
+    const incomeCatMap = {};
 
     monthlyTrans.forEach(t => {
       const amt = Number(t.amount);
-      if (t.type === 'income') income += amt;
+      if (t.type === 'income') {
+        income += amt;
+        if (t.category) {
+          incomeCatMap[t.category] = (incomeCatMap[t.category] || 0) + Math.abs(amt);
+        }
+      }
       if (t.type === 'expense') {
         expense += Math.abs(amt);
         if (t.category) {
@@ -178,6 +185,9 @@ const ReportsTab = () => {
               }
             } else if (t.splitType === 'income') {
               income += splitAmt;
+              if (s.category) {
+                incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
+              }
             }
           }
         });
@@ -188,7 +198,11 @@ const ReportsTab = () => {
       .map(([name, value]) => ({ name, value, percent: expense > 0 ? (value / expense) * 100 : 0 }))
       .sort((a, b) => b.value - a.value);
 
-    return { income, expense, net: income - expense, categoryData };
+    const incomeCategoryData = Object.entries(incomeCatMap)
+      .map(([name, value]) => ({ name, value, percent: income > 0 ? (value / income) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    return { income, expense, net: income - expense, categoryData, incomeCategoryData };
   }, [transactions, currentDate]);
 
   // Needs vs Wants summary (for main view)
@@ -337,6 +351,59 @@ const ReportsTab = () => {
         expense,
         net: income - expense,
         categoryData
+      };
+    });
+  }, [transactions, dateRange, customRange]);
+
+  // Income monthly data for income breakdown detail view
+  const incomeMonthlyData = useMemo(() => {
+    const months = getDateRangeMonths();
+    const today = new Date().toISOString().split('T')[0];
+    
+    return months.map(({ year, month, isToday }) => {
+      const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const monthlyTrans = transactions.filter(t => {
+        if (!t.date || t.type === 'loan') return false;
+        if (isToday) {
+          return t.date === today;
+        }
+        return t.date.startsWith(monthStr);
+      });
+
+      let totalIncome = 0;
+      const incomeCatMap = {};
+
+      monthlyTrans.forEach(t => {
+        if (t.type === 'income') {
+          const amt = Math.abs(Number(t.amount));
+          totalIncome += amt;
+          if (t.category) {
+            incomeCatMap[t.category] = (incomeCatMap[t.category] || 0) + amt;
+          }
+        }
+        if (t.type === 'split' && t.splitType === 'income' && t.splits) {
+          t.splits.forEach(s => {
+            if (!s.isLoan) {
+              const splitAmt = Math.abs(s.amount);
+              totalIncome += splitAmt;
+              if (s.category) {
+                incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
+              }
+            }
+          });
+        }
+      });
+
+      const incomeCategoryData = Object.entries(incomeCatMap)
+        .map(([name, value]) => ({ name, value, percent: totalIncome > 0 ? (value / totalIncome) * 100 : 0 }))
+        .sort((a, b) => b.value - a.value);
+
+      return {
+        monthStr,
+        label: `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
+        fullLabel: new Date(year, month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        income: totalIncome,
+        incomeCategoryData
       };
     });
   }, [transactions, dateRange, customRange]);
@@ -499,6 +566,83 @@ const ReportsTab = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-medium text-gray-900">-{formatCurrency(item.value)}</span>
+                <span className="text-xs text-gray-400 w-10 text-right">{item.percent < 1 && item.percent > 0 ? '<1' : item.percent.toFixed(0)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
+  // Render full income pie chart for detail view
+  const renderFullIncomePieChart = () => {
+    // Aggregate all months income data
+    const allCatMap = {};
+    let totalIncome = 0;
+    
+    incomeMonthlyData.forEach(m => {
+      m.incomeCategoryData.forEach(cat => {
+        allCatMap[cat.name] = (allCatMap[cat.name] || 0) + cat.value;
+      });
+      totalIncome += m.income;
+    });
+
+    const categoryData = Object.entries(allCatMap)
+      .map(([name, value]) => ({ name, value, percent: totalIncome > 0 ? (value / totalIncome) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    if (totalIncome === 0) return <div className="text-gray-400 text-sm py-10 text-center">No income data</div>;
+
+    const chartData = categoryData.slice(0, 12);
+    const otherValue = categoryData.slice(12).reduce((sum, item) => sum + item.value, 0);
+    if (otherValue > 0) {
+      chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalIncome) * 100 });
+    }
+
+    // Circle circumference: 2 * PI * r = 2 * 3.14159 * 40 ≈ 251.3
+    const circumference = 2 * Math.PI * 40;
+    let cumulativeOffset = 0;
+
+    return (
+      <>
+        {/* Total - outside chart */}
+        <div className="text-center mb-2">
+          <span className="text-sm text-gray-500">Total Income</span>
+          <div className="text-xl font-bold text-emerald-600">+{formatCurrency(totalIncome)}</div>
+        </div>
+
+        <div className="relative w-48 h-48 mx-auto">
+          <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
+            {chartData.map((item, index) => {
+              const segmentLength = (item.percent / 100) * circumference;
+              const offset = cumulativeOffset;
+              cumulativeOffset += segmentLength;
+              return (
+                <circle
+                  key={index}
+                  cx="50" cy="50" r="40"
+                  fill="transparent"
+                  stroke={COLORS[index % COLORS.length]}
+                  strokeWidth="20"
+                  strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                  strokeDashoffset={-offset}
+                />
+              );
+            })}
+          </svg>
+        </div>
+        
+        {/* Legend - use chartData to match pie segments */}
+        <div className="space-y-2 mt-4">
+          {chartData.map((item, index) => (
+            <div key={item.name} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 flex-1">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                <span className="text-gray-700 truncate">{item.name}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-emerald-600">+{formatCurrency(item.value)}</span>
                 <span className="text-xs text-gray-400 w-10 text-right">{item.percent < 1 && item.percent > 0 ? '<1' : item.percent.toFixed(0)}%</span>
               </div>
             </div>
@@ -719,6 +863,18 @@ const ReportsTab = () => {
   if (detailView === 'spending-breakdown' && isDesktop) {
     return (
       <SpendingBreakdown 
+        transactions={transactions}
+        categories={categories}
+        accounts={accounts}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
+  // Income Breakdown - Desktop Full Screen
+  if (detailView === 'income-breakdown' && isDesktop) {
+    return (
+      <IncomeBreakdown 
         transactions={transactions}
         categories={categories}
         accounts={accounts}
@@ -1223,14 +1379,14 @@ const ReportsTab = () => {
   }
 
   // Detail View - Full Screen (Mobile)
-  if (detailView === 'spending' || detailView === 'income-expense' || detailView === 'need-want') {
+  if (detailView === 'spending' || detailView === 'income-expense' || detailView === 'need-want' || detailView === 'income') {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-white">
           <button onClick={() => setDetailView(null)} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">
-            {detailView === 'spending' ? 'Spending Breakdown' : detailView === 'income-expense' ? 'Income vs Expense' : 'Needs vs Wants'}
+            {detailView === 'spending' ? 'Spending Breakdown' : detailView === 'income' ? 'Income Breakdown' : detailView === 'income-expense' ? 'Income vs Expense' : 'Needs vs Wants'}
           </h2>
           <div className="w-8"></div>
         </div>
@@ -1247,6 +1403,16 @@ const ReportsTab = () => {
               {/* Desktop note */}
               <div className="mt-4 p-3 bg-blue-50 rounded-lg text-center">
                 <span className="text-blue-600 text-sm">💻 View full Spending Breakdown with more features on desktop</span>
+              </div>
+            </>
+          ) : detailView === 'income' ? (
+            <>
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                {renderFullIncomePieChart()}
+              </div>
+              {/* Desktop note */}
+              <div className="mt-4 p-3 bg-emerald-50 rounded-lg text-center">
+                <span className="text-emerald-600 text-sm">💻 View full Income Breakdown with more features on desktop</span>
               </div>
             </>
           ) : detailView === 'income-expense' ? (
@@ -1374,6 +1540,54 @@ const ReportsTab = () => {
                     <span className="text-gray-600 truncate">{cat.name}</span>
                   </div>
                   <span className="text-gray-700">{formatCurrency(cat.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 1b: Income Breakdown */}
+        <div 
+          onClick={() => isDesktop ? setDetailView('income-breakdown') : setDetailView('income')}
+          className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center p-2">
+              {/* Income Donut Icon - colorful like spending */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#d1fae5" strokeWidth="8"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#3b82f6" strokeWidth="8" 
+                  strokeDasharray="60 151" strokeDashoffset="37" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#10b981" strokeWidth="8" 
+                  strokeDasharray="40 151" strokeDashoffset="-23" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#f59e0b" strokeWidth="8" 
+                  strokeDasharray="30 151" strokeDashoffset="-63" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#8b5cf6" strokeWidth="8" 
+                  strokeDasharray="21 151" strokeDashoffset="-93" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-gray-800">Income Breakdown</h3>
+                {isDesktop && <span className="text-xs text-emerald-500">📊 Full View</span>}
+              </div>
+              <div className="text-xs text-gray-500 mb-2">
+                {new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </div>
+              
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-sm font-semibold text-gray-700">Total Income</span>
+                <span className="text-sm font-bold text-emerald-600">+{formatCurrency(currentMonthSummary.income)}</span>
+              </div>
+              
+              {/* Top income categories */}
+              {currentMonthSummary.incomeCategoryData && currentMonthSummary.incomeCategoryData.slice(0, 3).map((cat, idx) => (
+                <div key={cat.name} className="flex justify-between items-center text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                    <span className="text-gray-600 truncate">{cat.name}</span>
+                  </div>
+                  <span className="text-emerald-600">+{formatCurrency(cat.value)}</span>
                 </div>
               ))}
             </div>

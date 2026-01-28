@@ -18,6 +18,9 @@ const DesktopReports = ({ onBack }) => {
   
   // Expand/collapse state
   const [expandedGroups, setExpandedGroups] = useState({});
+  
+  // Category filter state - which categories are checked (visible in report)
+  const [checkedCategories, setCheckedCategories] = useState({});
 
   // Tooltip state
   const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, transactions: [], category: '', month: '' });
@@ -228,6 +231,166 @@ const DesktopReports = ({ onBack }) => {
       grandTotalExpense: Object.values(expenseTotals).reduce((a, b) => a + b, 0)
     };
   }, [transactions, categories, dateRange, customRange, wantNeedFilter]);
+
+  // Initialize checkedCategories when reportData changes - default to all checked
+  useEffect(() => {
+    const newChecked = {};
+    
+    // Mark all income groups and categories as checked
+    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
+      newChecked[`income-group-${groupName}`] = true;
+      groupData.categories.forEach(cat => {
+        newChecked[`income-cat-${cat.name}`] = true;
+      });
+    });
+    
+    // Mark all expense groups and categories as checked
+    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
+      newChecked[`expense-group-${groupName}`] = true;
+      groupData.categories.forEach(cat => {
+        newChecked[`expense-cat-${cat.name}`] = true;
+      });
+    });
+    
+    setCheckedCategories(prev => {
+      // Only update if we have new categories (preserve user's unchecked selections)
+      const prevKeys = Object.keys(prev);
+      const newKeys = Object.keys(newChecked);
+      
+      // If this is first load or categories changed significantly, reset to all checked
+      if (prevKeys.length === 0) {
+        return newChecked;
+      }
+      
+      // Otherwise, merge: keep existing states, add new ones as checked
+      const merged = { ...prev };
+      newKeys.forEach(key => {
+        if (!(key in merged)) {
+          merged[key] = true;
+        }
+      });
+      return merged;
+    });
+  }, [reportData.income, reportData.expense]);
+
+  // Calculate filtered totals based on checked categories
+  const filteredReportData = useMemo(() => {
+    const filteredIncomeTotals = {};
+    const filteredExpenseTotals = {};
+    
+    reportData.months.forEach(m => {
+      filteredIncomeTotals[m.key] = 0;
+      filteredExpenseTotals[m.key] = 0;
+    });
+    
+    let filteredGrandTotalIncome = 0;
+    let filteredGrandTotalExpense = 0;
+    
+    // Calculate filtered income totals
+    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
+      groupData.categories.forEach(cat => {
+        if (checkedCategories[`income-cat-${cat.name}`]) {
+          filteredGrandTotalIncome += cat.total;
+          reportData.months.forEach(m => {
+            filteredIncomeTotals[m.key] += cat.months[m.key] || 0;
+          });
+        }
+      });
+    });
+    
+    // Calculate filtered expense totals
+    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
+      groupData.categories.forEach(cat => {
+        if (checkedCategories[`expense-cat-${cat.name}`]) {
+          filteredGrandTotalExpense += cat.total;
+          reportData.months.forEach(m => {
+            filteredExpenseTotals[m.key] += cat.months[m.key] || 0;
+          });
+        }
+      });
+    });
+    
+    return {
+      incomeTotals: filteredIncomeTotals,
+      expenseTotals: filteredExpenseTotals,
+      grandTotalIncome: filteredGrandTotalIncome,
+      grandTotalExpense: filteredGrandTotalExpense
+    };
+  }, [reportData, checkedCategories]);
+
+  // Toggle category checkbox
+  const toggleCategory = (type, categoryName, e) => {
+    e.stopPropagation();
+    const key = `${type}-cat-${categoryName}`;
+    setCheckedCategories(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Toggle group checkbox (check/uncheck all categories in group)
+  const toggleGroupCheck = (type, groupName, groupData, e) => {
+    e.stopPropagation();
+    const groupKey = `${type}-group-${groupName}`;
+    const isCurrentlyChecked = checkedCategories[groupKey];
+    
+    const newChecked = { ...checkedCategories };
+    newChecked[groupKey] = !isCurrentlyChecked;
+    
+    // Also toggle all categories in this group
+    groupData.categories.forEach(cat => {
+      newChecked[`${type}-cat-${cat.name}`] = !isCurrentlyChecked;
+    });
+    
+    setCheckedCategories(newChecked);
+  };
+
+  // Check if group is partially checked (some but not all categories checked)
+  const isGroupIndeterminate = (type, groupData) => {
+    const checkedCount = groupData.categories.filter(
+      cat => checkedCategories[`${type}-cat-${cat.name}`]
+    ).length;
+    return checkedCount > 0 && checkedCount < groupData.categories.length;
+  };
+
+  // Check if all categories in group are checked
+  const isGroupFullyChecked = (type, groupData) => {
+    return groupData.categories.every(
+      cat => checkedCategories[`${type}-cat-${cat.name}`]
+    );
+  };
+
+  // Check All / Uncheck All functions
+  const checkAllCategories = () => {
+    const newChecked = {};
+    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
+      newChecked[`income-group-${groupName}`] = true;
+      groupData.categories.forEach(cat => {
+        newChecked[`income-cat-${cat.name}`] = true;
+      });
+    });
+    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
+      newChecked[`expense-group-${groupName}`] = true;
+      groupData.categories.forEach(cat => {
+        newChecked[`expense-cat-${cat.name}`] = true;
+      });
+    });
+    setCheckedCategories(newChecked);
+  };
+
+  const uncheckAllCategories = () => {
+    const newChecked = {};
+    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
+      newChecked[`income-group-${groupName}`] = false;
+      groupData.categories.forEach(cat => {
+        newChecked[`income-cat-${cat.name}`] = false;
+      });
+    });
+    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
+      newChecked[`expense-group-${groupName}`] = false;
+      groupData.categories.forEach(cat => {
+        newChecked[`expense-cat-${cat.name}`] = false;
+      });
+    });
+    setCheckedCategories(newChecked);
+  };
 
   // Format currency
   const formatCurrency = (val) => {
@@ -533,23 +696,23 @@ const DesktopReports = ({ onBack }) => {
         <div className="grid grid-cols-3 gap-4 mb-4">
           <div className="bg-white rounded-xl shadow-sm p-4">
             <div className="text-sm text-gray-500 mb-1">Total Income</div>
-            <div className="text-xl font-bold text-emerald-600">+{formatCurrency(reportData.grandTotalIncome)}</div>
+            <div className="text-xl font-bold text-emerald-600">+{formatCurrency(filteredReportData.grandTotalIncome)}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4">
             <div className="text-sm text-gray-500 mb-1">Total Expenses</div>
-            <div className="text-xl font-bold text-red-600">-{formatCurrency(reportData.grandTotalExpense)}</div>
+            <div className="text-xl font-bold text-red-600">-{formatCurrency(filteredReportData.grandTotalExpense)}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4">
             <div className="text-sm text-gray-500 mb-1">Net Income</div>
-            <div className={`text-xl font-bold ${reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? '+' : '-'}
-              {formatCurrency(Math.abs(reportData.grandTotalIncome - reportData.grandTotalExpense))}
+            <div className={`text-xl font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
+              {formatCurrency(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
             </div>
           </div>
         </div>
 
-        {/* Expand/Collapse Buttons */}
-        <div className="flex gap-2 mb-4">
+        {/* Expand/Collapse Buttons + Check/Uncheck All */}
+        <div className="flex gap-2 mb-4 flex-wrap">
           <button
             onClick={expandAll}
             className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -561,6 +724,19 @@ const DesktopReports = ({ onBack }) => {
             className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
             Collapse All
+          </button>
+          <div className="w-px bg-gray-300 mx-1"></div>
+          <button
+            onClick={checkAllCategories}
+            className="px-3 py-1 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
+          >
+            ☑ Check All
+          </button>
+          <button
+            onClick={uncheckAllCategories}
+            className="px-3 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
+          >
+            ☐ Uncheck All
           </button>
         </div>
 
@@ -598,39 +774,70 @@ const DesktopReports = ({ onBack }) => {
                       onClick={() => toggleGroup('income', groupName)}
                     >
                       <td className="py-2 px-3 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
-                        <span className="mr-2">{expandedGroups[`income-${groupName}`] ? '▼' : '▶'}</span>
-                        {groupName}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isGroupFullyChecked('income', groupData)}
+                            ref={el => {
+                              if (el) el.indeterminate = isGroupIndeterminate('income', groupData);
+                            }}
+                            onChange={(e) => toggleGroupCheck('income', groupName, groupData, e)}
+                            className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <span className="mr-1">{expandedGroups[`income-${groupName}`] ? '▼' : '▶'}</span>
+                          {groupName}
+                        </div>
                       </td>
-                      {reportData.months.map(m => (
-                        <td key={m.key} className="py-2 px-3 text-right text-emerald-600">
-                          {formatCurrency(groupData.months[m.key])}
-                        </td>
-                      ))}
-                      <td className="py-2 px-3 text-right font-medium text-emerald-700 bg-gray-50">
-                        {formatCurrency(groupData.total)}
+                      {reportData.months.map(m => {
+                        // Calculate filtered amount for this group
+                        const filteredAmount = groupData.categories
+                          .filter(cat => checkedCategories[`income-cat-${cat.name}`])
+                          .reduce((sum, cat) => sum + (cat.months[m.key] || 0), 0);
+                        return (
+                          <td key={m.key} className={`py-2 px-3 text-right text-emerald-600 ${!isGroupFullyChecked('income', groupData) && !isGroupIndeterminate('income', groupData) ? 'opacity-30' : ''}`}>
+                            {formatCurrency(filteredAmount)}
+                          </td>
+                        );
+                      })}
+                      <td className={`py-2 px-3 text-right font-medium text-emerald-700 bg-gray-50 ${!isGroupFullyChecked('income', groupData) && !isGroupIndeterminate('income', groupData) ? 'opacity-30' : ''}`}>
+                        {formatCurrency(groupData.categories
+                          .filter(cat => checkedCategories[`income-cat-${cat.name}`])
+                          .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
                     </tr>
                     {/* Category Rows */}
-                    {expandedGroups[`income-${groupName}`] && groupData.categories.map(cat => (
-                      <tr key={cat.name} className="border-b border-gray-50 bg-gray-50/50">
-                        <td className="py-1.5 px-3 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
-                          {cat.name}
-                        </td>
-                        {reportData.months.map(m => (
-                          <AmountCell 
-                            key={m.key}
-                            amount={cat.months[m.key]} 
-                            category={cat.name} 
-                            monthKey={m.key} 
-                            type="income"
-                            className="text-gray-600"
-                          />
-                        ))}
-                        <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
-                          {formatCurrency(cat.total)}
-                        </td>
-                      </tr>
-                    ))}
+                    {expandedGroups[`income-${groupName}`] && groupData.categories.map(cat => {
+                      const isChecked = checkedCategories[`income-cat-${cat.name}`];
+                      return (
+                        <tr key={cat.name} className={`border-b border-gray-50 bg-gray-50/50 ${!isChecked ? 'opacity-40' : ''}`}>
+                          <td className="py-1.5 px-3 pl-8 text-gray-600 sticky left-0 bg-gray-50/50">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => toggleCategory('income', cat.name, e)}
+                                className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer"
+                              />
+                              <span className={!isChecked ? 'line-through' : ''}>{cat.name}</span>
+                            </div>
+                          </td>
+                          {reportData.months.map(m => (
+                            <AmountCell 
+                              key={m.key}
+                              amount={isChecked ? cat.months[m.key] : 0} 
+                              category={cat.name} 
+                              monthKey={m.key} 
+                              type="income"
+                              className="text-gray-600"
+                            />
+                          ))}
+                          <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
+                            {isChecked ? formatCurrency(cat.total) : ''}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </React.Fragment>
                 ))}
                 {/* Income Total */}
@@ -640,11 +847,11 @@ const DesktopReports = ({ onBack }) => {
                   </td>
                   {reportData.months.map(m => (
                     <td key={m.key} className="py-2 px-3 text-right font-bold text-emerald-700">
-                      {formatCurrency(reportData.incomeTotals[m.key])}
+                      {formatCurrency(filteredReportData.incomeTotals[m.key])}
                     </td>
                   ))}
                   <td className="py-2 px-3 text-right font-bold text-emerald-800 bg-emerald-200">
-                    {formatCurrency(reportData.grandTotalIncome)}
+                    {formatCurrency(filteredReportData.grandTotalIncome)}
                   </td>
                 </tr>
 
@@ -665,39 +872,70 @@ const DesktopReports = ({ onBack }) => {
                       onClick={() => toggleGroup('expense', groupName)}
                     >
                       <td className="py-2 px-3 font-medium text-gray-800 sticky left-0 bg-white hover:bg-gray-50">
-                        <span className="mr-2">{expandedGroups[`expense-${groupName}`] ? '▼' : '▶'}</span>
-                        {groupName}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isGroupFullyChecked('expense', groupData)}
+                            ref={el => {
+                              if (el) el.indeterminate = isGroupIndeterminate('expense', groupData);
+                            }}
+                            onChange={(e) => toggleGroupCheck('expense', groupName, groupData, e)}
+                            className="w-4 h-4 text-red-600 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <span className="mr-1">{expandedGroups[`expense-${groupName}`] ? '▼' : '▶'}</span>
+                          {groupName}
+                        </div>
                       </td>
-                      {reportData.months.map(m => (
-                        <td key={m.key} className="py-2 px-3 text-right text-red-600">
-                          {formatCurrency(groupData.months[m.key])}
-                        </td>
-                      ))}
-                      <td className="py-2 px-3 text-right font-medium text-red-700 bg-gray-50">
-                        {formatCurrency(groupData.total)}
+                      {reportData.months.map(m => {
+                        // Calculate filtered amount for this group
+                        const filteredAmount = groupData.categories
+                          .filter(cat => checkedCategories[`expense-cat-${cat.name}`])
+                          .reduce((sum, cat) => sum + (cat.months[m.key] || 0), 0);
+                        return (
+                          <td key={m.key} className={`py-2 px-3 text-right text-red-600 ${!isGroupFullyChecked('expense', groupData) && !isGroupIndeterminate('expense', groupData) ? 'opacity-30' : ''}`}>
+                            {formatCurrency(filteredAmount)}
+                          </td>
+                        );
+                      })}
+                      <td className={`py-2 px-3 text-right font-medium text-red-700 bg-gray-50 ${!isGroupFullyChecked('expense', groupData) && !isGroupIndeterminate('expense', groupData) ? 'opacity-30' : ''}`}>
+                        {formatCurrency(groupData.categories
+                          .filter(cat => checkedCategories[`expense-cat-${cat.name}`])
+                          .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
                     </tr>
                     {/* Category Rows */}
-                    {expandedGroups[`expense-${groupName}`] && groupData.categories.map(cat => (
-                      <tr key={cat.name} className="border-b border-gray-50 bg-gray-50/50">
-                        <td className="py-1.5 px-3 pl-10 text-gray-600 sticky left-0 bg-gray-50/50">
-                          {cat.name}
-                        </td>
-                        {reportData.months.map(m => (
-                          <AmountCell 
-                            key={m.key}
-                            amount={cat.months[m.key]} 
-                            category={cat.name} 
-                            monthKey={m.key} 
-                            type="expense"
-                            className="text-gray-600"
-                          />
-                        ))}
-                        <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
-                          {formatCurrency(cat.total)}
-                        </td>
-                      </tr>
-                    ))}
+                    {expandedGroups[`expense-${groupName}`] && groupData.categories.map(cat => {
+                      const isChecked = checkedCategories[`expense-cat-${cat.name}`];
+                      return (
+                        <tr key={cat.name} className={`border-b border-gray-50 bg-gray-50/50 ${!isChecked ? 'opacity-40' : ''}`}>
+                          <td className="py-1.5 px-3 pl-8 text-gray-600 sticky left-0 bg-gray-50/50">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => toggleCategory('expense', cat.name, e)}
+                                className="w-4 h-4 text-red-600 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
+                              />
+                              <span className={!isChecked ? 'line-through' : ''}>{cat.name}</span>
+                            </div>
+                          </td>
+                          {reportData.months.map(m => (
+                            <AmountCell 
+                              key={m.key}
+                              amount={isChecked ? cat.months[m.key] : 0} 
+                              category={cat.name} 
+                              monthKey={m.key} 
+                              type="expense"
+                              className="text-gray-600"
+                            />
+                          ))}
+                          <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
+                            {isChecked ? formatCurrency(cat.total) : ''}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </React.Fragment>
                 ))}
                 {/* Expense Total */}
@@ -707,11 +945,11 @@ const DesktopReports = ({ onBack }) => {
                   </td>
                   {reportData.months.map(m => (
                     <td key={m.key} className="py-2 px-3 text-right font-bold text-red-700">
-                      {formatCurrency(reportData.expenseTotals[m.key])}
+                      {formatCurrency(filteredReportData.expenseTotals[m.key])}
                     </td>
                   ))}
                   <td className="py-2 px-3 text-right font-bold text-red-800 bg-red-200">
-                    {formatCurrency(reportData.grandTotalExpense)}
+                    {formatCurrency(filteredReportData.grandTotalExpense)}
                   </td>
                 </tr>
 
@@ -724,16 +962,16 @@ const DesktopReports = ({ onBack }) => {
                     💰 Net Income
                   </td>
                   {reportData.months.map(m => {
-                    const net = (reportData.incomeTotals[m.key] || 0) - (reportData.expenseTotals[m.key] || 0);
+                    const net = (filteredReportData.incomeTotals[m.key] || 0) - (filteredReportData.expenseTotals[m.key] || 0);
                     return (
                       <td key={m.key} className={`py-3 px-3 text-right font-bold ${net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {net >= 0 ? '+' : '-'}{formatCurrency(Math.abs(net))}
                       </td>
                     );
                   })}
-                  <td className={`py-3 px-3 text-right font-bold ${reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
-                    {reportData.grandTotalIncome - reportData.grandTotalExpense >= 0 ? '+' : '-'}
-                    {formatCurrency(Math.abs(reportData.grandTotalIncome - reportData.grandTotalExpense))}
+                  <td className={`py-3 px-3 text-right font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
+                    {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
+                    {formatCurrency(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
                   </td>
                 </tr>
               </tbody>

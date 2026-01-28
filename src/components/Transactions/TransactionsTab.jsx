@@ -11,7 +11,10 @@ const TransactionsTab = () => {
     transactions, 
     accountNames,
     groupedAccounts,
-    categoryNames, 
+    categoryNames,
+    categories,
+    expenseCategories,
+    incomeCategories,
     tagSuggestions,
     parentTags,
     getSubTags,
@@ -69,6 +72,40 @@ const TransactionsTab = () => {
     
     return tags.sort((a, b) => a.display.localeCompare(b.display));
   }, [parentTags, getSubTags]);
+
+  // Group categories by type and group for filter dropdown
+  const groupedCategoriesForFilter = useMemo(() => {
+    // Group expense categories by group
+    const expenseByGroup = {};
+    expenseCategories.forEach(cat => {
+      const group = cat.group || 'Other';
+      if (!expenseByGroup[group]) expenseByGroup[group] = [];
+      expenseByGroup[group].push(cat);
+    });
+
+    // Group income categories by group
+    const incomeByGroup = {};
+    incomeCategories.forEach(cat => {
+      const group = cat.group || 'Other';
+      if (!incomeByGroup[group]) incomeByGroup[group] = [];
+      incomeByGroup[group].push(cat);
+    });
+
+    // Sort groups and categories within each group
+    const sortedExpenseGroups = Object.keys(expenseByGroup).sort();
+    const sortedIncomeGroups = Object.keys(incomeByGroup).sort();
+
+    return {
+      expense: sortedExpenseGroups.map(group => ({
+        group,
+        categories: expenseByGroup[group].sort((a, b) => a.name.localeCompare(b.name))
+      })),
+      income: sortedIncomeGroups.map(group => ({
+        group,
+        categories: incomeByGroup[group].sort((a, b) => a.name.localeCompare(b.name))
+      }))
+    };
+  }, [expenseCategories, incomeCategories]);
   
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -430,9 +467,37 @@ const TransactionsTab = () => {
                     className="p-2 rounded border border-gray-200 text-sm"
                   >
                     <option value="all">All Categories</option>
-                    {categoryNames.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                    
+                    {/* Show based on type filter */}
+                    {(filterType === 'all' || filterType === 'expense' || filterType === 'split') && groupedCategoriesForFilter.expense.length > 0 && (
+                      <optgroup label="── EXPENSE ──">
+                        {groupedCategoriesForFilter.expense.map(({ group, categories: cats }) => (
+                          <React.Fragment key={`expense-${group}`}>
+                            <option disabled className="font-bold text-gray-500">📁 {group}</option>
+                            {cats.map(cat => (
+                              <option key={cat.id} value={cat.name}>
+                                &nbsp;&nbsp;&nbsp;{cat.icon || '📦'} {cat.name}
+                              </option>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </optgroup>
+                    )}
+                    
+                    {(filterType === 'all' || filterType === 'income' || filterType === 'split') && groupedCategoriesForFilter.income.length > 0 && (
+                      <optgroup label="── INCOME ──">
+                        {groupedCategoriesForFilter.income.map(({ group, categories: cats }) => (
+                          <React.Fragment key={`income-${group}`}>
+                            <option disabled className="font-bold text-gray-500">📁 {group}</option>
+                            {cats.map(cat => (
+                              <option key={cat.id} value={cat.name}>
+                                &nbsp;&nbsp;&nbsp;{cat.icon || '💰'} {cat.name}
+                              </option>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 {/* Tag & Wants/Needs Filter - Same Row */}
