@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { doc, updateDoc, writeBatch, deleteDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useData } from '../../contexts/DataContext';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
 import AddAccountModal from './AddAccountModal';
 import UpdateValueModal from './UpdateValueModal';
@@ -11,6 +12,29 @@ import { useToast } from '../Toast/ToastProvider';
 
 const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => {
   const toast = useToast();
+  const { parentTags, getSubTags } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - map each sub to "Parent > Sub"
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        // Parent has no sub-tags - map to itself
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
+  
   const [isReconciling, setIsReconciling] = useState(false);
   const [showManualReconcile, setShowManualReconcile] = useState(false);
   const [reconcileBalance, setReconcileBalance] = useState('');
@@ -89,21 +113,55 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   };
 
   const accountTransactions = useMemo(() => {
-    return transactions
-      .filter(t => {
-        if (t.type === 'transfer') return t.fromAccount === account.name || t.toAccount === account.name;
-        if (t.type === 'split') return t.account === account.name;
-        return t.account === account.name;
-      })
-      .sort((a, b) => {
-        // Sort by date first (newest first)
-        const dateCompare = (b.date || '').localeCompare(a.date || '');
-        if (dateCompare !== 0) return dateCompare;
-        // Within same date, sort by createdAt (newest first)
-        const aTime = a.createdAt?.seconds || a.createdAt?.getTime?.() / 1000 || 0;
-        const bTime = b.createdAt?.seconds || b.createdAt?.getTime?.() / 1000 || 0;
-        return bTime - aTime;
-      });
+    const result = [];
+    
+    transactions.forEach(t => {
+      // Normal filter logic
+      if (t.type === 'transfer') {
+        if (t.fromAccount === account.name || t.toAccount === account.name) {
+          result.push(t);
+        }
+      } else if (t.type === 'split') {
+        // Include if main account matches
+        if (t.account === account.name) {
+          result.push(t);
+        }
+        // Also check if any split has this account as transferAccount
+        // Create virtual transactions for these
+        if (t.splits && Array.isArray(t.splits)) {
+          t.splits.forEach((s, idx) => {
+            if (s.isTransfer && s.transferAccount === account.name) {
+              // Create a virtual transaction entry for display
+              result.push({
+                ...t,
+                id: `${t.id}-split-transfer-${idx}`,
+                _isSplitTransfer: true,
+                _splitIndex: idx,
+                _splitAmount: s.amount,
+                _splitMemo: s.memo,
+                _parentSplitType: t.splitType,
+                _parentAccount: t.account,
+                _realId: t.id
+              });
+            }
+          });
+        }
+      } else {
+        if (t.account === account.name) {
+          result.push(t);
+        }
+      }
+    });
+    
+    return result.sort((a, b) => {
+      // Sort by date first (newest first)
+      const dateCompare = (b.date || '').localeCompare(a.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      // Within same date, sort by createdAt (newest first)
+      const aTime = a.createdAt?.seconds || a.createdAt?.getTime?.() / 1000 || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.getTime?.() / 1000 || 0;
+      return bTime - aTime;
+    });
   }, [account, transactions]);
 
   // Filtered transactions for display (when showUnclearedOnly is true)
@@ -133,13 +191,21 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     
     accountTransactions.forEach(t => {
       let amt = 0;
-      if (t.type === 'transfer') {
+      
+      // Handle virtual split transfer transactions
+      if (t._isSplitTransfer) {
+        const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+        // For income split: money comes FROM this account (negative)
+        // For expense split: money goes TO this account (positive)
+        amt = t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+      } else if (t.type === 'transfer') {
         amt = t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
       } else if (t.type === 'split') {
         amt = Number(t.totalAmount) || 0;
       } else {
         amt = Number(t.amount) || 0;
       }
+      
       bal += amt;
       if (t.clearStatus === 'cleared' || t.clearStatus === 'reconciled') cleared += amt;
       else {
@@ -161,7 +227,11 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     // Cộng tất cả transactions
     let currentVal = startingBalance;
     accountTransactions.forEach(t => {
-      if (t.type === 'transfer') {
+      // Handle virtual split transfer transactions
+      if (t._isSplitTransfer) {
+        const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+        currentVal += t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+      } else if (t.type === 'transfer') {
         currentVal += t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
       } else if (t.type === 'split') {
         currentVal += Number(t.totalAmount) || 0;
@@ -172,7 +242,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     });
     
     return currentVal;
-  }, [accountTransactions, account]);
+  }, [accountTransactions, account, balance]);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US').format(Math.abs(amount || 0));
   const formatBalance = (amount) => {
@@ -273,8 +343,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     e.stopPropagation();
     if (t.clearStatus === 'reconciled') { toast.warning('🔒 Locked'); return; }
     try {
+      const realId = t._realId || t.id;  // Use real ID for virtual transactions
       const newStatus = t.clearStatus === 'cleared' ? 'uncleared' : 'cleared';
-      await updateDoc(doc(db, 'transactions', t.id), { clearStatus: newStatus });
+      await updateDoc(doc(db, 'transactions', realId), { clearStatus: newStatus });
       
       // Auto turn off filter when all uncleared are cleared
       if (showUnclearedOnly && newStatus === 'cleared') {
@@ -922,7 +993,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 balance = item.data.amount || 0;
               } else if (item.type === 'transaction') {
                 const t = item.data;
-                if (t.type === 'unrealized_gain') {
+                if (t._isSplitTransfer) {
+                  const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+                  balance += t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+                } else if (t.type === 'unrealized_gain') {
                   balance += Number(t.amount) || 0;
                 } else if (t.type === 'transfer') {
                   balance += t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
@@ -994,10 +1068,24 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                     const isSplit = t.type === 'split';
                     const isLoan = t.type === 'loan';
                     const isUnrealizedGain = t.type === 'unrealized_gain';
+                    const isSplitTransfer = t._isSplitTransfer;
                     const isOutgoing = isTransfer && t.fromAccount === account.name;
-                    let displayAmount = isTransfer ? (isOutgoing ? -Number(t.amount) : Number(t.amount)) : isSplit ? Number(t.totalAmount) || 0 : Number(t.amount) || 0;
+                    
+                    // Calculate display amount
+                    let displayAmount;
+                    if (isSplitTransfer) {
+                      const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+                      displayAmount = t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+                    } else if (isTransfer) {
+                      displayAmount = isOutgoing ? -Number(t.amount) : Number(t.amount);
+                    } else if (isSplit) {
+                      displayAmount = Number(t.totalAmount) || 0;
+                    } else {
+                      displayAmount = Number(t.amount) || 0;
+                    }
+                    
                     const isPositive = displayAmount > 0;
-                    const isSelected = selectedItems.has(t.id);
+                    const isSelected = selectedItems.has(t._realId || t.id);
                     const balanceAtTime = isMarketValue ? runningBalances[item.timestamp] : null;
                     
                     // Get time string from createdAt
@@ -1074,7 +1162,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                           if (e.target.closest('.clear-btn')) return;
                           
                           if (isSelectMode) {
-                            handleSelectItem(t.id);
+                            handleSelectItem(t._realId || t.id);
                           } else {
                             // Show notice for loan transactions
                             if (t.type === 'loan') {
@@ -1085,10 +1173,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                             setIsModalOpen(true);
                           }
                         }} 
-                        onTouchStart={() => handleTouchStart(t.id)}
+                        onTouchStart={() => handleTouchStart(t._realId || t.id)}
                         onTouchEnd={handleTouchEnd}
                         onTouchMove={handleTouchEnd}
-                        onContextMenu={(e) => { e.preventDefault(); handleLongPress(t.id); }}
+                        onContextMenu={(e) => { e.preventDefault(); handleLongPress(t._realId || t.id); }}
                         className={`p-3 cursor-pointer hover:bg-gray-50 active:bg-gray-100 ${isSelected ? 'bg-indigo-50' : ''}`}
                       >
                         <div className="flex items-center gap-2">
@@ -1099,22 +1187,41 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-gray-800 truncate flex items-center gap-1.5">
-                              {isSplit && <SplitIcon />}
+                              {isSplit && !isSplitTransfer && <SplitIcon />}
+                              {isSplitTransfer && <span>🔀</span>}
                               {isLoan && <span className="text-amber-500">💰</span>}
-                              {isLoan ? (t.memo || 'Loan transaction') : isTransfer ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? (t.toAccount || 'Unknown') : (t.fromAccount || 'Unknown')}` : (t.payee || 'No Payee')}
+                              {isSplitTransfer 
+                                ? `Transfer ${t._parentSplitType === 'income' ? 'to' : 'from'} ${t._parentAccount}`
+                                : isLoan ? (t.memo || 'Loan transaction') 
+                                : isTransfer ? `Transfer ${isOutgoing ? 'to' : 'from'} ${isOutgoing ? (t.toAccount || 'Unknown') : (t.fromAccount || 'Unknown')}` 
+                                : (t.payee || 'No Payee')}
                               {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
                             </div>
-                            {!isSplit && (
-                              <div className="text-xs text-gray-500 truncate">
-                                {isLoan ? t.loan : isTransfer ? 'Transfer' : t.category}
-                                {t.memo && !isLoan && <span className="text-gray-400"> • {t.memo}</span>}
-                              </div>
-                            )}
+                            <div className="text-xs text-gray-500 truncate">
+                              {isSplitTransfer 
+                                ? (t._splitMemo || t.payee || 'Split transaction')
+                                : isSplit
+                                  ? 'Split transaction'
+                                  : isLoan ? t.loan 
+                                  : isTransfer ? 'Transfer' 
+                                  : t.category}
+                              {t.memo && !isLoan && !isSplitTransfer && !isSplit && <span className="text-gray-400"> • {t.memo}</span>}
+                            </div>
                           </div>
                           <div className="text-right">
                             <div className={`font-bold whitespace-nowrap ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>{isPositive ? '+' : '-'}{formatCurrency(displayAmount)}</div>
                             {isMarketValue && balanceAtTime !== null && (
                               <div className="text-xs text-gray-400">{formatBalance(balanceAtTime)}</div>
+                            )}
+                            {/* Tags display */}
+                            {(t.tags?.length > 0 || t.tag) && (
+                              <div className="flex flex-wrap gap-1 justify-end mt-0.5">
+                                {(t.tags || (t.tag ? [t.tag] : [])).map(tag => (
+                                  <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded inline-block">
+                                    🏷️ {tagDisplayMap[tag] || tag}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                           </div>
                           {!isSelectMode && (
@@ -1126,9 +1233,21 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                             </button>
                           )}
                         </div>
-                        {isSplit && t.splits && (
+                        {isSplit && !isSplitTransfer && t.splits && (
                           <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">
-                            {t.splits.map((s, i) => (<div key={i} className="flex justify-between text-sm"><span className="text-gray-600">{s.isLoan ? s.loan : s.category}{s.memo && <span className="text-gray-400"> • {s.memo}</span>}</span><span className="text-gray-700 font-medium">{formatCurrency(s.amount)}</span></div>))}
+                            {t.splits.map((s, i) => (
+                              <div key={i} className="flex justify-between text-sm">
+                                <span className="text-gray-600">
+                                  {s.isTransfer 
+                                    ? `Transfer: ${t.account} → ${s.transferAccount}`
+                                    : s.isLoan 
+                                      ? s.loan 
+                                      : s.category}
+                                  {s.memo && <span className="text-gray-400"> • {s.memo}</span>}
+                                </span>
+                                <span className="text-gray-700 font-medium">{formatCurrency(s.amount)}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>

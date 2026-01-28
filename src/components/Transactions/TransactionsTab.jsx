@@ -667,7 +667,11 @@ const TransactionsTab = () => {
                           {t.splits.map((s, i) => (
                             <div key={i} className="flex justify-between text-xs">
                               <span className="text-gray-600">
-                                {s.isLoan ? s.loan : s.category}
+                                {s.isTransfer 
+                                  ? `Transfer: ${t.account} → ${s.transferAccount}`
+                                  : s.isLoan 
+                                    ? s.loan 
+                                    : s.category}
                                 {s.memo && <span className="text-gray-400 ml-1">• {s.memo}</span>}
                               </span>
                               <span className="text-gray-700 font-medium">

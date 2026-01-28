@@ -812,10 +812,26 @@ export const DataProvider = ({ children }) => {
           balances[t.toAccount] = (balances[t.toAccount] || 0) + amt;
         }
       } else if (t.type === 'split') {
-        // Split transactions use totalAmount
-        const amt = Number(t.totalAmount) || 0;
+        // Split transactions use totalAmount for main account
+        const totalAmt = Number(t.totalAmount) || 0;
         if (t.account) {
-          balances[t.account] = (balances[t.account] || 0) + amt;
+          balances[t.account] = (balances[t.account] || 0) + totalAmt;
+        }
+        
+        // Handle transfer splits - affect the transfer account
+        if (t.splits && Array.isArray(t.splits)) {
+          t.splits.forEach(s => {
+            if (s.isTransfer && s.transferAccount) {
+              const splitAmt = Math.abs(Number(s.amount) || 0);
+              // For income split: money comes FROM transferAccount
+              // For expense split: money goes TO transferAccount
+              if (t.splitType === 'income') {
+                balances[s.transferAccount] = (balances[s.transferAccount] || 0) - splitAmt;
+              } else if (t.splitType === 'expense') {
+                balances[s.transferAccount] = (balances[s.transferAccount] || 0) + splitAmt;
+              }
+            }
+          });
         }
       } else if (t.account) {
         const amt = Number(t.amount) || 0;

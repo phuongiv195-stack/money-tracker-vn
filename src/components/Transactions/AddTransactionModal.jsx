@@ -161,7 +161,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   });
 
   const [splits, setSplits] = useState([
-    { amount: '', category: '', loan: '', memo: '', isLoan: false }
+    { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }
   ]);
 
   // Use cached data from DataContext
@@ -201,7 +201,17 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         if (editTransaction.type === 'split') {
           setIsSplitMode(true);
           setActiveTab(editTransaction.splitType || 'expense');
-          setSplits(editTransaction.splits || []);
+          // Ensure all splits have required fields
+          const loadedSplits = (editTransaction.splits || []).map(s => ({
+            amount: s.amount || '',
+            category: s.category || '',
+            loan: s.loan || '',
+            memo: s.memo || '',
+            isLoan: s.isLoan || false,
+            isTransfer: s.isTransfer || false,
+            transferAccount: s.transferAccount || ''
+          }));
+          setSplits(loadedSplits.length > 0 ? loadedSplits : [{ amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
           setFormData({
             amount: Math.abs(editTransaction.totalAmount).toString(),
             payee: editTransaction.payee || '',
@@ -236,7 +246,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         }
       } else {
         setIsSplitMode(false);
-        setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
+        setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
         
         if (prefilledCategory?.type) {
           setActiveTab(prefilledCategory.type);
@@ -294,11 +304,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     }
   };
 
-  const toggleSplitLoan = (index) => {
+  const toggleSplitType = (index, type) => {
+    // type: 'category' | 'loan' | 'transfer'
     const newSplits = [...splits];
-    newSplits[index].isLoan = !newSplits[index].isLoan;
+    newSplits[index].isLoan = type === 'loan';
+    newSplits[index].isTransfer = type === 'transfer';
     newSplits[index].category = '';
     newSplits[index].loan = '';
+    newSplits[index].transferAccount = '';
+    setSplits(newSplits);
+  };
+
+  const handleSplitTransferAccountChange = (index, account) => {
+    const newSplits = [...splits];
+    newSplits[index].transferAccount = account;
     setSplits(newSplits);
   };
 
@@ -326,7 +345,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   };
 
   const addSplitLine = () => {
-    setSplits([...splits, { amount: '', category: '', loan: '', memo: '', isLoan: false }]);
+    setSplits([...splits, { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
   };
 
   const removeSplitLine = (index) => {
@@ -349,14 +368,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const enableSplitMode = () => {
     setIsSplitMode(true);
     setSplits([
-      { amount: '', category: '', loan: '', memo: '', isLoan: false },
-      { amount: '', category: '', loan: '', memo: '', isLoan: false }
+      { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' },
+      { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }
     ]);
   };
 
   const disableSplitMode = () => {
     setIsSplitMode(false);
-    setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false }]);
+    setSplits([{ amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
   };
 
   const getUsedAmount = () => {
@@ -417,12 +436,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           toast.error(`Split #${i + 1}: Please select loan`);
           return;
         }
-        if (!s.isLoan && !s.category) {
+        if (s.isTransfer && !s.transferAccount) {
+          toast.error(`Split #${i + 1}: Please select transfer account`);
+          return;
+        }
+        if (s.isTransfer && s.transferAccount === formData.account) {
+          toast.error(`Split #${i + 1}: Transfer account must be different from main account`);
+          return;
+        }
+        if (!s.isLoan && !s.isTransfer && !s.category) {
           toast.error(`Split #${i + 1}: Please select category`);
           return;
         }
         // Check if category exists in system
-        if (!s.isLoan && s.category) {
+        if (!s.isLoan && !s.isTransfer && s.category) {
           const categoryExists = categorySuggestions.some(c => c.name === s.category);
           if (!categoryExists) {
             toast.error(`Split #${i + 1}: Category "${s.category}" doesn't exist. Please create it first in Categories tab.`);
@@ -458,6 +485,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             category: s.category || null,
             loan: s.loan || null,
             isLoan: s.isLoan,
+            isTransfer: s.isTransfer || false,
+            transferAccount: s.transferAccount || null,
             memo: s.memo || null
           };
           // Only include loanType if it's a loan split and we have a type
@@ -797,12 +826,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                       )}
                     </div>
 
-                    {/* Category or Loan Toggle */}
-                    <div className="flex gap-2 mb-2">
+                    {/* Category, Loan, or Transfer Toggle */}
+                    <div className="flex gap-1 mb-2">
                       <button
-                        onClick={() => { if (split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-2 text-base rounded-lg font-medium ${
-                          !split.isLoan 
+                        onClick={() => toggleSplitType(index, 'category')}
+                        className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                          !split.isLoan && !split.isTransfer
                             ? 'bg-sky-500 text-white'
                             : 'bg-white text-gray-500 border border-gray-200'
                         }`}
@@ -810,8 +839,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                         Category
                       </button>
                       <button
-                        onClick={() => { if (!split.isLoan) toggleSplitLoan(index); }}
-                        className={`flex-1 py-2 text-base rounded-lg font-medium ${
+                        onClick={() => toggleSplitType(index, 'loan')}
+                        className={`flex-1 py-2 text-sm rounded-lg font-medium ${
                           split.isLoan 
                             ? 'bg-sky-500 text-white'
                             : 'bg-white text-gray-500 border border-gray-200'
@@ -819,10 +848,48 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                       >
                         Loan
                       </button>
+                      <button
+                        onClick={() => toggleSplitType(index, 'transfer')}
+                        className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                          split.isTransfer 
+                            ? 'bg-sky-500 text-white'
+                            : 'bg-white text-gray-500 border border-gray-200'
+                        }`}
+                      >
+                        Transfer
+                      </button>
                     </div>
 
-                    {/* Category or Loan Selector */}
-                    {split.isLoan ? (
+                    {/* Category, Loan, or Transfer Selector */}
+                    {split.isTransfer ? (
+                      <div>
+                        <select
+                          value={split.transferAccount}
+                          onChange={(e) => handleSplitTransferAccountChange(index, e.target.value)}
+                          className="w-full p-3 bg-white rounded-lg border border-sky-200 text-base"
+                        >
+                          <option value="">
+                            {activeTab === 'income' ? 'Transfer FROM account...' : 'Transfer TO account...'}
+                          </option>
+                          {quickSelectGroupedAccounts.map(group => (
+                            <optgroup key={group.label} label={group.label}>
+                              {group.accounts
+                                .filter(acc => acc.name !== formData.account)
+                                .map(acc => (
+                                  <option key={acc.name} value={acc.name}>
+                                    {acc.icon} {acc.name}
+                                  </option>
+                                ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                        {split.transferAccount && (
+                          <div className="mt-2 text-xs text-sky-600 bg-sky-50 p-2 rounded-lg">
+                            💡 {activeTab === 'income' ? `Money from ${split.transferAccount} → ${formData.account}` : `Money from ${formData.account} → ${split.transferAccount}`}
+                          </div>
+                        )}
+                      </div>
+                    ) : split.isLoan ? (
                       <div>
                         <div
                           onClick={() => setActiveSplitLoanIndex(index)}
