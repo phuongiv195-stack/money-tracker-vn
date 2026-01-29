@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { doc, updateDoc, writeBatch, deleteDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useData } from '../../contexts/DataContext';
@@ -72,6 +72,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
   
   // Filter uncleared transactions during reconcile
   const [showUnclearedOnly, setShowUnclearedOnly] = useState(false);
+  
+  // Display limit for performance
+  const [displayLimit, setDisplayLimit] = useState(100);
 
   // Smart back handler - close menu/modals first
   const handleBackPress = useCallback(() => {
@@ -139,6 +142,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 _splitIndex: idx,
                 _splitAmount: s.amount,
                 _splitMemo: s.memo,
+                _splitCategory: s.category,
                 _parentSplitType: t.splitType,
                 _parentAccount: t.account,
                 _realId: t.id
@@ -172,14 +176,19 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     );
   }, [accountTransactions, showUnclearedOnly]);
 
+  // Apply display limit for performance
+  const displayedTransactions = useMemo(() => {
+    return displayTransactions.slice(0, displayLimit);
+  }, [displayTransactions, displayLimit]);
+
   const groupedTransactions = useMemo(() => {
     const groups = {};
-    accountTransactions.forEach(t => {
+    displayedTransactions.forEach(t => {
       if (!groups[t.date]) groups[t.date] = [];
       groups[t.date].push(t);
     });
     return groups;
-  }, [accountTransactions]);
+  }, [displayedTransactions]);
 
   const { balance, clearedBalance, unclearedBalance, unclearedCount } = useMemo(() => {
     // Add starting balance for all accounts (except loan handled separately)
@@ -259,7 +268,21 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     const date = new Date(isoDate);
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   };
+  
+  // Format date with time for My Statement display
+  const formatDateTimeForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const dateStr = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `${timeStr} ${dateStr}`;
+  };
   const formatNumberInput = (value) => value ? new Intl.NumberFormat('en-US').format(value.replace(/,/g,'')) : '';
+
+  // Reset display limit when filter changes
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [showUnclearedOnly]);
 
   const handleBalanceChange = (e) => {
     const value = e.target.value.replace(/,/g, '');
@@ -523,9 +546,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     
     try {
       const amount = parseFloat(manualRefAmount.replace(/,/g, ''));
+      // Save full timestamp (date + time) for when statement was entered
       await updateDoc(doc(db, 'accounts', account.id), {
         manualReconcileAmount: amount,
-        manualReconcileDate: manualRefDate || new Date().toISOString().split('T')[0]
+        manualReconcileDate: new Date().toISOString()
       });
       
       toast.success('Manual reference saved!');
@@ -638,10 +662,15 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         )}
         
         {!isMarketValue && (
-          <div className="flex justify-center gap-6 mt-3 pt-3 border-t border-white/20 text-sm">
-            <div className="text-center"><div className="opacity-70">Cleared</div><div className="font-medium">{clearedBalance >= 0 ? '+' : '-'}{formatCurrency(clearedBalance)}</div></div>
-            <div className="text-center"><div className="opacity-70">Uncleared</div><div className="font-medium">{unclearedBalance >= 0 ? '+' : '-'}{formatCurrency(unclearedBalance)}</div></div>
-          </div>
+          <>
+            <div className="flex justify-center gap-6 mt-3 pt-3 border-t border-white/20 text-sm">
+              <div className="text-center"><div className="opacity-70">Cleared</div><div className="font-medium">{clearedBalance >= 0 ? '+' : '-'}{formatCurrency(clearedBalance)}</div></div>
+              <div className="text-center"><div className="opacity-70">Uncleared</div><div className="font-medium">{unclearedBalance >= 0 ? '+' : '-'}{formatCurrency(unclearedBalance)}</div></div>
+            </div>
+            <div className="text-xs opacity-70 mt-2 text-center">
+              {displayTransactions.length} transactions{showUnclearedOnly && ' (uncleared only)'}
+            </div>
+          </>
         )}
         {!isMarketValue && !isReconciling && (
           <div className="mt-3 flex justify-center gap-2">
@@ -670,7 +699,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           </div>
           <button 
             onClick={openEditManualRef}
-            className="text-emerald-500 text-xs font-medium hover:underline"
+            className="text-emerald-500 text-sm font-medium hover:underline"
           >
             {account.manualReconcileAmount ? 'Edit' : '+ Add'}
           </button>
@@ -682,8 +711,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               <span className={`text-lg font-bold ${account.manualReconcileAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
                 {account.manualReconcileAmount >= 0 ? '+' : ''}{formatCurrency(account.manualReconcileAmount)}
               </span>
-              <span className="text-xs text-gray-400">
-                ({formatDateForDisplay(account.manualReconcileDate)})
+              <span className="text-sm text-gray-400">
+                {formatDateTimeForDisplay(account.manualReconcileDate)}
               </span>
             </div>
             
@@ -738,25 +767,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 />
               </div>
               
-              {/* Date Input - Button style to prevent auto calendar */}
-              <div>
-                <label className="block text-sm text-gray-500 mb-1">Statement Date</label>
-                <div className="relative">
-                  <input 
-                    id="manualRefDateInput"
-                    type="date" 
-                    value={manualRefDate} 
-                    onChange={(e) => setManualRefDate(e.target.value)}
-                    className="absolute opacity-0 w-full h-full cursor-pointer"
-                    style={{ zIndex: 1 }}
-                  />
-                  <div className="w-full p-3 border-2 border-gray-200 rounded-lg bg-white flex items-center justify-between">
-                    <span className={manualRefDate ? 'text-gray-800' : 'text-gray-400'}>
-                      {manualRefDate ? formatDateForDisplay(manualRefDate) : 'Select date...'}
-                    </span>
-                    <span>📅</span>
-                  </div>
-                </div>
+              {/* Info about timestamp */}
+              <div className="text-xs text-gray-400 text-center">
+                📅 Timestamp will be recorded when you save
               </div>
 
               {/* System comparison */}
@@ -933,8 +946,11 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           // Gộp transactions thành 1 list (bỏ valueHistory vì đã có unrealized_gain transactions)
           const allItems = [];
           
-          // Thêm transactions (use displayTransactions for filtered view)
-          displayTransactions.forEach(t => {
+          // Check if all transactions are loaded (no more remaining)
+          const allTransactionsLoaded = displayLimit >= displayTransactions.length;
+          
+          // Thêm transactions (use displayedTransactions for limited view)
+          displayedTransactions.forEach(t => {
             // Lấy timestamp từ createdAt nếu có, fallback về date
             let ts;
             if (t.createdAt?.seconds) {
@@ -953,8 +969,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             });
           });
           
-          // Thêm Starting Balance cho tất cả accounts trừ loan (ẩn khi filter uncleared)
-          if (!showUnclearedOnly && account.type !== 'loan' && (account.startingBalance || 0) !== 0) {
+          // Thêm Starting Balance CHỈ KHI tất cả transactions đã được load
+          // (để Starting Balance hiển thị đúng vị trí cuối cùng - là transaction cũ nhất)
+          if (allTransactionsLoaded && !showUnclearedOnly && account.type !== 'loan' && (account.startingBalance || 0) !== 0) {
             // Ưu tiên startingBalanceDate, fallback về createdAt
             let sbDate;
             if (account.startingBalanceDate) {
@@ -1198,10 +1215,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                               {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
                             </div>
                             <div className="text-xs text-gray-500 truncate">
-                              {isSplitTransfer 
-                                ? (t._splitMemo || t.payee || 'Split transaction')
-                                : isSplit
-                                  ? 'Split transaction'
+                              {isSplit && !isSplitTransfer
+                                ? (t.memo || '')
+                                : isSplitTransfer
+                                  ? '' 
                                   : isLoan ? t.loan 
                                   : isTransfer ? 'Transfer' 
                                   : t.category}
@@ -1233,21 +1250,31 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                             </button>
                           )}
                         </div>
-                        {isSplit && !isSplitTransfer && t.splits && (
+                        {isSplit && t.splits && (
                           <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">
-                            {t.splits.map((s, i) => (
-                              <div key={i} className="flex justify-between text-sm">
-                                <span className="text-gray-600">
-                                  {s.isTransfer 
-                                    ? `Transfer: ${t.account} → ${s.transferAccount}`
-                                    : s.isLoan 
-                                      ? s.loan 
-                                      : s.category}
-                                  {s.memo && <span className="text-gray-400"> • {s.memo}</span>}
-                                </span>
-                                <span className="text-gray-700 font-medium">{formatCurrency(s.amount)}</span>
-                              </div>
-                            ))}
+                            {t.splits.map((s, i) => {
+                              // Check if this split is related to current account
+                              // For split transfers, only the split going to/from current account is related
+                              // For regular splits, check if this split item involves current account
+                              const isRelatedToAccount = s.isTransfer 
+                                ? (t.account === account.name || s.transferAccount === account.name)
+                                : true; // Non-transfer splits are always related
+                              
+                              return (
+                                <div key={i} className="flex justify-between text-sm">
+                                  <span className="text-gray-600">
+                                    {!isRelatedToAccount && <span className="text-gray-400 mr-1">⊗</span>}
+                                    {s.isTransfer 
+                                      ? `Transfer: ${t.account} → ${s.transferAccount}`
+                                      : s.isLoan 
+                                        ? s.loan 
+                                        : s.category}
+                                    {s.memo && <span className="text-gray-400"> • {s.memo}</span>}
+                                  </span>
+                                  <span className="text-gray-700 font-medium">{formatCurrency(s.amount)}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1259,6 +1286,18 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
           ));
         })()}
       </div>
+
+      {/* Show More Button (for already loaded transactions) */}
+      {displayLimit < displayTransactions.length && (
+        <div className="p-4 text-center">
+          <button
+            onClick={() => setDisplayLimit(prev => prev + 100)}
+            className="px-6 py-3 bg-emerald-100 text-emerald-700 rounded-lg font-medium hover:bg-emerald-200"
+          >
+            Show More ({displayTransactions.length - displayLimit} remaining)
+          </button>
+        </div>
+      )}
 
       {/* FAB Add Transaction Button */}
       {!isSelectMode && (

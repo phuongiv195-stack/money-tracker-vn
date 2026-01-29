@@ -101,6 +101,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const [showPayeeList, setShowPayeeList] = useState(false);
   const [showCategoryList, setShowCategoryList] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false); // Full screen category picker
+  const [showLoanPicker, setShowLoanPicker] = useState(false); // Full screen loan picker for non-split
   const [showTagList, setShowTagList] = useState(false);
   const [activeSplitIndex, setActiveSplitIndex] = useState(null);
   const [activeSplitCategoryIndex, setActiveSplitCategoryIndex] = useState(null); // Full screen category for split
@@ -110,12 +111,16 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const [newLoanType, setNewLoanType] = useState(null); // lend or borrow, null = not selected
 
   // Check if any picker is open
-  const isAnyPickerOpen = showCategoryPicker || activeSplitCategoryIndex !== null || activeSplitLoanIndex !== null;
+  const isAnyPickerOpen = showCategoryPicker || showLoanPicker || activeSplitCategoryIndex !== null || activeSplitLoanIndex !== null;
 
   // Smart back handler - close picker first, then modal
   const handleBackPress = useCallback(() => {
     if (showCategoryPicker) {
       setShowCategoryPicker(false);
+    } else if (showLoanPicker) {
+      setShowLoanPicker(false);
+      setNewLoanName('');
+      setNewLoanType(null);
     } else if (activeSplitCategoryIndex !== null) {
       setActiveSplitCategoryIndex(null);
       setSplitCategorySearch('');
@@ -126,7 +131,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     } else {
       onClose();
     }
-  }, [showCategoryPicker, activeSplitCategoryIndex, activeSplitLoanIndex, onClose]);
+  }, [showCategoryPicker, showLoanPicker, activeSplitCategoryIndex, activeSplitLoanIndex, onClose]);
 
   // Register back handler for hardware back button
   useBackHandler(isOpen, handleBackPress);
@@ -157,7 +162,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     memo: '',
     tag: '',  // For input field
     tags: [], // Array of selected tags
-    spendingType: 'need'
+    spendingType: 'need',
+    isLoan: false,  // For future transactions - loan instead of category
+    loan: ''        // Selected loan name
   });
 
   const [splits, setSplits] = useState([
@@ -182,6 +189,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       
       // Reset all picker states
       setShowCategoryPicker(false);
+      setShowLoanPicker(false);
       setActiveSplitCategoryIndex(null);
       setActiveSplitLoanIndex(null);
       setSplitCategorySearch('');
@@ -240,7 +248,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             memo: editTransaction.memo || '',
             tag: '',
             tags: editTransaction.tags || (editTransaction.tag ? [editTransaction.tag] : []),
-            spendingType: editTransaction.spendingType || 'need'
+            spendingType: editTransaction.spendingType || 'need',
+            isLoan: editTransaction.isLoan || false,
+            loan: editTransaction.loan || ''
           });
           setDisplayAmount(Math.abs(editTransaction.amount).toLocaleString('en-US'));
         }
@@ -270,7 +280,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           memo: '',
           tag: '',
           tags: [],
-          spendingType: prefilledCategory?.spendingType || 'need'
+          spendingType: prefilledCategory?.spendingType || 'need',
+          isLoan: false,
+          loan: ''
         });
         setDisplayAmount('');
       }
@@ -459,16 +471,25 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       }
       setSplits(newSplits);
     } else {
-      if (activeTab !== 'transfer' && !formData.category) {
-        toast.error("Please select category!");
-        return;
-      }
-      // Check if category exists in system (for non-transfer, non-split transactions)
-      if (activeTab !== 'transfer' && formData.category) {
-        const categoryExists = categorySuggestions.some(c => c.name === formData.category);
-        if (!categoryExists) {
-          toast.error(`Category "${formData.category}" doesn't exist. Please create it first in Categories tab.`);
+      // For future transactions with loan
+      if (forceFuture && formData.isLoan) {
+        if (!formData.loan) {
+          toast.error("Please select loan!");
           return;
+        }
+      } else {
+        // Normal category validation
+        if (activeTab !== 'transfer' && !formData.category) {
+          toast.error("Please select category!");
+          return;
+        }
+        // Check if category exists in system (for non-transfer, non-split transactions)
+        if (activeTab !== 'transfer' && formData.category) {
+          const categoryExists = categorySuggestions.some(c => c.name === formData.category);
+          if (!categoryExists) {
+            toast.error(`Category "${formData.category}" doesn't exist. Please create it first in Categories tab.`);
+            return;
+          }
         }
       }
     }
@@ -516,6 +537,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         // Always set createdAt for new or duplicated transactions
         if (!editTransaction || isDuplicating) {
           transactionData.createdAt = new Date();
+        } else {
+          // When updating existing transaction, set updatedAt
+          transactionData.updatedAt = serverTimestamp();
         }
 
         // If duplicating, always create new (addDoc), otherwise update or add based on editTransaction
@@ -541,6 +565,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         // Always set createdAt for new or duplicated transactions
         if (!editTransaction || isDuplicating) {
           transactionData.createdAt = new Date();
+        } else {
+          // When updating existing transaction, set updatedAt
+          transactionData.updatedAt = serverTimestamp();
         }
 
         if (activeTab === 'transfer') {
@@ -551,11 +578,27 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           else transactionData.amount = Math.abs(finalAmount);
 
           transactionData.payee = formData.payee;
-          transactionData.category = formData.category;
           transactionData.account = isFuture ? null : formData.account;
           
-          // Save spendingType only for expense transactions
-          if (activeTab === 'expense') {
+          // For future transactions with loan
+          if (isFuture && formData.isLoan && formData.loan) {
+            transactionData.isLoan = true;
+            transactionData.loan = formData.loan;
+            transactionData.category = null;
+            // Determine loan type
+            const determinedLoanType = loanTypeMap[formData.loan] || 
+              (formData.loan.toLowerCase().startsWith('lend to') ? 'lend' : 
+               formData.loan.toLowerCase().startsWith('borrow from') ? 'borrow' : null);
+            if (determinedLoanType) {
+              transactionData.loanType = determinedLoanType;
+            }
+          } else {
+            transactionData.category = formData.category;
+            transactionData.isLoan = false;
+          }
+          
+          // Save spendingType only for expense transactions (not loan)
+          if (activeTab === 'expense' && !formData.isLoan) {
             transactionData.spendingType = formData.spendingType;
           }
         }
@@ -1123,99 +1166,254 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             </div>
           )}
 
-          {/* Normal Mode - Category */}
+          {/* Normal Mode - Category/Loan */}
           {!isSplitMode && activeTab !== 'transfer' && (
             <div className="relative">
-              <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
-              <div
-                onClick={() => setShowCategoryPicker(true)}
-                className="w-full p-3 bg-gray-50 rounded-lg mt-1 cursor-pointer flex items-center justify-between text-base"
-              >
-                <span className={formData.category ? 'text-gray-900' : 'text-gray-400'}>
-                  {formData.category || 'Select category...'}
-                </span>
-                <span className="text-gray-400">▼</span>
-              </div>
-              
-              {/* Full Screen Category Picker */}
-              {showCategoryPicker && (() => {
-                // Group categories
-                const searchTerm = formData.category.toLowerCase();
-                const groupedCats = {};
-                filteredCategories
-                  .filter(cat => cat.name.toLowerCase().includes(searchTerm))
-                  .forEach(cat => {
-                    const groupName = cat.group || 'Other';
-                    if (!groupedCats[groupName]) groupedCats[groupName] = [];
-                    groupedCats[groupName].push(cat);
-                  });
-                
-                // Sort categories within each group by order
-                Object.keys(groupedCats).forEach(groupName => {
-                  groupedCats[groupName].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-                });
-                
-                // Sort groups by groupOrder
-                const sortedGroups = Object.keys(groupedCats).sort((a, b) => {
-                  const catsA = groupedCats[a];
-                  const catsB = groupedCats[b];
-                  const orderA = catsA[0]?.groupOrder ?? 999;
-                  const orderB = catsB[0]?.groupOrder ?? 999;
-                  return orderA - orderB;
-                });
-                
-                return (
-                  <div className="fixed inset-0 z-50 bg-white flex flex-col">
-                    {/* Header */}
-                    <div className="flex items-center justify-between p-4 border-b bg-white">
-                      <button onClick={() => setShowCategoryPicker(false)} className="text-gray-500 text-xl">✕</button>
-                      <h3 className="font-semibold text-lg">Select Category</h3>
-                      <div className="w-8"></div>
-                    </div>
+              {/* Category/Loan Toggle - Only show for Future transactions (forceFuture) */}
+              {forceFuture && (
+                <div className="flex gap-1 mb-3">
+                  <button
+                    onClick={() => setFormData({...formData, isLoan: false, loan: ''})}
+                    className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                      !formData.isLoan
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-white text-gray-500 border border-gray-200'
+                    }`}
+                  >
+                    Category
+                  </button>
+                  <button
+                    onClick={() => setFormData({...formData, isLoan: true, category: ''})}
+                    className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                      formData.isLoan 
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-white text-gray-500 border border-gray-200'
+                    }`}
+                  >
+                    Loan
+                  </button>
+                </div>
+              )}
+
+              {/* Category Selector - show when not isLoan OR when not forceFuture */}
+              {(!forceFuture || !formData.isLoan) && (
+                <>
+                  <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
+                  <div
+                    onClick={() => setShowCategoryPicker(true)}
+                    className="w-full p-3 bg-gray-50 rounded-lg mt-1 cursor-pointer flex items-center justify-between text-base"
+                  >
+                    <span className={formData.category ? 'text-gray-900' : 'text-gray-400'}>
+                      {formData.category || 'Select category...'}
+                    </span>
+                    <span className="text-gray-400">▼</span>
+                  </div>
+                  
+                  {/* Full Screen Category Picker */}
+                  {showCategoryPicker && (() => {
+                    // Group categories
+                    const searchTerm = formData.category.toLowerCase();
+                    const groupedCats = {};
+                    filteredCategories
+                      .filter(cat => cat.name.toLowerCase().includes(searchTerm))
+                      .forEach(cat => {
+                        const groupName = cat.group || 'Other';
+                        if (!groupedCats[groupName]) groupedCats[groupName] = [];
+                        groupedCats[groupName].push(cat);
+                      });
                     
-                    {/* Search */}
-                    <div className="p-3 border-b">
-                      <input
-                        type="text"
-                        placeholder="Search category..."
-                        value={formData.category}
-                        onChange={(e) => setFormData({...formData, category: e.target.value})}
-                        className="w-full p-3 bg-gray-100 rounded-lg outline-none text-base"
-                        autoFocus
-                      />
-                    </div>
+                    // Sort categories within each group by order
+                    Object.keys(groupedCats).forEach(groupName => {
+                      groupedCats[groupName].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+                    });
                     
-                    {/* Category List grouped */}
-                    <div 
-                      className="flex-1 overflow-y-auto"
-                      onScroll={() => document.activeElement?.blur()}
-                    >
-                      {sortedGroups.map(groupName => (
-                        <div key={groupName}>
-                          {/* Group Header */}
-                          <div className="px-4 py-2 bg-gray-100 text-sm font-semibold text-gray-600 sticky top-0">
-                            {groupName}
-                          </div>
-                          {/* Categories in group */}
-                          {groupedCats[groupName].map(cat => (
-                            <div 
-                              key={cat.id} 
-                              className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
-                              onClick={() => {
-                                handleCategorySelect(cat.name);
-                                setShowCategoryPicker(false);
-                              }}
-                            >
-                              <span className="text-2xl">{cat.icon}</span>
-                              <span className="flex-1 text-base">{cat.name}</span>
+                    // Sort groups by groupOrder
+                    const sortedGroups = Object.keys(groupedCats).sort((a, b) => {
+                      const catsA = groupedCats[a];
+                      const catsB = groupedCats[b];
+                      const orderA = catsA[0]?.groupOrder ?? 999;
+                      const orderB = catsB[0]?.groupOrder ?? 999;
+                      return orderA - orderB;
+                    });
+                    
+                    return (
+                      <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-4 border-b bg-white">
+                          <button onClick={() => setShowCategoryPicker(false)} className="text-gray-500 text-xl">✕</button>
+                          <h3 className="font-semibold text-lg">Select Category</h3>
+                          <div className="w-8"></div>
+                        </div>
+                        
+                        {/* Search */}
+                        <div className="p-3 border-b">
+                          <input
+                            type="text"
+                            placeholder="Search category..."
+                            value={formData.category}
+                            onChange={(e) => setFormData({...formData, category: e.target.value})}
+                            className="w-full p-3 bg-gray-100 rounded-lg outline-none text-base"
+                            autoFocus
+                          />
+                        </div>
+                        
+                        {/* Category List grouped */}
+                        <div 
+                          className="flex-1 overflow-y-auto"
+                          onScroll={() => document.activeElement?.blur()}
+                        >
+                          {sortedGroups.map(groupName => (
+                            <div key={groupName}>
+                              {/* Group Header */}
+                              <div className="px-4 py-2 bg-gray-100 text-sm font-semibold text-gray-600 sticky top-0">
+                                {groupName}
+                              </div>
+                              {/* Categories in group */}
+                              {groupedCats[groupName].map(cat => (
+                                <div 
+                                  key={cat.id} 
+                                  className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
+                                  onClick={() => {
+                                    handleCategorySelect(cat.name);
+                                    setShowCategoryPicker(false);
+                                  }}
+                                >
+                                  <span className="text-2xl">{cat.icon}</span>
+                                  <span className="flex-1 text-base">{cat.name}</span>
+                                </div>
+                              ))}
                             </div>
                           ))}
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+
+              {/* Loan Selector - show when isLoan AND forceFuture */}
+              {forceFuture && formData.isLoan && (
+                <>
+                  <label className="text-xs text-gray-500 uppercase font-semibold">Loan</label>
+                  <div
+                    onClick={() => setShowLoanPicker(true)}
+                    className="w-full p-3 bg-gray-50 rounded-lg mt-1 cursor-pointer flex items-center justify-between text-base"
+                  >
+                    <span className={formData.loan ? 'text-gray-900' : 'text-gray-400'}>
+                      {formData.loan || 'Select or create loan...'}
+                    </span>
+                    <span className="text-gray-400">▼</span>
                   </div>
-                );
-              })()}
+                  
+                  {/* Full Screen Loan Picker */}
+                  {showLoanPicker && (
+                    <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                      {/* Header */}
+                      <div className="flex items-center justify-between p-4 border-b bg-white">
+                        <button onClick={() => { setShowLoanPicker(false); setNewLoanName(''); setNewLoanType(null); }} className="text-gray-500 text-xl">✕</button>
+                        <h3 className="font-semibold text-lg">Select Loan</h3>
+                        <div className="w-8"></div>
+                      </div>
+                      
+                      {/* Scrollable Content */}
+                      <div 
+                        className="flex-1 overflow-y-auto"
+                        onScroll={() => document.activeElement?.blur()}
+                      >
+                        {/* Existing Loans List */}
+                        {loans.length > 0 && (
+                          <>
+                            <div className="p-3 text-xs font-bold text-gray-500 uppercase bg-gray-50 sticky top-0">Existing Loans</div>
+                            {loans.map(loan => (
+                              <div 
+                                key={loan} 
+                                className="p-4 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 active:bg-gray-200"
+                                onClick={() => {
+                                  setFormData({...formData, loan: loan});
+                                  setShowLoanPicker(false);
+                                  setNewLoanName('');
+                                  setNewLoanType(null);
+                                }}
+                              >
+                                <span className="text-2xl">{loanTypeMap[loan] === 'lend' || loan.toLowerCase().startsWith('lend to') ? '💸' : '💰'}</span>
+                                <span className="flex-1 text-base">{loan}</span>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                        
+                        {/* + New Loan Section */}
+                        <div className="p-3 text-xs font-bold text-gray-500 uppercase bg-gray-50 sticky top-0 mt-2 border-t">+ New Loan</div>
+                        <div className="p-4">
+                          {/* Loan Type Selection */}
+                          <div className="flex gap-2 mb-3">
+                            <button
+                              onClick={() => setNewLoanType('lend')}
+                              className={`flex-1 py-3 rounded-lg font-medium text-base ${
+                                newLoanType === 'lend' 
+                                  ? 'bg-emerald-500 text-white' 
+                                  : 'bg-white text-gray-600 border border-gray-200'
+                              }`}
+                            >
+                              💸 I Lend
+                            </button>
+                            <button
+                              onClick={() => setNewLoanType('borrow')}
+                              className={`flex-1 py-3 rounded-lg font-medium text-base ${
+                                newLoanType === 'borrow' 
+                                  ? 'bg-amber-500 text-white' 
+                                  : 'bg-white text-gray-600 border border-gray-200'
+                              }`}
+                            >
+                              💰 I Borrow
+                            </button>
+                          </div>
+                          
+                          {/* Name Input - Only show after selecting type */}
+                          {newLoanType && (
+                            <div className="space-y-3">
+                              <input
+                                type="text"
+                                placeholder={newLoanType === 'lend' ? "Who are you lending to?" : "Who are you borrowing from?"}
+                                value={newLoanName}
+                                onChange={(e) => setNewLoanName(e.target.value)}
+                                className="w-full p-3 bg-white rounded-lg border border-gray-200 text-base"
+                                autoFocus
+                              />
+                              {newLoanName.trim() && (
+                                <>
+                                  <div className="text-sm text-gray-500 text-center">
+                                    Will create: <span className="font-medium text-gray-700">
+                                      {newLoanType === 'lend' ? `Lend to ${newLoanName.trim()}` : `Borrow from ${newLoanName.trim()}`}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      if (newLoanName.trim()) {
+                                        const fullLoanName = newLoanType === 'lend' 
+                                          ? `Lend to ${newLoanName.trim()}` 
+                                          : `Borrow from ${newLoanName.trim()}`;
+                                        setFormData({...formData, loan: fullLoanName});
+                                        setLoanTypeMap(prev => ({...prev, [fullLoanName]: newLoanType}));
+                                        setNewLoanName('');
+                                        setNewLoanType(null);
+                                        setShowLoanPicker(false);
+                                      }
+                                    }}
+                                    className="w-full py-3 bg-emerald-500 text-white rounded-lg font-medium text-base"
+                                  >
+                                    Create Loan
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 

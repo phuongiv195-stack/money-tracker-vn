@@ -9,7 +9,26 @@ import { useToast } from '../Toast/ToastProvider';
 
 const LoansTab = () => {
   const toast = useToast();
-  const { loanTransactions, splitTransactions, futureTransactions, groupedAccounts, isLoading } = useData();
+  const { loanTransactions, splitTransactions, futureTransactions, groupedAccounts, parentTags, getSubTags, isLoading } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
   
   const [isAddNewLoanOpen, setIsAddNewLoanOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
@@ -17,6 +36,7 @@ const LoansTab = () => {
   const [activateAccount, setActivateAccount] = useState('');
   const [activateDate, setActivateDate] = useState('');
   const [isAddFutureOpen, setIsAddFutureOpen] = useState(false);
+  const [editingFutureTransaction, setEditingFutureTransaction] = useState(null);
 
   // Action state
   const [actionLoan, setActionLoan] = useState(null);
@@ -553,38 +573,65 @@ const LoansTab = () => {
               const amount = t.type === 'split' ? Number(t.totalAmount) : Number(t.amount);
               const isPositive = amount > 0;
               const displayDate = t.date ? new Date(t.date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Unknown';
+              const tags = t.tags || (t.tag ? [t.tag] : []);
               
               return (
                 <div
                   key={t.id || index}
-                  onClick={() => {
-                    setActivatingTransaction(t);
-                    setActivateAccount('');
-                    setActivateDate(t.date || '');
-                  }}
-                  className={`p-4 flex justify-between items-center cursor-pointer hover:bg-amber-50 ${
-                    index !== futureTransactions.length - 1 ? 'border-b' : ''
-                  }`}
+                  className={`p-4 ${index !== futureTransactions.length - 1 ? 'border-b' : ''}`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-amber-500 text-lg">📅</span>
-                      <div>
-                        <div className="font-medium text-gray-800">
-                          {t.payee || t.category || 'Future Transaction'}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {displayDate} • {t.category}
-                          {t.tag && <span className="text-emerald-600"> • 🏷️ {t.tag}</span>}
+                  <div 
+                    className="flex justify-between items-start cursor-pointer"
+                    onClick={() => setEditingFutureTransaction(t)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-500 text-lg">{t.isLoan ? '💸' : '📅'}</span>
+                        <div>
+                          <div className="font-medium text-gray-800">
+                            {t.payee || t.category || t.loan || 'Future Transaction'}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {displayDate} • {t.isLoan ? (
+                              <span className="text-sky-600">{t.loan}</span>
+                            ) : t.category}
+                          </div>
+                          {t.memo && (
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {t.memo}
+                            </div>
+                          )}
+                          {tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {tags.map(tag => (
+                                <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                  🏷️ {tagDisplayMap[tag] || tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {isPositive ? '+' : ''}{new Intl.NumberFormat('en-US').format(amount)}
+                    <div className="text-right">
+                      <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {isPositive ? '+' : ''}{new Intl.NumberFormat('en-US').format(amount)}
+                      </div>
+                      <div className="text-xs text-gray-400">Tap to edit</div>
                     </div>
-                    <div className="text-xs text-amber-500">Tap to activate</div>
+                  </div>
+                  {/* Activate button */}
+                  <div className="flex justify-center">
+                    <button
+                      onClick={() => {
+                        setActivatingTransaction(t);
+                        setActivateAccount('');
+                        setActivateDate(t.date || '');
+                      }}
+                      className="mt-3 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+                    >
+                      ✓ Activate
+                    </button>
                   </div>
                 </div>
               );
@@ -667,6 +714,15 @@ const LoansTab = () => {
         isOpen={isAddFutureOpen}
         onClose={() => setIsAddFutureOpen(false)}
         onSave={() => setIsAddFutureOpen(false)}
+        forceFuture={true}
+      />
+
+      {/* Edit Future Transaction Modal */}
+      <AddTransactionModal
+        isOpen={editingFutureTransaction !== null}
+        onClose={() => setEditingFutureTransaction(null)}
+        onSave={() => setEditingFutureTransaction(null)}
+        editTransaction={editingFutureTransaction}
         forceFuture={true}
       />
 
@@ -855,12 +911,20 @@ const LoansTab = () => {
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="font-medium text-gray-800">
-                      {activatingTransaction.payee || activatingTransaction.category || 'Transaction'}
+                      {activatingTransaction.payee || activatingTransaction.category || activatingTransaction.loan || 'Transaction'}
                     </div>
                     <div className="text-sm text-gray-500">
-                      {activatingTransaction.category}
-                      {activatingTransaction.tag && (
-                        <span className="text-emerald-600"> • 🏷️ {activatingTransaction.tag}</span>
+                      {activatingTransaction.isLoan ? (
+                        <span className="text-sky-600">💸 {activatingTransaction.loan}</span>
+                      ) : (
+                        activatingTransaction.category
+                      )}
+                      {activatingTransaction.tags && activatingTransaction.tags.length > 0 ? (
+                        activatingTransaction.tags.map(tag => (
+                          <span key={tag} className="text-emerald-600"> • 🏷️ {tagDisplayMap[tag] || tag}</span>
+                        ))
+                      ) : activatingTransaction.tag && (
+                        <span className="text-emerald-600"> • 🏷️ {tagDisplayMap[activatingTransaction.tag] || activatingTransaction.tag}</span>
                       )}
                     </div>
                   </div>
@@ -931,11 +995,40 @@ const LoansTab = () => {
                       return;
                     }
                     try {
-                      await updateDoc(doc(db, 'transactions', activatingTransaction.id), {
-                        account: activateAccount,
-                        date: activateDate,
-                        isFuture: false
-                      });
+                      if (activatingTransaction.isLoan) {
+                        // Convert to loan transaction
+                        const determinedLoanType = activatingTransaction.loanType || 
+                          (activatingTransaction.loan?.toLowerCase().startsWith('lend to') ? 'lend' : 
+                           activatingTransaction.loan?.toLowerCase().startsWith('borrow from') ? 'borrow' : 'lend');
+                        
+                        // Keep original amount (negative for expense/lend out)
+                        const loanAmount = Number(activatingTransaction.amount);
+                        
+                        const updateData = {
+                          type: 'loan',
+                          loan: activatingTransaction.loan,
+                          loanType: determinedLoanType,
+                          amount: loanAmount,
+                          account: activateAccount,
+                          date: activateDate,
+                          isFuture: false,
+                          // Preserve payee and memo
+                          payee: activatingTransaction.payee || null,
+                          memo: activatingTransaction.memo || null,
+                          // Clear fields not needed for loan
+                          isLoan: null,
+                          category: null,
+                          spendingType: null
+                        };
+                        await updateDoc(doc(db, 'transactions', activatingTransaction.id), updateData);
+                      } else {
+                        // Regular expense activation
+                        await updateDoc(doc(db, 'transactions', activatingTransaction.id), {
+                          account: activateAccount,
+                          date: activateDate,
+                          isFuture: false
+                        });
+                      }
                       toast.success('Transaction activated!');
                       setActivatingTransaction(null);
                       setActivateAccount('');
@@ -945,7 +1038,7 @@ const LoansTab = () => {
                     }
                   }}
                   disabled={!activateAccount || !activateDate}
-                  className="flex-1 py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   ✓ Activate
                 </button>

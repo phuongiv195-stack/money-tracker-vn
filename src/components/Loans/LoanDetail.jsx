@@ -9,7 +9,27 @@ import { useToast } from '../Toast/ToastProvider';
 
 const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   const toast = useToast();
-  const { splitTransactions } = useData();
+  const { splitTransactions, parentTags, getSubTags } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
+  
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   
@@ -733,18 +753,30 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
                         ) : (
                           <>
                             <div className="font-medium text-gray-800 truncate">
-                              {t.memo || 'Loan transaction'}
+                              {t.payee || t.memo || 'Loan transaction'}
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {t.account}
+                            <div className="text-xs text-gray-500 truncate">
+                              {t.account}{t.payee && t.memo ? ` • ${t.memo}` : ''}
                             </div>
                           </>
                         )}
                       </div>
 
-                      {/* Amount - GREEN for positive, BLACK for negative */}
-                      <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
-                        {isPositive ? '+' : '-'}{formatCurrency(amt)}
+                      {/* Amount and Tags */}
+                      <div className="text-right">
+                        <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
+                          {isPositive ? '+' : '-'}{formatCurrency(amt)}
+                        </div>
+                        {/* Tags display */}
+                        {(t.tags?.length > 0 || t.tag) && (
+                          <div className="flex flex-wrap gap-1 justify-end mt-0.5">
+                            {(t.tags || (t.tag ? [t.tag] : [])).map(tag => (
+                              <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded inline-block">
+                                🏷️ {tagDisplayMap[tag] || tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       
                       {/* Clear Status Button */}

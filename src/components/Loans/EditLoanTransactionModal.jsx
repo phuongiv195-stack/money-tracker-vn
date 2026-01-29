@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useData } from '../../contexts/DataContext';
@@ -8,7 +8,43 @@ import { useToast } from '../Toast/ToastProvider';
 const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }) => {
   useBackHandler(isOpen, onClose);
   const toast = useToast();
-  const { tagSuggestions, groupedAccounts, quickSelectGroupedAccounts } = useData();
+  const { tagSuggestions, groupedAccounts, quickSelectGroupedAccounts, parentTags, getSubTags, addUserTag } = useData();
+  
+  // Create selectable tags list with "Parent > Sub" format
+  const selectableTags = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,
+            display: `${parent.name} > ${sub.name}`,
+            parentName: parent.name
+          });
+        });
+      } else {
+        tags.push({
+          value: parent.name,
+          display: parent.name,
+          parentName: null
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
+
+  // Create lookup map for tag display names
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    selectableTags.forEach(tag => {
+      map[tag.value] = tag.display;
+    });
+    return map;
+  }, [selectableTags]);
   
   // Duplicate mode - when true, creates new transaction instead of updating
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -304,62 +340,95 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
             </div>
           </div>
 
-          {/* Tag */}
+          {/* Tags - Same style as AddTransactionModal */}
           <div className="relative">
             <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
-            
-            {/* Selected tags chips */}
-            {formData.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1 mb-2">
-                {formData.tags.map(tag => (
-                  <span 
-                    key={tag}
-                    className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm"
-                  >
-                    🏷️ {tag}
+
+            {/* Available tags - above input */}
+            {selectableTags.filter(tag => !formData.tags.includes(tag.value)).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+                {selectableTags
+                  .filter(tag => !formData.tags.includes(tag.value))
+                  .map(tag => (
                     <button
+                      key={tag.value}
                       type="button"
                       onClick={() => setFormData({
-                        ...formData, 
-                        tags: formData.tags.filter(t => t !== tag)
+                        ...formData,
+                        tags: [...formData.tags, tag.value]
                       })}
-                      className="text-emerald-500 hover:text-emerald-700 ml-1"
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm hover:bg-emerald-200 transition-colors"
                     >
-                      ×
+                      🏷️ {tag.display}
                     </button>
-                  </span>
-                ))}
+                  ))}
               </div>
             )}
             
-            <input
-              type="text"
-              placeholder={formData.tags.length > 0 ? "Add another tag..." : "e.g. DaNang2025 (optional)"}
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={formData.tag}
-              onChange={(e) => {
-                setFormData({...formData, tag: e.target.value});
-                setShowTagList(true);
-              }}
-              onFocus={() => setShowTagList(true)}
-              onBlur={() => setTimeout(() => setShowTagList(false), 200)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && formData.tag.trim()) {
-                  e.preventDefault();
-                  const newTag = formData.tag.trim();
-                  if (!formData.tags.includes(newTag)) {
+            {/* Input box with selected tags inside */}
+            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg border border-gray-200 focus-within:border-emerald-400 min-h-[44px]">
+              {/* Selected tags */}
+              {formData.tags.map(tagValue => (
+                <span 
+                  key={tagValue}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-sm"
+                >
+                  🏷️ {tagDisplayMap[tagValue] || tagValue}
+                  <button
+                    type="button"
+                    onClick={() => setFormData({
+                      ...formData, 
+                      tags: formData.tags.filter(t => t !== tagValue)
+                    })}
+                    className="text-emerald-500 hover:text-emerald-700"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              
+              {/* Text input */}
+              <input
+                type="text"
+                placeholder={formData.tags.length > 0 ? "" : "Type new tag + Enter"}
+                className="flex-1 min-w-[100px] bg-transparent outline-none text-sm py-1"
+                value={formData.tag}
+                onChange={(e) => {
+                  setFormData({...formData, tag: e.target.value});
+                  setShowTagList(true);
+                }}
+                onFocus={() => setShowTagList(true)}
+                onBlur={() => setTimeout(() => setShowTagList(false), 200)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && formData.tag.trim()) {
+                    e.preventDefault();
+                    const newTag = formData.tag.trim();
+                    if (!formData.tags.includes(newTag)) {
+                      setFormData({
+                        ...formData,
+                        tags: [...formData.tags, newTag],
+                        tag: ''
+                      });
+                      // Save new tag to userTags collection
+                      addUserTag(newTag).catch(err => {
+                        console.error('Failed to save tag:', err);
+                      });
+                    }
+                    setShowTagList(false);
+                  }
+                  // Backspace to remove last tag when input is empty
+                  if (e.key === 'Backspace' && !formData.tag && formData.tags.length > 0) {
                     setFormData({
                       ...formData,
-                      tags: [...formData.tags, newTag],
-                      tag: ''
+                      tags: formData.tags.slice(0, -1)
                     });
                   }
-                  setShowTagList(false);
-                }
-              }}
-            />
+                }}
+              />
+            </div>
             
-            {showTagList && tagSuggestions.length > 0 && (
+            {/* Autocomplete dropdown - only show when typing */}
+            {showTagList && formData.tag && tagSuggestions.length > 0 && (
               <div className="absolute z-20 w-full bg-white shadow-xl max-h-36 overflow-y-auto rounded-lg mt-1 border border-gray-200">
                 {tagSuggestions
                   .filter(tag => 
@@ -385,6 +454,12 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
                   ))}
               </div>
             )}
+            
+            {/* Helper text */}
+            <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+              <span className="font-bold">💡 Tip:</span>
+              <span>Type tag name and press <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-gray-700 font-mono">Enter</kbd> to save</span>
+            </div>
           </div>
 
           {/* Delete Button - only show when NOT duplicating */}

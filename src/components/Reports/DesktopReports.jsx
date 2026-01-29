@@ -161,14 +161,17 @@ const DesktopReports = ({ onBack }) => {
       };
 
       if (t.type === 'income') {
+        if (!t.category) return; // Skip income without category
         const cat = categories.find(c => c.name === t.category);
-        processCategory(t.category || 'Uncategorized', t.amount, 'income', cat?.group);
+        processCategory(t.category, t.amount, 'income', cat?.group);
       } else if (t.type === 'expense') {
+        if (!t.category) return; // Skip expense without category
         const cat = categories.find(c => c.name === t.category);
-        processCategory(t.category || 'Uncategorized', t.amount, 'expense', cat?.group);
+        processCategory(t.category, t.amount, 'expense', cat?.group);
       } else if (t.type === 'split' && t.splits) {
         t.splits.forEach(s => {
           if (s.isLoan) return;
+          if (!s.category) return; // Skip splits without category
           // Apply want/need filter for split items
           if (wantNeedFilter !== 'all' && t.splitType === 'expense') {
             const splitSpendingType = s.spendingType || 'need';
@@ -176,7 +179,7 @@ const DesktopReports = ({ onBack }) => {
           }
           const cat = categories.find(c => c.name === s.category);
           const type = t.splitType || 'expense';
-          processCategory(s.category || 'Uncategorized', s.amount, type, cat?.group);
+          processCategory(s.category, s.amount, type, cat?.group);
         });
       }
     });
@@ -692,72 +695,75 @@ const DesktopReports = ({ onBack }) => {
           </div>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-3 gap-4 mb-4">
-          <div className="bg-white rounded-xl shadow-sm p-4">
-            <div className="text-sm text-gray-500 mb-1">Total Income</div>
-            <div className="text-xl font-bold text-emerald-600">+{formatCurrency(filteredReportData.grandTotalIncome)}</div>
-          </div>
-          <div className="bg-white rounded-xl shadow-sm p-4">
-            <div className="text-sm text-gray-500 mb-1">Total Expenses</div>
-            <div className="text-xl font-bold text-red-600">-{formatCurrency(filteredReportData.grandTotalExpense)}</div>
-          </div>
-          <div className="bg-white rounded-xl shadow-sm p-4">
-            <div className="text-sm text-gray-500 mb-1">Net Income</div>
-            <div className={`text-xl font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
-              {formatCurrency(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
+        {/* Summary Cards + Buttons + Table wrapper */}
+        <div className="flex justify-center">
+          <div className="inline-block">
+            {/* Summary Cards */}
+            <div className="flex gap-4 mb-4">
+              <div className="bg-white rounded-xl shadow-sm p-4">
+                <div className="text-sm text-gray-500 mb-1">Total Income</div>
+                <div className="text-xl font-bold text-emerald-600">+{formatCurrency(filteredReportData.grandTotalIncome)}</div>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm p-4">
+                <div className="text-sm text-gray-500 mb-1">Total Expenses</div>
+                <div className="text-xl font-bold text-red-600">-{formatCurrency(filteredReportData.grandTotalExpense)}</div>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm p-4">
+                <div className="text-sm text-gray-500 mb-1">Net Income</div>
+                <div className={`text-xl font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
+                  {formatCurrency(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
 
-        {/* Expand/Collapse Buttons + Check/Uncheck All */}
-        <div className="flex gap-2 mb-4 flex-wrap">
-          <button
-            onClick={expandAll}
-            className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-          >
-            Expand All
-          </button>
-          <button
-            onClick={collapseAll}
-            className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-          >
-            Collapse All
-          </button>
-          <div className="w-px bg-gray-300 mx-1"></div>
-          <button
-            onClick={checkAllCategories}
-            className="px-3 py-1 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
-          >
-            ☑ Check All
-          </button>
-          <button
-            onClick={uncheckAllCategories}
-            className="px-3 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
-          >
-            ☐ Uncheck All
-          </button>
-        </div>
+            {/* Expand/Collapse Buttons + Check/Uncheck All */}
+            <div className="flex gap-2 mb-4 justify-center">
+              <button
+                onClick={expandAll}
+                className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Expand All
+              </button>
+              <button
+                onClick={collapseAll}
+                className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Collapse All
+              </button>
+              <div className="w-px bg-gray-300 mx-1"></div>
+              <button
+                onClick={checkAllCategories}
+                className="px-3 py-1 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
+              >
+                ☑ Check All
+              </button>
+              <button
+                onClick={uncheckAllCategories}
+                className="px-3 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
+              >
+                ☐ Uncheck All
+              </button>
+            </div>
 
-        {/* Report Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="text-sm border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left py-3 px-3 font-semibold text-gray-700 sticky left-0 bg-gray-50 whitespace-nowrap">
-                    Category
-                  </th>
-                  {reportData.months.map(m => (
-                    <th key={m.key} className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap">
-                      {m.label}
-                    </th>
-                  ))}
-                  <th className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap bg-gray-100">
-                    Total
-                  </th>
-                </tr>
+            {/* Report Table */}
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="overflow-x-auto flex justify-center">
+                <table className="text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left py-3 px-3 font-semibold text-gray-700 sticky left-0 bg-gray-50 whitespace-nowrap">
+                        Category
+                      </th>
+                      {reportData.months.map(m => (
+                        <th key={m.key} className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap">
+                          {m.label}
+                        </th>
+                      ))}
+                      <th className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap bg-gray-100">
+                        Total
+                      </th>
+                    </tr>
               </thead>
               <tbody>
                 {/* Income Section */}
@@ -782,7 +788,7 @@ const DesktopReports = ({ onBack }) => {
                               if (el) el.indeterminate = isGroupIndeterminate('income', groupData);
                             }}
                             onChange={(e) => toggleGroupCheck('income', groupName, groupData, e)}
-                            className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer"
+                            className="w-4 h-4 rounded border-blue-200 focus:ring-0 cursor-pointer accent-blue-300"
                             onClick={(e) => e.stopPropagation()}
                           />
                           <span className="mr-1">{expandedGroups[`income-${groupName}`] ? '▼' : '▶'}</span>
@@ -817,7 +823,7 @@ const DesktopReports = ({ onBack }) => {
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={(e) => toggleCategory('income', cat.name, e)}
-                                className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500 cursor-pointer"
+                                className="w-3 h-3 rounded border-gray-300 focus:ring-0 cursor-pointer accent-gray-500"
                               />
                               <span className={!isChecked ? 'line-through' : ''}>{cat.name}</span>
                             </div>
@@ -880,7 +886,7 @@ const DesktopReports = ({ onBack }) => {
                               if (el) el.indeterminate = isGroupIndeterminate('expense', groupData);
                             }}
                             onChange={(e) => toggleGroupCheck('expense', groupName, groupData, e)}
-                            className="w-4 h-4 text-red-600 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
+                            className="w-4 h-4 rounded border-blue-200 focus:ring-0 cursor-pointer accent-blue-300"
                             onClick={(e) => e.stopPropagation()}
                           />
                           <span className="mr-1">{expandedGroups[`expense-${groupName}`] ? '▼' : '▶'}</span>
@@ -915,7 +921,7 @@ const DesktopReports = ({ onBack }) => {
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={(e) => toggleCategory('expense', cat.name, e)}
-                                className="w-4 h-4 text-red-600 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
+                                className="w-3 h-3 rounded border-gray-300 focus:ring-0 cursor-pointer accent-gray-500"
                               />
                               <span className={!isChecked ? 'line-through' : ''}>{cat.name}</span>
                             </div>
@@ -976,8 +982,10 @@ const DesktopReports = ({ onBack }) => {
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         </div>
+      </div>
 
         {/* Footer Note */}
         <div className="mt-4 text-center text-sm text-gray-500">

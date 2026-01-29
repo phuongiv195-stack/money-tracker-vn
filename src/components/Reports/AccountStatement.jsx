@@ -757,6 +757,15 @@ const AccountStatement = ({
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
+  // Format date with time for My Statement display
+  const formatDateTimeForDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const dateStr = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `${timeStr} ${dateStr}`;
+  };
+
   // Format number input with commas
   const formatNumberInput = (value) => {
     if (!value) return '';
@@ -769,9 +778,10 @@ const AccountStatement = ({
     
     try {
       const amount = parseFloat(manualRefAmount.replace(/,/g, ''));
+      // Save full timestamp (date + time) for when statement was entered
       await updateDoc(doc(db, 'accounts', currentAccount.id), {
         manualReconcileAmount: amount,
-        manualReconcileDate: manualRefDate || new Date().toISOString().split('T')[0]
+        manualReconcileDate: new Date().toISOString()
       });
       
       setShowEditManualRef(false);
@@ -882,13 +892,13 @@ const AccountStatement = ({
                     <span className={`font-bold ${currentAccount.manualReconcileAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
                       {formatBalance(currentAccount.manualReconcileAmount)}
                     </span>
-                    <span className="text-xs text-gray-400">
-                      ({formatDateForDisplay(currentAccount.manualReconcileDate)})
+                    <span className="text-sm text-gray-400">
+                      {formatDateTimeForDisplay(currentAccount.manualReconcileDate)}
                     </span>
                     {(() => {
                       const diff = summary.clearedBalance - currentAccount.manualReconcileAmount;
-                      if (Math.abs(diff) < 1) return <span className="text-emerald-600 text-xs">✅</span>;
-                      return <span className="text-amber-600 text-xs">⚠️ Diff: {diff >= 0 ? '+' : ''}{formatBalance(diff)}</span>;
+                      if (Math.abs(diff) < 1) return <span className="text-emerald-600 text-sm">✅</span>;
+                      return <span className="text-amber-600 text-sm">⚠️ Diff: {diff >= 0 ? '+' : ''}{formatBalance(diff)}</span>;
                     })()}
                   </>
                 ) : (
@@ -896,7 +906,7 @@ const AccountStatement = ({
                 )}
                 <button 
                   onClick={openEditManualRef}
-                  className="text-emerald-600 text-xs font-medium hover:underline ml-2"
+                  className="text-emerald-600 text-sm font-medium hover:underline ml-2"
                 >
                   {currentAccount?.manualReconcileAmount ? 'Edit' : '+ Add'}
                 </button>
@@ -1483,24 +1493,9 @@ const AccountStatement = ({
                 />
               </div>
               
-              {/* Date Input - Button style to prevent auto calendar */}
-              <div>
-                <label className="block text-sm text-gray-500 mb-1">Statement Date</label>
-                <div className="relative">
-                  <input 
-                    type="date" 
-                    value={manualRefDate} 
-                    onChange={(e) => setManualRefDate(e.target.value)}
-                    className="absolute opacity-0 w-full h-full cursor-pointer"
-                    style={{ zIndex: 1 }}
-                  />
-                  <div className="w-full p-3 border-2 border-gray-200 rounded-lg bg-white flex items-center justify-between">
-                    <span className={manualRefDate ? 'text-gray-800' : 'text-gray-400'}>
-                      {manualRefDate ? formatDateForDisplay(manualRefDate) : 'Select date...'}
-                    </span>
-                    <span>📅</span>
-                  </div>
-                </div>
+              {/* Info about timestamp */}
+              <div className="text-xs text-gray-400 text-center">
+                📅 Timestamp will be recorded when you save
               </div>
 
               {/* System comparison */}

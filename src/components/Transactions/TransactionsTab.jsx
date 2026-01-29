@@ -139,6 +139,9 @@ const TransactionsTab = () => {
 
   // Long press state for duplicate
   const [longPressTimer, setLongPressTimer] = useState(null);
+  
+  // Display limit for performance
+  const [displayLimit, setDisplayLimit] = useState(100);
 
   const filteredTransactions = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -218,6 +221,11 @@ const TransactionsTab = () => {
     });
   }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, filterSpendingType, debouncedSearch]);
 
+  // Apply display limit for performance
+  const displayedTransactions = useMemo(() => {
+    return filteredTransactions.slice(0, displayLimit);
+  }, [filteredTransactions, displayLimit]);
+
   const totals = useMemo(() => {
     let income = 0, expense = 0;
 
@@ -238,7 +246,7 @@ const TransactionsTab = () => {
 
   const groupedTransactions = useMemo(() => {
     const groups = {};
-    filteredTransactions.forEach(t => {
+    displayedTransactions.forEach(t => {
       const dateKey = t.date || 'Unknown';
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(t);
@@ -257,9 +265,14 @@ const TransactionsTab = () => {
     });
     
     return groups;
-  }, [filteredTransactions]);
+  }, [displayedTransactions]);
 
   const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all' || filterSpendingType !== 'all';
+
+  // Reset display limit when filters change
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [filterType, filterAccount, filterCategory, filterTime, filterTag, filterSpendingType, debouncedSearch]);
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0';
@@ -687,6 +700,18 @@ const TransactionsTab = () => {
               </div>
             </div>
           ))
+        )}
+
+        {/* Show More Button (for already loaded transactions) */}
+        {displayLimit < filteredTransactions.length && (
+          <div className="p-4 text-center">
+            <button
+              onClick={() => setDisplayLimit(prev => prev + 100)}
+              className="px-6 py-3 bg-emerald-100 text-emerald-700 rounded-lg font-medium hover:bg-emerald-200"
+            >
+              Show More ({filteredTransactions.length - displayLimit} remaining)
+            </button>
+          </div>
         )}
 
         {/* Load More Button */}

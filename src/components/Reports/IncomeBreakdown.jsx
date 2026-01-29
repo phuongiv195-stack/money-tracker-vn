@@ -27,19 +27,6 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
     return `${Math.round(percent)}%`;
   };
 
-  // Generate month options
-  const getMonthOptions = () => {
-    const options = [];
-    for (let year = 2025; year <= 2030; year++) {
-      for (let month = 1; month <= 12; month++) {
-        const value = `${year}-${String(month).padStart(2, '0')}`;
-        const label = new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-        options.push({ value, label });
-      }
-    }
-    return options;
-  };
-
   // Get date range
   const getDateRange = useMemo(() => {
     const now = new Date();
@@ -95,10 +82,8 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
         break;
       case 'custom':
         if (customStart && customEnd) {
-          const [startYear, startMonth] = customStart.split('-').map(Number);
-          const [endYear, endMonth] = customEnd.split('-').map(Number);
-          startDate = new Date(startYear, startMonth - 1, 1);
-          endDate = new Date(endYear, endMonth, 0);
+          startDate = new Date(customStart);
+          endDate = new Date(customEnd);
         } else {
           startDate = new Date(currentYear, currentMonth, 1);
           endDate = new Date(currentYear, currentMonth + 1, 0);
@@ -161,7 +146,7 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
             
             categoryTotals[cat] = (categoryTotals[cat] || 0) + amount;
             if (!categoryTransactions[cat]) categoryTransactions[cat] = [];
-            categoryTransactions[cat].push({ ...t, splitAmount: amount, splitCategory: cat });
+            categoryTransactions[cat].push({ ...t, splitAmount: amount, splitCategory: cat, splitMemo: s.memo });
             
             totalIncome += amount;
             categoryFrequency[cat] = (categoryFrequency[cat] || 0) + 1;
@@ -532,7 +517,7 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
                     <td className="p-3 text-gray-600">{t.account || '-'}</td>
                     <td className="p-3 text-gray-600">{t.date}</td>
                     <td className="p-3 text-gray-700">{t.payee || '-'}</td>
-                    <td className="p-3 text-gray-500">{t.memo || '-'}</td>
+                    <td className="p-3 text-gray-500">{t.splitMemo || t.memo || '-'}</td>
                     <td className="p-3 text-right font-medium text-emerald-600">+{formatCurrency(t.splitAmount || Math.abs(t.amount))}</td>
                   </tr>
                 ))}
@@ -593,17 +578,69 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
               <div className="mt-4 pt-4 border-t space-y-4">
                 <div>
                   <label className="text-sm text-gray-500 block mb-2">Start Date</label>
-                  <select value={customStart} onChange={e => setCustomStart(e.target.value)} className="w-full p-3 border rounded-lg">
-                    <option value="">Select month...</option>
-                    {getMonthOptions().map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={customStart ? customStart.split('-')[1] : ''}
+                      onChange={e => {
+                        const year = customStart ? customStart.split('-')[0] : new Date().getFullYear();
+                        setCustomStart(`${year}-${e.target.value}-01`);
+                      }}
+                      className="flex-1 p-3 border rounded-lg"
+                    >
+                      <option value="">Month</option>
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i+1} value={String(i+1).padStart(2,'0')}>
+                          {new Date(2000, i, 1).toLocaleString('en-US', {month: 'short'})}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={customStart ? customStart.split('-')[0] : ''}
+                      onChange={e => {
+                        const month = customStart ? customStart.split('-')[1] : '01';
+                        setCustomStart(`${e.target.value}-${month}-01`);
+                      }}
+                      className="flex-1 p-3 border rounded-lg"
+                    >
+                      <option value="">Year</option>
+                      {[...Array(10)].map((_, i) => (
+                        <option key={2026+i} value={2026+i}>{2026+i}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label className="text-sm text-gray-500 block mb-2">End Date</label>
-                  <select value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="w-full p-3 border rounded-lg">
-                    <option value="">Select month...</option>
-                    {getMonthOptions().map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={customEnd ? customEnd.split('-')[1] : ''}
+                      onChange={e => {
+                        const year = customEnd ? customEnd.split('-')[0] : new Date().getFullYear();
+                        setCustomEnd(`${year}-${e.target.value}-28`);
+                      }}
+                      className="flex-1 p-3 border rounded-lg"
+                    >
+                      <option value="">Month</option>
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i+1} value={String(i+1).padStart(2,'0')}>
+                          {new Date(2000, i, 1).toLocaleString('en-US', {month: 'short'})}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={customEnd ? customEnd.split('-')[0] : ''}
+                      onChange={e => {
+                        const month = customEnd ? customEnd.split('-')[1] : '12';
+                        setCustomEnd(`${e.target.value}-${month}-28`);
+                      }}
+                      className="flex-1 p-3 border rounded-lg"
+                    >
+                      <option value="">Year</option>
+                      {[...Array(10)].map((_, i) => (
+                        <option key={2026+i} value={2026+i}>{2026+i}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
             )}
