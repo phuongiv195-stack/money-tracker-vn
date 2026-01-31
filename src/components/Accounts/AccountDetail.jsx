@@ -1265,7 +1265,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                                   <span className="text-gray-600">
                                     {!isRelatedToAccount && <span className="text-gray-400 mr-1">⊗</span>}
                                     {s.isTransfer 
-                                      ? `Transfer: ${t.account} → ${s.transferAccount}`
+                                      ? (t.splitType === 'income' || t.type === 'income')
+                                        ? `Transfer: ${s.transferAccount} → ${t.account}`
+                                        : `Transfer: ${t.account} → ${s.transferAccount}`
                                       : s.isLoan 
                                         ? s.loan 
                                         : s.category}

@@ -140,7 +140,9 @@ const IncomeBreakdown = ({ transactions, categories, accounts, onBack }) => {
       // Handle split transactions with income type
       if (t.type === 'split' && t.splitType === 'income') {
         t.splits?.forEach(s => {
-          if (!s.isLoan && s.category) {
+          // Skip transfer and loan splits
+          if (s.isTransfer || s.transferAccount || s.isLoan) return;
+          if (s.category) {
             const amount = Math.abs(Number(s.amount) || 0);
             const cat = s.category;
             

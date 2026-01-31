@@ -147,7 +147,9 @@ const SpendingBreakdown = ({ transactions, categories, accounts, onBack }) => {
       // Handle split transactions
       if (t.type === 'split' && t.splitType === 'expense') {
         t.splits?.forEach(s => {
-          if (!s.isLoan && s.category) {
+          // Skip transfer and loan splits
+          if (s.isTransfer || s.transferAccount || s.isLoan) return;
+          if (s.category) {
             // Filter by spending type
             if (spendingTypeFilter !== 'all' && s.spendingType !== spendingTypeFilter) {
               return;

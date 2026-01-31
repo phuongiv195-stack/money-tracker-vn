@@ -231,14 +231,30 @@ const TransactionsTab = () => {
 
     filteredTransactions.forEach(t => {
       if (t.type === 'split') {
-        const amt = Number(t.totalAmount) || 0;
-        if (amt > 0) income += amt;
-        else expense += Math.abs(amt);
+        // For split transactions, only count non-transfer splits (category splits only)
+        if (t.splits && t.splits.length > 0) {
+          t.splits.forEach(s => {
+            // Skip transfer splits (check both isTransfer flag and transferAccount for old data)
+            if (s.isTransfer || s.transferAccount) {
+              return;
+            }
+            // Only count if has category (not loan, not transfer)
+            if (s.category && !s.isLoan) {
+              const amt = Number(s.amount) || 0;
+              if (t.splitType === 'income') {
+                income += Math.abs(amt);
+              } else {
+                expense += Math.abs(amt);
+              }
+            }
+          });
+        }
       } else if (t.type === 'income') {
         income += Math.abs(Number(t.amount));
       } else if (t.type === 'expense') {
         expense += Math.abs(Number(t.amount));
       }
+      // transfer and loan transactions are not counted in income/expense totals
     });
 
     return { income, expense, net: income - expense };
@@ -681,7 +697,9 @@ const TransactionsTab = () => {
                             <div key={i} className="flex justify-between text-xs">
                               <span className="text-gray-600">
                                 {s.isTransfer 
-                                  ? `Transfer: ${t.account} → ${s.transferAccount}`
+                                  ? (t.splitType === 'income' || t.type === 'income')
+                                    ? `Transfer: ${s.transferAccount} → ${t.account}`
+                                    : `Transfer: ${t.account} → ${s.transferAccount}`
                                   : s.isLoan 
                                     ? s.loan 
                                     : s.category}

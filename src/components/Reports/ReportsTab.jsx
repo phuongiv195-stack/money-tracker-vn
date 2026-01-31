@@ -177,18 +177,16 @@ const ReportsTab = () => {
       // Handle split transactions
       if (t.type === 'split' && t.splits) {
         t.splits.forEach(s => {
-          if (!s.isLoan) {
+          // Skip loan and transfer splits
+          if (s.isLoan || s.isTransfer || s.transferAccount) return;
+          if (s.category) {
             const splitAmt = Math.abs(s.amount);
             if (t.splitType === 'expense') {
               expense += splitAmt;
-              if (s.category) {
-                catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
-              }
+              catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
             } else if (t.splitType === 'income') {
               income += splitAmt;
-              if (s.category) {
-                incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
-              }
+              incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
             }
           }
         });
@@ -230,15 +228,17 @@ const ReportsTab = () => {
       }
       if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
         t.splits.forEach(s => {
-          if (!s.isLoan) {
+          // Skip transfer and loan splits
+          if (s.isTransfer || s.transferAccount || s.isLoan) return;
+          if (s.category) {
             const splitAmt = Math.abs(s.amount);
             const spendingType = s.spendingType || 'need';
             if (spendingType === 'need') {
               needs += splitAmt;
-              if (s.category) needCatMap[s.category] = (needCatMap[s.category] || 0) + splitAmt;
+              needCatMap[s.category] = (needCatMap[s.category] || 0) + splitAmt;
             } else {
               wants += splitAmt;
-              if (s.category) wantCatMap[s.category] = (wantCatMap[s.category] || 0) + splitAmt;
+              wantCatMap[s.category] = (wantCatMap[s.category] || 0) + splitAmt;
             }
           }
         });
@@ -276,7 +276,9 @@ const ReportsTab = () => {
         }
         if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
           t.splits.forEach(s => {
-            if (!s.isLoan) {
+            // Skip transfer and loan splits
+            if (s.isTransfer || s.transferAccount || s.isLoan) return;
+            if (s.category) {
               const splitAmt = Math.abs(s.amount);
               const spendingType = s.spendingType || 'need';
               if (spendingType === 'need') needs += splitAmt;
@@ -325,13 +327,13 @@ const ReportsTab = () => {
         }
         if (t.type === 'split' && t.splits) {
           t.splits.forEach(s => {
-            if (!s.isLoan) {
+            // Skip loan and transfer splits
+            if (s.isLoan || s.isTransfer || s.transferAccount) return;
+            if (s.category) {
               const splitAmt = Math.abs(s.amount);
               if (t.splitType === 'expense') {
                 expense += splitAmt;
-                if (s.category) {
-                  catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
-                }
+                catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
               } else if (t.splitType === 'income') {
                 income += splitAmt;
               }
@@ -384,12 +386,12 @@ const ReportsTab = () => {
         }
         if (t.type === 'split' && t.splitType === 'income' && t.splits) {
           t.splits.forEach(s => {
-            if (!s.isLoan) {
+            // Skip transfer and loan splits
+            if (s.isTransfer || s.transferAccount || s.isLoan) return;
+            if (s.category) {
               const splitAmt = Math.abs(s.amount);
               totalIncome += splitAmt;
-              if (s.category) {
-                incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
-              }
+              incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
             }
           });
         }
