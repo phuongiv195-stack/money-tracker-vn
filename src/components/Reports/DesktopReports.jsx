@@ -422,23 +422,27 @@ const DesktopReports = ({ onBack }) => {
       
       // Check split transactions
       if (t.type === 'split' && t.splitType === type && t.splits) {
-        return t.splits.some(s => !s.isLoan && s.category === category);
+        return t.splits.some(s => !s.isLoan && !s.isTransfer && !s.transferAccount && s.category === category);
       }
       
       return false;
-    }).map(t => {
-      // For split transactions, calculate only the amount for this category
+    }).flatMap(t => {
+      // For split transactions, create separate entry for each matching split with its own memo
       if (t.type === 'split' && t.splits) {
-        const relevantSplits = t.splits.filter(s => !s.isLoan && s.category === category);
-        const splitAmount = relevantSplits.reduce((sum, s) => sum + Math.abs(s.amount), 0);
-        return { ...t, displayAmount: splitAmount, isSplit: true };
+        const relevantSplits = t.splits.filter(s => !s.isLoan && !s.isTransfer && !s.transferAccount && s.category === category);
+        return relevantSplits.map(s => ({
+          ...t,
+          displayAmount: Math.abs(s.amount),
+          isSplit: true,
+          splitMemo: s.memo // Store split's memo separately
+        }));
       }
-      return { ...t, displayAmount: Math.abs(t.amount) };
+      return [{ ...t, displayAmount: Math.abs(t.amount) }];
     });
   };
 
-  // Handle cell hover
-  const handleCellHover = (e, category, monthKey, type, amount) => {
+  // Handle cell click (changed from hover for better stability)
+  const handleCellClick = (e, category, monthKey, type, amount) => {
     if (!amount) return;
     const trans = getTransactionsForCell(category, monthKey, type);
     if (trans.length === 0) return;
@@ -457,23 +461,19 @@ const DesktopReports = ({ onBack }) => {
     });
   };
 
-  // Handle cell leave
-  const handleCellLeave = () => {
-    // Delay hiding to allow clicking on tooltip
-    setTimeout(() => {
-      setTooltip(prev => prev.show ? { ...prev, show: false } : prev);
-    }, 200);
+  // Close tooltip when clicking outside
+  const closeTooltip = () => {
+    setTooltip(prev => ({ ...prev, show: false }));
   };
 
-  // AmountCell component with hover
+  // AmountCell component with click to show transactions
   const AmountCell = ({ amount, category, monthKey, type, className = '' }) => {
     if (!amount) return <td className={`py-1.5 px-3 text-right ${className}`}></td>;
     
     return (
       <td 
-        className={`py-1.5 px-3 text-right cursor-pointer hover:bg-yellow-50 transition-colors ${className}`}
-        onMouseEnter={(e) => handleCellHover(e, category, monthKey, type, amount)}
-        onMouseLeave={handleCellLeave}
+        className={`py-1.5 px-3 text-right cursor-pointer hover:bg-yellow-50 hover:underline transition-colors ${className}`}
+        onClick={(e) => handleCellClick(e, category, monthKey, type, amount)}
       >
         {formatCurrency(amount)}
       </td>
@@ -999,64 +999,84 @@ const DesktopReports = ({ onBack }) => {
 
       {/* Tooltip for transaction details */}
       {tooltip.show && tooltip.transactions.length > 0 && (
-        <div 
-          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-50 w-80"
-          style={{ 
-            left: Math.max(10, tooltip.x), 
-            top: Math.max(10, Math.min(tooltip.y, window.innerHeight - 350))
-          }}
-          onMouseEnter={() => setTooltip(prev => ({ ...prev, show: true }))}
-          onMouseLeave={() => setTooltip(prev => ({ ...prev, show: false }))}
-        >
-          {/* Header with category and total */}
-          <div className={`px-3 py-2 rounded-t-lg ${tooltip.type === 'income' ? 'bg-emerald-50 border-b border-emerald-200' : 'bg-red-50 border-b border-red-200'}`}>
-            <div className="flex justify-between items-start">
-              <div>
-                <div className={`font-semibold ${tooltip.type === 'income' ? 'text-emerald-700' : 'text-red-700'}`}>
-                  {tooltip.category}
+        <>
+          {/* Overlay to close tooltip when clicking outside */}
+          <div 
+            className="fixed inset-0 z-40"
+            onClick={closeTooltip}
+          />
+          <div 
+            className="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-50 w-80"
+            style={{ 
+              left: Math.max(10, tooltip.x), 
+              top: Math.max(10, Math.min(tooltip.y, window.innerHeight - 350))
+            }}
+          >
+            {/* Header with category and total */}
+            <div className={`px-3 py-2 rounded-t-lg ${tooltip.type === 'income' ? 'bg-emerald-50 border-b border-emerald-200' : 'bg-red-50 border-b border-red-200'}`}>
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className={`font-semibold ${tooltip.type === 'income' ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {tooltip.category}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(tooltip.month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500">
-                  {new Date(tooltip.month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                <div className="flex items-start gap-2">
+                  <div className={`font-bold text-lg ${tooltip.type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {tooltip.type === 'expense' ? '-' : ''}{formatCurrency(tooltip.total)}
+                  </div>
+                  <button 
+                    onClick={closeTooltip}
+                    className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                  >
+                    ×
+                  </button>
                 </div>
-              </div>
-              <div className={`font-bold text-lg ${tooltip.type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
-                {tooltip.type === 'expense' ? '-' : ''}{formatCurrency(tooltip.total)}
               </div>
             </div>
-          </div>
-          
-          {/* Transaction list */}
-          <div className="max-h-60 overflow-y-auto">
-            {tooltip.transactions.map((t, idx) => (
-              <div 
-                key={t.id + '-' + idx}
-                className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
-                onClick={() => {
-                  setEditTransaction(t);
-                  setTooltip({ ...tooltip, show: false });
-                }}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-gray-800 truncate">
-                      {t.payee || t.memo || 'No description'}
-                      {t.isSplit && <span className="ml-1 text-xs text-purple-600">(split)</span>}
+            
+            {/* Transaction list */}
+            <div className="max-h-60 overflow-y-auto">
+              {tooltip.transactions.map((t, idx) => {
+                // Use splitMemo for split transactions, fallback to main memo
+                const displayMemo = t.isSplit ? (t.splitMemo || t.memo) : t.memo;
+                return (
+                  <div 
+                    key={t.id + '-' + idx}
+                    className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
+                    onClick={() => {
+                      setEditTransaction(t);
+                      setTooltip({ ...tooltip, show: false });
+                    }}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-gray-800 truncate">
+                          {t.payee || 'No Payee'}
+                          {t.isSplit && <span className="ml-1 text-xs text-purple-600">(split)</span>}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {t.date}
+                          {displayMemo && <span className="text-gray-500"> • {displayMemo}</span>}
+                        </div>
+                      </div>
+                      <div className="font-medium ml-2 text-gray-700">
+                        {formatCurrency(t.displayAmount)}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-400">{t.date}</div>
                   </div>
-                  <div className="font-medium ml-2 text-gray-700">
-                    {formatCurrency(t.displayAmount)}
-                  </div>
-                </div>
-              </div>
-            ))}
+                );
+              })}
+            </div>
+            
+            {/* Footer */}
+            <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-500 rounded-b-lg text-center">
+              Click transaction to edit
+            </div>
           </div>
-          
-          {/* Footer */}
-          <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-500 rounded-b-lg text-center">
-            Click to edit transaction
-          </div>
-        </div>
+        </>
       )}
 
       {/* Edit Transaction Modal */}

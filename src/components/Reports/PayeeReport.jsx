@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import AddTransactionModal from '../Transactions/AddTransactionModal';
 
 const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
   // Filter mode state
@@ -7,6 +8,7 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
   const [sortBy, setSortBy] = useState('amount');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const [searchPayee, setSearchPayee] = useState(''); // Search payee state
   
   // View mode state: 'byCategory' | 'byPayee'
   const [viewMode, setViewMode] = useState('byCategory');
@@ -25,6 +27,10 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
   const [compareFromYear, setCompareFromYear] = useState('2026');
   const [compareToMonth, setCompareToMonth] = useState('01');
   const [compareToYear, setCompareToYear] = useState('2026');
+
+  // Transaction popup state
+  const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, transactions: [], payee: '', category: '', total: 0 });
+  const [editTransaction, setEditTransaction] = useState(null);
 
   // Block mobile access
   if (!isDesktop) {
@@ -359,8 +365,17 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
       item.avgAmount = item.count > 0 ? item.totalAmount / item.count : 0;
     });
 
-    return Object.values(data);
-  }, [filteredTransactions, isCompareMode, comparePeriods]);
+    // Filter by search term
+    let result = Object.values(data);
+    if (searchPayee.trim()) {
+      const searchLower = searchPayee.toLowerCase().trim();
+      result = result.filter(item => 
+        item.payee.toLowerCase().includes(searchLower)
+      );
+    }
+
+    return result;
+  }, [filteredTransactions, isCompareMode, comparePeriods, searchPayee]);
 
   // Group by category and sort
   const groupedByCategory = useMemo(() => {
@@ -432,6 +447,7 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
           payee: payee,
           categories: new Set(),
           count: 0,
+          countedTransactions: new Set(), // Track unique transaction IDs
           totalAmount: 0,
           lastDate: t.date,
           periodData: {}
@@ -439,7 +455,13 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
       }
 
       const amount = Math.abs(t.amount);
-      data[payee].count++;
+      
+      // Only count unique transactions (not each split separately)
+      if (!data[payee].countedTransactions.has(t.id)) {
+        data[payee].count++;
+        data[payee].countedTransactions.add(t.id);
+      }
+      
       data[payee].totalAmount += amount;
       data[payee].categories.add(t.category || 'Uncategorized');
       
@@ -463,9 +485,13 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
           
           if (matches) {
             if (!data[payee].periodData[period.key]) {
-              data[payee].periodData[period.key] = { count: 0, amount: 0 };
+              data[payee].periodData[period.key] = { count: 0, amount: 0, countedTransactions: new Set() };
             }
-            data[payee].periodData[period.key].count++;
+            // Only count unique transactions per period
+            if (!data[payee].periodData[period.key].countedTransactions.has(t.id)) {
+              data[payee].periodData[period.key].count++;
+              data[payee].periodData[period.key].countedTransactions.add(t.id);
+            }
             data[payee].periodData[period.key].amount += amount;
           }
         });
@@ -473,11 +499,19 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
     });
 
     // Convert Set to Array and calculate average
-    const result = Object.values(data).map(item => ({
+    let result = Object.values(data).map(item => ({
       ...item,
       categories: Array.from(item.categories),
       avgAmount: item.count > 0 ? item.totalAmount / item.count : 0
     }));
+
+    // Filter by search term
+    if (searchPayee.trim()) {
+      const searchLower = searchPayee.toLowerCase().trim();
+      result = result.filter(item => 
+        item.payee.toLowerCase().includes(searchLower)
+      );
+    }
 
     // Sort
     if (sortBy === 'amount') {
@@ -491,7 +525,61 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
     }
 
     return result;
-  }, [filteredTransactions, sortBy, isCompareMode, comparePeriods]);
+  }, [filteredTransactions, sortBy, isCompareMode, comparePeriods, searchPayee]);
+
+  // Get transactions for a specific payee (and optionally category and period)
+  const getTransactionsForPayee = (payee, category = null, periodKey = null) => {
+    return filteredTransactions.filter(t => {
+      if (t.payee !== payee) return false;
+      if (category && t.category !== category) return false;
+      
+      // Filter by period if specified
+      if (periodKey) {
+        const tDate = new Date(t.date);
+        const tYear = tDate.getFullYear();
+        const tMonth = tDate.getMonth() + 1;
+        
+        // Parse period key (format: "2026-01" for month or "2026" for year)
+        if (periodKey.includes('-')) {
+          // Month format
+          const [pYear, pMonth] = periodKey.split('-').map(Number);
+          if (tYear !== pYear || tMonth !== pMonth) return false;
+        } else {
+          // Year format
+          const pYear = Number(periodKey);
+          if (tYear !== pYear) return false;
+        }
+      }
+      
+      return true;
+    }).map(t => ({
+      ...t,
+      displayAmount: Math.abs(t.amount)
+    }));
+  };
+
+  // Handle amount cell click
+  const handleAmountClick = (e, payee, category, amount, periodKey = null) => {
+    if (!amount) return;
+    const trans = getTransactionsForPayee(payee, category, periodKey);
+    if (trans.length === 0) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    setTooltip({
+      show: true,
+      x: rect.left - 320,
+      y: rect.top - 10,
+      transactions: trans,
+      payee,
+      category,
+      total: amount
+    });
+  };
+
+  // Close tooltip
+  const closeTooltip = () => {
+    setTooltip(prev => ({ ...prev, show: false }));
+  };
 
   // Date Picker Modal (without Custom)
   const renderDatePicker = () => {
@@ -794,6 +882,29 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                 <option value="lastDate">Last Purchase</option>
               </select>
             </div>
+
+            {/* Search Payee */}
+            <div>
+              <label className="text-sm text-gray-600 block mb-1">Search Payee</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchPayee}
+                  onChange={(e) => setSearchPayee(e.target.value)}
+                  placeholder="Type to search..."
+                  className="p-2 pl-8 border rounded-lg bg-white w-48 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                {searchPayee && (
+                  <button
+                    onClick={() => setSearchPayee('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -854,11 +965,11 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                   <table className="text-sm border-collapse">
                     <thead className="bg-gray-50 border-b">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700">Payee</th>
-                        <th className="px-3 py-2 text-right font-semibold text-gray-700">Counts</th>
-                        <th className="px-3 py-2 text-right font-semibold text-gray-700">Total</th>
-                        <th className="px-3 py-2 text-right font-semibold text-gray-700">Avg</th>
-                        <th className="px-3 py-2 text-right font-semibold text-gray-700">Last</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">Payee</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">Count</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">Total</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">Avg</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">Last</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -868,17 +979,17 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                           <React.Fragment key={catIdx}>
                             {/* Category Header Row */}
                             <tr 
-                              className="bg-blue-50 border-t-2 border-blue-200 cursor-pointer hover:bg-blue-100"
+                              className="bg-emerald-50 border-t-2 border-emerald-200 cursor-pointer hover:bg-emerald-100"
                               onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: prev[category] === false ? true : false }))}
                             >
-                              <td className="px-3 py-2 font-bold text-blue-800">
+                              <td className="px-3 py-2 font-bold text-emerald-800">
                                 <span className={`inline-block w-4 text-xs text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                 <span className="mr-1">{categoryIconMap[category] || '📂'}</span> {category}
-                                <span className="ml-2 text-sm font-normal text-blue-600">
+                                <span className="ml-2 text-sm font-normal text-emerald-600">
                                   ({groupedByCategory.categoryTotals[category].payeeCount} payee{groupedByCategory.categoryTotals[category].payeeCount > 1 ? 's' : ''})
                                 </span>
                               </td>
-                              <td className="px-3 py-2 text-right font-bold text-blue-700">
+                              <td className="px-3 py-2 text-right font-bold text-emerald-700">
                                 {groupedByCategory.categoryTotals[category].count}
                               </td>
                               <td className="px-3 py-2 text-right font-bold text-red-600">
@@ -892,7 +1003,12 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                               <tr key={idx} className="border-b hover:bg-gray-50">
                                 <td className="px-3 py-1.5 text-gray-800 pl-8">{item.payee}</td>
                                 <td className="px-3 py-1.5 text-right text-gray-600">{item.count}</td>
-                                <td className="px-3 py-1.5 text-right text-red-600 font-medium">{formatCurrency(item.totalAmount)}</td>
+                                <td 
+                                  className="px-3 py-1.5 text-right text-red-600 font-medium cursor-pointer hover:bg-yellow-50 hover:underline"
+                                  onClick={(e) => handleAmountClick(e, item.payee, item.category, item.totalAmount)}
+                                >
+                                  {formatCurrency(item.totalAmount)}
+                                </td>
                                 <td className="px-3 py-1.5 text-right text-gray-600">{formatCurrency(item.avgAmount)}</td>
                                 <td className="px-3 py-1.5 text-right text-gray-500 whitespace-nowrap">{formatDate(item.lastDate)}</td>
                               </tr>
@@ -949,8 +1065,8 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                   <table className="text-sm border-collapse">
                 <thead className="bg-gray-50 border-b">
                   <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700">Payee</th>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700">
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">Payee</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">
                       <button
                         onClick={() => setShowCategoriesColumn(!showCategoriesColumn)}
                         className={`text-xs px-2 py-1 rounded border transition-colors ${
@@ -962,10 +1078,10 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                         {showCategoriesColumn ? 'Hide Categories' : 'Show Categories'}
                       </button>
                     </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700">Counts</th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700">Total</th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700">Avg</th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700">Last</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">Count</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">Total</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">Avg</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">Last</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -987,7 +1103,12 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                         )}
                       </td>
                       <td className="px-3 py-2 text-right text-gray-600">{item.count}</td>
-                      <td className="px-3 py-2 text-right text-red-600 font-medium">{formatCurrency(item.totalAmount)}</td>
+                      <td 
+                        className="px-3 py-2 text-right text-red-600 font-medium cursor-pointer hover:bg-yellow-50 hover:underline"
+                        onClick={(e) => handleAmountClick(e, item.payee, null, item.totalAmount)}
+                      >
+                        {formatCurrency(item.totalAmount)}
+                      </td>
                       <td className="px-3 py-2 text-right text-gray-600">{formatCurrency(item.avgAmount)}</td>
                       <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{formatDate(item.lastDate)}</td>
                     </tr>
@@ -1039,28 +1160,28 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                   <table className="text-sm border-collapse">
                     <thead className="bg-gray-50 border-b">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10">Payee</th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10">Payee</th>
                         {comparePeriods.map((period, idx) => (
                           <React.Fragment key={idx}>
-                            <th className="px-2 py-2 text-right font-semibold text-gray-700 border-l whitespace-nowrap" colSpan={2}>
+                            <th className="px-2 py-2 text-center font-semibold text-gray-700 border-l whitespace-nowrap" colSpan={2}>
                               {period.label}
                             </th>
                           </React.Fragment>
                         ))}
-                        <th className="px-2 py-2 text-right font-semibold text-blue-700 border-l whitespace-nowrap" colSpan={2}>
+                        <th className="px-2 py-2 text-center font-semibold text-blue-700 border-l whitespace-nowrap" colSpan={2}>
                           Total
                         </th>
                       </tr>
                       <tr className="bg-gray-100">
-                        <th className="px-3 py-1 text-left text-xs text-gray-500 sticky left-0 bg-gray-100 z-10"></th>
+                        <th className="px-3 py-1 text-center text-xs text-gray-500 sticky left-0 bg-gray-100 z-10"></th>
                         {comparePeriods.map((period, idx) => (
                           <React.Fragment key={idx}>
-                            <th className="px-2 py-1 text-right text-xs text-gray-500 border-l">Cnt</th>
-                            <th className="px-2 py-1 text-right text-xs text-gray-500">Amt</th>
+                            <th className="px-2 py-1 text-center text-xs text-gray-500 border-l">Count</th>
+                            <th className="px-2 py-1 text-center text-xs text-gray-500">Amount</th>
                           </React.Fragment>
                         ))}
-                        <th className="px-2 py-1 text-right text-xs text-blue-500 border-l">Cnt</th>
-                        <th className="px-2 py-1 text-right text-xs text-blue-500">Amt</th>
+                        <th className="px-2 py-1 text-center text-xs text-emerald-500 border-l">Count</th>
+                        <th className="px-2 py-1 text-center text-xs text-emerald-500">Amount</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1070,13 +1191,13 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                           <React.Fragment key={catIdx}>
                             {/* Category Header Row */}
                             <tr 
-                              className="bg-blue-50 border-t-2 border-blue-200 cursor-pointer hover:bg-blue-100"
+                              className="bg-emerald-50 border-t-2 border-emerald-200 cursor-pointer hover:bg-emerald-100"
                               onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: prev[category] === false ? true : false }))}
                             >
-                              <td className="px-3 py-2 font-bold text-blue-800 sticky left-0 bg-blue-50 z-10">
+                              <td className="px-3 py-2 font-bold text-emerald-800 sticky left-0 bg-emerald-50 z-10">
                                 <span className={`inline-block w-4 text-xs text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                 <span className="mr-1">{categoryIconMap[category] || '📂'}</span> {category}
-                                <span className="ml-2 text-sm font-normal text-blue-600">
+                                <span className="ml-2 text-sm font-normal text-emerald-600">
                                   ({groupedByCategory.categoryTotals[category].payeeCount} payee{groupedByCategory.categoryTotals[category].payeeCount > 1 ? 's' : ''})
                                 </span>
                               </td>
@@ -1084,16 +1205,16 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                                 const pd = groupedByCategory.categoryTotals[category].periodData[period.key] || { count: 0, amount: 0 };
                                 return (
                                   <React.Fragment key={pIdx}>
-                                    <td className="px-2 py-2 text-right font-bold text-blue-700 border-l">
+                                    <td className="px-2 py-2 text-right font-bold text-emerald-700 border-l">
                                       {pd.count > 0 ? pd.count : '-'}
                                     </td>
-                                    <td className="px-2 py-2 text-right font-bold text-blue-700">
+                                    <td className="px-2 py-2 text-right font-bold text-emerald-700">
                                       {pd.amount > 0 ? formatCurrency(pd.amount) : '-'}
                                     </td>
                                   </React.Fragment>
                                 );
                               })}
-                              <td className="px-2 py-2 text-right font-bold text-blue-700 border-l">
+                              <td className="px-2 py-2 text-right font-bold text-emerald-700 border-l">
                                 {groupedByCategory.categoryTotals[category].count}
                               </td>
                               <td className="px-2 py-2 text-right font-bold text-red-600">
@@ -1111,14 +1232,22 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                                       <td className="px-2 py-1.5 text-right text-gray-600 border-l">
                                         {pd.count > 0 ? pd.count : '-'}
                                       </td>
-                                      <td className="px-2 py-1.5 text-right text-gray-600">
+                                      <td 
+                                        className={`px-2 py-1.5 text-right text-gray-600 ${pd.amount > 0 ? 'cursor-pointer hover:bg-yellow-50 hover:underline' : ''}`}
+                                        onClick={(e) => pd.amount > 0 && handleAmountClick(e, item.payee, item.category, pd.amount, period.key)}
+                                      >
                                         {pd.amount > 0 ? formatCurrency(pd.amount) : '-'}
                                       </td>
                                     </React.Fragment>
                                   );
                                 })}
-                                <td className="px-2 py-1.5 text-right text-blue-600 font-medium border-l">{item.count}</td>
-                                <td className="px-2 py-1.5 text-right text-red-600 font-medium">{formatCurrency(item.totalAmount)}</td>
+                                <td className="px-2 py-1.5 text-right text-emerald-600 font-medium border-l">{item.count}</td>
+                                <td 
+                                  className="px-2 py-1.5 text-right text-red-600 font-medium cursor-pointer hover:bg-yellow-50 hover:underline"
+                                  onClick={(e) => handleAmountClick(e, item.payee, item.category, item.totalAmount)}
+                                >
+                                  {formatCurrency(item.totalAmount)}
+                                </td>
                               </tr>
                             ))}
                           </React.Fragment>
@@ -1146,28 +1275,41 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
               <table className="text-sm border-collapse">
                 <thead className="bg-gray-50 border-b">
                   <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10">Payee</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10">Payee</th>
+                    <th className="px-3 py-2 text-center font-semibold text-gray-700">
+                      <button
+                        onClick={() => setShowCategoriesColumn(!showCategoriesColumn)}
+                        className={`text-xs px-2 py-1 rounded border transition-colors ${
+                          showCategoriesColumn 
+                            ? 'text-blue-600 bg-blue-50 border-blue-200 hover:bg-blue-100' 
+                            : 'text-gray-500 bg-gray-100 border-gray-200 hover:bg-gray-200'
+                        }`}
+                      >
+                        {showCategoriesColumn ? 'Hide Categories' : 'Show Categories'}
+                      </button>
+                    </th>
                     {comparePeriods.map((period, idx) => (
                       <React.Fragment key={idx}>
-                        <th className="px-2 py-2 text-right font-semibold text-gray-700 border-l whitespace-nowrap" colSpan={2}>
+                        <th className="px-2 py-2 text-center font-semibold text-gray-700 border-l whitespace-nowrap" colSpan={2}>
                           {period.label}
                         </th>
                       </React.Fragment>
                     ))}
-                    <th className="px-2 py-2 text-right font-semibold text-blue-700 border-l whitespace-nowrap" colSpan={2}>
+                    <th className="px-2 py-2 text-center font-semibold text-blue-700 border-l whitespace-nowrap" colSpan={2}>
                       Total
                     </th>
                   </tr>
                   <tr className="bg-gray-100">
-                    <th className="px-3 py-1 text-left text-xs text-gray-500 sticky left-0 bg-gray-100 z-10"></th>
+                    <th className="px-3 py-1 text-center text-xs text-gray-500 sticky left-0 bg-gray-100 z-10"></th>
+                    <th className="px-3 py-1 text-center text-xs text-gray-500"></th>
                     {comparePeriods.map((period, idx) => (
                       <React.Fragment key={idx}>
-                        <th className="px-2 py-1 text-right text-xs text-gray-500 border-l">Cnt</th>
-                        <th className="px-2 py-1 text-right text-xs text-gray-500">Amt</th>
+                        <th className="px-2 py-1 text-center text-xs text-gray-500 border-l">Count</th>
+                        <th className="px-2 py-1 text-center text-xs text-gray-500">Amount</th>
                       </React.Fragment>
                     ))}
-                    <th className="px-2 py-1 text-right text-xs text-blue-500 border-l">Cnt</th>
-                    <th className="px-2 py-1 text-right text-xs text-blue-500">Amt</th>
+                    <th className="px-2 py-1 text-center text-xs text-blue-500 border-l">Count</th>
+                    <th className="px-2 py-1 text-center text-xs text-blue-500">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1175,16 +1317,20 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                     <tr key={idx} className={`border-b hover:bg-gray-50 ${item.categories.length > 1 ? 'bg-green-50' : ''}`}>
                       <td className="px-3 py-1.5 text-gray-800 font-medium sticky left-0 bg-white">
                         {item.payee}
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {item.categories.map((cat, catIdx) => (
-                            <span 
-                              key={catIdx}
-                              className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs"
-                            >
-                              {categoryIconMap[cat] || '📂'} {cat}
-                            </span>
-                          ))}
-                        </div>
+                      </td>
+                      <td className="px-3 py-1.5">
+                        {showCategoriesColumn && (
+                          <div className="flex flex-wrap gap-1">
+                            {item.categories.map((cat, catIdx) => (
+                              <span 
+                                key={catIdx}
+                                className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs"
+                              >
+                                {categoryIconMap[cat] || '📂'} {cat}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       {comparePeriods.map((period, pIdx) => {
                         const pd = item.periodData[period.key] || { count: 0, amount: 0 };
@@ -1193,14 +1339,22 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                             <td className="px-2 py-1.5 text-right text-gray-600 border-l">
                               {pd.count > 0 ? pd.count : '-'}
                             </td>
-                            <td className="px-2 py-1.5 text-right text-gray-600">
+                            <td 
+                              className={`px-2 py-1.5 text-right text-gray-600 ${pd.amount > 0 ? 'cursor-pointer hover:bg-yellow-50 hover:underline' : ''}`}
+                              onClick={(e) => pd.amount > 0 && handleAmountClick(e, item.payee, null, pd.amount, period.key)}
+                            >
                               {pd.amount > 0 ? formatCurrency(pd.amount) : '-'}
                             </td>
                           </React.Fragment>
                         );
                       })}
                       <td className="px-2 py-1.5 text-right text-blue-600 font-medium border-l">{item.count}</td>
-                      <td className="px-2 py-1.5 text-right text-red-600 font-medium">{formatCurrency(item.totalAmount)}</td>
+                      <td 
+                        className="px-2 py-1.5 text-right text-red-600 font-medium cursor-pointer hover:bg-yellow-50 hover:underline"
+                        onClick={(e) => handleAmountClick(e, item.payee, null, item.totalAmount)}
+                      >
+                        {formatCurrency(item.totalAmount)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1220,6 +1374,95 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
       {/* Modals */}
       {renderDatePicker()}
       {renderCompareModal()}
+
+      {/* Transaction Popup */}
+      {tooltip.show && tooltip.transactions.length > 0 && (
+        <>
+          {/* Overlay to close tooltip when clicking outside */}
+          <div 
+            className="fixed inset-0 z-40"
+            onClick={closeTooltip}
+          />
+          <div 
+            className="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-50 w-80"
+            style={{ 
+              left: Math.max(10, tooltip.x), 
+              top: Math.max(10, Math.min(tooltip.y, window.innerHeight - 350))
+            }}
+          >
+            {/* Header */}
+            <div className="px-3 py-2 rounded-t-lg bg-red-50 border-b border-red-200">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="font-semibold text-red-700">
+                    {tooltip.payee}
+                  </div>
+                  {tooltip.category && (
+                    <div className="text-xs text-gray-500">
+                      {tooltip.category}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="font-bold text-lg text-red-600">
+                    -{formatCurrency(tooltip.total)}
+                  </div>
+                  <button 
+                    onClick={closeTooltip}
+                    className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            {/* Transaction list */}
+            <div className="max-h-60 overflow-y-auto">
+              {tooltip.transactions.map((t, idx) => (
+                <div 
+                  key={t.id + '-' + idx}
+                  className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
+                  onClick={() => {
+                    setEditTransaction(t);
+                    setTooltip({ ...tooltip, show: false });
+                  }}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-gray-800 truncate">
+                        {t.category || 'Uncategorized'}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {t.date}
+                        {t.memo && <span className="text-gray-500"> • {t.memo}</span>}
+                      </div>
+                    </div>
+                    <div className="font-medium ml-2 text-gray-700">
+                      {formatCurrency(t.displayAmount)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            {/* Footer */}
+            <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-500 rounded-b-lg text-center">
+              Click transaction to edit
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Edit Transaction Modal */}
+      {editTransaction && (
+        <AddTransactionModal
+          isOpen={!!editTransaction}
+          onClose={() => setEditTransaction(null)}
+          editTransaction={editTransaction}
+          onSave={() => setEditTransaction(null)}
+        />
+      )}
     </div>
   );
 };
