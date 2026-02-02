@@ -1112,7 +1112,7 @@ const ReportsTab = () => {
               {/* 3. By Category with Expandable Transactions */}
               {sortedCategories.length > 0 && (
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
-                    <div className="flex items-center gap-4 mb-3">
+                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <h3 className="font-semibold text-gray-800">📂 By Category</h3>
                       <div className="flex gap-2">
                         <button
@@ -1121,58 +1121,61 @@ const ReportsTab = () => {
                             sortedCategories.forEach(([cat]) => { allExpanded[cat] = true; });
                             setExpandedCategories(allExpanded);
                           }}
-                          className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                          className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
                         >
                           Expand All
                         </button>
                         <button
                           onClick={() => setExpandedCategories({})}
-                          className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                          className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
                         >
                           Collapse All
                         </button>
                       </div>
                     </div>
                     
-                    {/* Category table */}
-                    <table className="text-sm">
-                      <tbody>
-                        {sortedCategories.map(([cat, amount]) => {
-                          const isExpanded = expandedCategories[cat];
-                          const catTrans = categoryTransactions[cat] || [];
-                          
-                          return (
-                            <React.Fragment key={cat}>
-                              {/* Category Row */}
-                              <tr 
-                                className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                                onClick={() => toggleCategory(cat)}
-                              >
-                                <td className="py-2 pr-2">
-                                  <span className={`text-gray-400 text-xs inline-block w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                                </td>
-                                <td className="py-2 pr-2 text-gray-700">{cat}</td>
-                                <td className="py-2 pr-4 text-gray-400 text-xs">({catTrans.length})</td>
-                                <td className="py-2 text-right text-red-600 font-medium">{formatCurrency(amount)}</td>
-                              </tr>
-                              {/* Expanded Transactions */}
-                              {isExpanded && catTrans.length > 0 && catTrans
-                                .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                                .map((t, idx) => (
-                                  <tr key={t.id || idx} className="bg-gray-50 border-b border-gray-100">
-                                    <td className="py-1.5"></td>
-                                    <td className="py-1.5 pr-2 text-gray-700 font-medium border-l-2 border-gray-200 pl-2">{t.displayName}</td>
-                                    <td className="py-1.5 pr-4 text-gray-400 text-xs whitespace-nowrap">
-                                      {t.date}{t.memo && ` • ${t.memo}`}
-                                    </td>
-                                    <td className="py-1.5 text-right text-red-600 font-medium">-{formatCurrency(t.displayAmount)}</td>
-                                  </tr>
-                                ))}
-                            </React.Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    {/* Category list - mobile friendly */}
+                    <div className="space-y-1">
+                      {sortedCategories.map(([cat, amount]) => {
+                        const isExpanded = expandedCategories[cat];
+                        const catTrans = categoryTransactions[cat] || [];
+                        
+                        return (
+                          <div key={cat}>
+                            {/* Category Row */}
+                            <div 
+                              className="flex items-center justify-between py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50"
+                              onClick={() => toggleCategory(cat)}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                <span className="text-gray-700 truncate">{cat}</span>
+                                <span className="text-gray-400 text-xs flex-shrink-0">({catTrans.length})</span>
+                              </div>
+                              <span className="text-red-600 font-medium text-sm ml-2 flex-shrink-0">{formatCurrency(amount)}</span>
+                            </div>
+                            {/* Expanded Transactions */}
+                            {isExpanded && catTrans.length > 0 && (
+                              <div className="bg-emerald-50 border-l-2 border-emerald-200 ml-3 mb-2">
+                                {catTrans
+                                  .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                  .map((t, idx) => (
+                                    <div key={t.id || idx} className="px-3 py-2 border-b border-emerald-100 last:border-b-0">
+                                      <div className="flex justify-between items-start gap-2">
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-gray-700 font-medium text-sm truncate">{t.displayName}</div>
+                                          <div className="text-gray-400 text-xs">{t.date}{t.memo && ` • ${t.memo}`}</div>
+                                        </div>
+                                        <span className="text-red-600 font-medium text-sm flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
               )}
 
@@ -1223,7 +1226,7 @@ const ReportsTab = () => {
                 
                 return (
                     <div className="bg-white rounded-xl border border-gray-200 p-4">
-                      <div className="flex items-center gap-4 mb-3">
+                      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 className="font-semibold text-gray-800">🏷️ By Sub-tag</h3>
                         <div className="flex gap-2">
                           <button
@@ -1234,7 +1237,7 @@ const ReportsTab = () => {
                               });
                               setExpandedCategories(prev => ({ ...prev, ...allExpanded }));
                             }}
-                            className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                            className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
                           >
                             Expand All
                           </button>
@@ -1246,60 +1249,63 @@ const ReportsTab = () => {
                               });
                               setExpandedCategories(prev => ({ ...prev, ...clearedSubTags }));
                             }}
-                            className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                            className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
                           >
                             Collapse All
                           </button>
                         </div>
                       </div>
                       
-                      {/* Sub-tag table */}
-                      <table className="text-sm">
-                        <tbody>
-                          {sortedSubTags.map(([subTagName, amount]) => {
-                            const isExpanded = expandedCategories[`subtag_${subTagName}`];
-                            const subTrans = subTagTransactions[subTagName] || [];
-                            
-                            return (
-                              <React.Fragment key={subTagName}>
-                                {/* Sub-tag Row */}
-                                <tr 
-                                  className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                                  onClick={() => {
-                                    const key = `subtag_${subTagName}`;
-                                    setExpandedCategories(prev => ({
-                                      ...prev,
-                                      [key]: !prev[key]
-                                    }));
-                                  }}
-                                >
-                                  <td className="py-2 pr-2">
-                                    <span className={`text-gray-400 text-xs inline-block w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                                  </td>
-                                  <td className="py-2 pr-2 text-gray-700">{selectedTag} › {subTagName}</td>
-                                  <td className="py-2 pr-4 text-gray-400 text-xs">({subTrans.length})</td>
-                                  <td className={`py-2 text-right font-medium ${amount > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                                    {amount > 0 ? formatCurrency(amount) : '0₫'}
-                                  </td>
-                                </tr>
-                                {/* Expanded Transactions */}
-                                {isExpanded && subTrans.length > 0 && subTrans
-                                  .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                                  .map((t, idx) => (
-                                    <tr key={t.id || idx} className="bg-emerald-50 border-b border-gray-100">
-                                      <td className="py-1.5"></td>
-                                      <td className="py-1.5 pr-2 text-gray-700 font-medium border-l-2 border-emerald-200 pl-2">{t.displayName}</td>
-                                      <td className="py-1.5 pr-4 text-gray-400 text-xs whitespace-nowrap">
-                                        {t.date}{t.memo && ` • ${t.memo}`}
-                                      </td>
-                                      <td className="py-1.5 text-right text-red-600 font-medium">-{formatCurrency(t.displayAmount)}</td>
-                                    </tr>
-                                  ))}
-                              </React.Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                      {/* Sub-tag list - mobile friendly */}
+                      <div className="space-y-1">
+                        {sortedSubTags.map(([subTagName, amount]) => {
+                          const isExpanded = expandedCategories[`subtag_${subTagName}`];
+                          const subTrans = subTagTransactions[subTagName] || [];
+                          
+                          return (
+                            <div key={subTagName}>
+                              {/* Sub-tag Row */}
+                              <div 
+                                className="flex items-center justify-between py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50"
+                                onClick={() => {
+                                  const key = `subtag_${subTagName}`;
+                                  setExpandedCategories(prev => ({
+                                    ...prev,
+                                    [key]: !prev[key]
+                                  }));
+                                }}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                  <span className="text-gray-700 truncate text-sm">{selectedTag} › {subTagName}</span>
+                                  <span className="text-gray-400 text-xs flex-shrink-0">({subTrans.length})</span>
+                                </div>
+                                <span className={`font-medium text-sm ml-2 flex-shrink-0 ${amount > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                                  {amount > 0 ? formatCurrency(amount) : '0₫'}
+                                </span>
+                              </div>
+                              {/* Expanded Transactions */}
+                              {isExpanded && subTrans.length > 0 && (
+                                <div className="bg-emerald-50 border-l-2 border-emerald-200 ml-3 mb-2">
+                                  {subTrans
+                                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                    .map((t, idx) => (
+                                      <div key={t.id || idx} className="px-3 py-2 border-b border-emerald-100 last:border-b-0">
+                                        <div className="flex justify-between items-start gap-2">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-gray-700 font-medium text-sm truncate">{t.displayName}</div>
+                                            <div className="text-gray-400 text-xs">{t.date}{t.memo && ` • ${t.memo}`}</div>
+                                          </div>
+                                          <span className="text-red-600 font-medium text-sm flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                 );
               })()}
