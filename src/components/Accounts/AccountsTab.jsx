@@ -120,9 +120,37 @@ const AccountsTab = () => {
       let balance;
       if (isMarketValue) {
         // Tính: startingBalance + tất cả transactions (bao gồm unrealized_gain)
-        const accTransactions = transactions.filter(t => {
-          if (t.type === 'transfer') return t.fromAccount === acc.name || t.toAccount === acc.name;
-          return t.account === acc.name;
+        const accTransactions = [];
+        
+        transactions.forEach(t => {
+          if (t.type === 'transfer') {
+            if (t.fromAccount === acc.name || t.toAccount === acc.name) {
+              accTransactions.push(t);
+            }
+          } else if (t.type === 'split') {
+            // Include if main account matches
+            if (t.account === acc.name) {
+              accTransactions.push(t);
+            }
+            // Also check if any split has this account as transferAccount
+            if (t.splits && Array.isArray(t.splits)) {
+              t.splits.forEach((s, idx) => {
+                if (s.isTransfer && s.transferAccount === acc.name) {
+                  // Create a virtual transaction entry
+                  accTransactions.push({
+                    ...t,
+                    _isSplitTransfer: true,
+                    _splitAmount: s.amount,
+                    _parentSplitType: t.splitType
+                  });
+                }
+              });
+            }
+          } else {
+            if (t.account === acc.name) {
+              accTransactions.push(t);
+            }
+          }
         });
         
         const startingBalance = acc.startingBalance || 0;
@@ -130,8 +158,15 @@ const AccountsTab = () => {
         // Cộng tất cả transactions
         balance = startingBalance;
         accTransactions.forEach(t => {
-          if (t.type === 'transfer') {
+          if (t._isSplitTransfer) {
+            // For income split: money comes FROM this account (negative)
+            // For expense split: money goes TO this account (positive)
+            const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+            balance += t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+          } else if (t.type === 'transfer') {
             balance += t.fromAccount === acc.name ? -Number(t.amount) : Number(t.amount);
+          } else if (t.type === 'split') {
+            balance += Number(t.totalAmount) || 0;
           } else {
             // Bao gồm unrealized_gain, expense, income...
             balance += Number(t.amount) || 0;

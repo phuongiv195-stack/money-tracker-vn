@@ -542,10 +542,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
 
   // Save Manual Reference Amount (user's own record)
   const handleSaveManualRef = async () => {
-    if (!manualRefAmount) return;
+    if (manualRefAmount === '' || manualRefAmount === null || manualRefAmount === undefined) return;
     
     try {
-      const amount = parseFloat(manualRefAmount.replace(/,/g, ''));
+      const amount = parseFloat(manualRefAmount.replace(/,/g, '')) || 0;
       // Save full timestamp (date + time) for when statement was entered
       await updateDoc(doc(db, 'accounts', account.id), {
         manualReconcileAmount: amount,
@@ -565,7 +565,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
 
   // Open edit manual ref with current values
   const openEditManualRef = () => {
-    setManualRefAmount(account.manualReconcileAmount ? String(account.manualReconcileAmount) : '');
+    // Handle 0 value properly - convert to string even if 0
+    const currentAmount = account.manualReconcileAmount;
+    setManualRefAmount(currentAmount !== undefined && currentAmount !== null ? String(currentAmount) : '');
     setManualRefDate(account.manualReconcileDate || new Date().toISOString().split('T')[0]);
     setShowEditManualRef(true);
   };
@@ -701,15 +703,15 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             onClick={openEditManualRef}
             className="text-emerald-500 text-sm font-medium hover:underline"
           >
-            {account.manualReconcileAmount ? 'Edit' : '+ Add'}
+            {account.manualReconcileAmount !== undefined && account.manualReconcileAmount !== null ? 'Edit' : '+ Add'}
           </button>
         </div>
         
-        {account.manualReconcileAmount ? (
+        {account.manualReconcileAmount !== undefined && account.manualReconcileAmount !== null ? (
           <div className="mt-2 pl-6">
             <div className="flex items-baseline gap-2">
-              <span className={`text-lg font-bold ${account.manualReconcileAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                {account.manualReconcileAmount >= 0 ? '+' : ''}{formatCurrency(account.manualReconcileAmount)}
+              <span className={`text-lg font-bold ${Number(account.manualReconcileAmount) >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                {Number(account.manualReconcileAmount) >= 0 ? '+' : ''}{formatCurrency(account.manualReconcileAmount)}
               </span>
               <span className="text-sm text-gray-400">
                 {formatDateTimeForDisplay(account.manualReconcileDate)}
@@ -718,7 +720,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
             
             {/* Compare with system balance */}
             {(() => {
-              const diff = clearedBalance - account.manualReconcileAmount;
+              const diff = clearedBalance - Number(account.manualReconcileAmount);
               if (Math.abs(diff) < 1) return (
                 <div className="text-xs text-emerald-600 mt-1">✅ Matches system cleared balance</div>
               );
@@ -800,7 +802,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 </button>
                 <button 
                   onClick={handleSaveManualRef}
-                  disabled={!manualRefAmount}
+                  disabled={manualRefAmount === '' || manualRefAmount === null || manualRefAmount === undefined}
                   className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
                 >
                   Save
