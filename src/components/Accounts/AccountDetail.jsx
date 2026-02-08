@@ -259,6 +259,13 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     const formatted = new Intl.NumberFormat('en-US').format(Math.abs(num));
     return num < 0 ? `-${formatted}` : formatted;
   };
+  // Format with +/- sign, but show just "0" for zero values
+  const formatWithSign = (amount) => {
+    const num = amount || 0;
+    const formatted = new Intl.NumberFormat('en-US').format(Math.abs(num));
+    if (num === 0) return '0';
+    return num > 0 ? `+${formatted}` : `-${formatted}`;
+  };
   const formatDateLabel = (dateStr) => {
     const date = new Date(dateStr);
     return `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${date.toLocaleDateString('en-US',{weekday:'short'})}`;
@@ -640,7 +647,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       <div className="p-4 bg-emerald-600 text-white shadow-sm">
         <div className="text-center">
           <div className="text-sm opacity-90">{isMarketValue ? 'Current Value' : 'Balance'}</div>
-          <div className="text-3xl font-bold mt-1">{(isMarketValue ? calculatedCurrentValue : balance) >= 0 ? '+' : '-'}{formatCurrency(isMarketValue ? calculatedCurrentValue : balance)}</div>
+          <div className="text-3xl font-bold mt-1">{formatWithSign(isMarketValue ? calculatedCurrentValue : balance)}</div>
         </div>
         
         {/* Investment account: show Update button only */}
@@ -666,8 +673,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         {!isMarketValue && (
           <>
             <div className="flex justify-center gap-6 mt-3 pt-3 border-t border-white/20 text-sm">
-              <div className="text-center"><div className="opacity-70">Cleared</div><div className="font-medium">{clearedBalance >= 0 ? '+' : '-'}{formatCurrency(clearedBalance)}</div></div>
-              <div className="text-center"><div className="opacity-70">Uncleared</div><div className="font-medium">{unclearedBalance >= 0 ? '+' : '-'}{formatCurrency(unclearedBalance)}</div></div>
+              <div className="text-center"><div className="opacity-70">Cleared</div><div className="font-medium">{formatWithSign(clearedBalance)}</div></div>
+              <div className="text-center"><div className="opacity-70">Uncleared</div><div className="font-medium">{formatWithSign(unclearedBalance)}</div></div>
             </div>
             <div className="text-xs opacity-70 mt-2 text-center">
               {displayTransactions.length} transactions{showUnclearedOnly && ' (uncleared only)'}
@@ -709,25 +716,31 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
         
         {account.manualReconcileAmount !== undefined && account.manualReconcileAmount !== null ? (
           <div className="mt-2 pl-6">
-            <div className="flex items-baseline gap-2">
-              <span className={`text-lg font-bold ${Number(account.manualReconcileAmount) >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                {Number(account.manualReconcileAmount) >= 0 ? '+' : ''}{formatCurrency(account.manualReconcileAmount)}
-              </span>
-              <span className="text-sm text-gray-400">
-                {formatDateTimeForDisplay(account.manualReconcileDate)}
-              </span>
-            </div>
-            
-            {/* Compare with system balance */}
             {(() => {
-              const diff = clearedBalance - Number(account.manualReconcileAmount);
-              if (Math.abs(diff) < 1) return (
-                <div className="text-xs text-emerald-600 mt-1">✅ Matches system cleared balance</div>
-              );
+              const manualAmount = parseFloat(account.manualReconcileAmount) || 0;
+              const diff = clearedBalance - manualAmount;
+              const isMatched = Math.abs(diff) < 1;
+              
               return (
-                <div className="text-xs text-amber-600 mt-1">
-                  ⚠️ Difference: {diff >= 0 ? '+' : ''}{formatCurrency(diff)} from system
-                </div>
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-lg font-bold ${manualAmount >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                      {formatWithSign(manualAmount)}
+                    </span>
+                    <span className="text-sm text-gray-400">
+                      {formatDateTimeForDisplay(account.manualReconcileDate)}
+                    </span>
+                  </div>
+                  
+                  {/* Compare with system balance */}
+                  {isMatched ? (
+                    <div className="text-xs text-emerald-600 mt-1">✅ Matches system cleared balance</div>
+                  ) : (
+                    <div className="text-xs text-amber-600 mt-1">
+                      ⚠️ Difference: {formatWithSign(diff)} from system
+                    </div>
+                  )}
+                </>
               );
             })()}
           </div>
@@ -778,16 +791,13 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
               <div className="bg-gray-50 rounded-lg p-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">System Cleared Balance:</span>
-                  <span className="font-medium">{clearedBalance >= 0 ? '+' : ''}{formatCurrency(clearedBalance)}</span>
+                  <span className="font-medium">{formatWithSign(clearedBalance)}</span>
                 </div>
                 {manualRefAmount && (
                   <div className="flex justify-between mt-1 pt-1 border-t">
                     <span className="text-gray-500">Difference:</span>
                     <span className={`font-medium ${Math.abs(clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0)) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {(() => {
-                        const diff = clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0);
-                        return `${diff >= 0 ? '+' : ''}${formatCurrency(diff)}`;
-                      })()}
+                      {formatWithSign(clearedBalance - parseFloat(manualRefAmount.replace(/,/g, '') || 0))}
                     </span>
                   </div>
                 )}
@@ -1349,12 +1359,12 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Statement Balance:</span>
-                  <span className="font-bold">{formatCurrency(reconcileWarning.targetBalance)}</span>
+                  <span className="font-bold">{formatWithSign(reconcileWarning.targetBalance)}</span>
                 </div>
                 <div className="border-t pt-2 flex justify-between">
                   <span className="text-gray-500">Difference:</span>
                   <span className={`font-bold ${reconcileWarning.diff > 0 ? 'text-red-600' : 'text-amber-600'}`}>
-                    {reconcileWarning.diff > 0 ? '+' : ''}{formatCurrency(reconcileWarning.diff)}
+                    {formatWithSign(reconcileWarning.diff)}
                   </span>
                 </div>
               </div>

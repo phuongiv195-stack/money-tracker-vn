@@ -227,6 +227,14 @@ const AccountsTab = () => {
     return new Intl.NumberFormat('en-US').format(Math.abs(amount) || 0);
   };
 
+  // Format with +/- sign, but show just "0" for zero values
+  const formatWithSign = (amount) => {
+    const num = amount || 0;
+    const formatted = new Intl.NumberFormat('en-US').format(Math.abs(num));
+    if (num === 0) return '0';
+    return num > 0 ? `+${formatted}` : `-${formatted}`;
+  };
+
   // Get archived accounts (isActive = false)
   const archivedAccounts = useMemo(() => {
     return accounts.filter(acc => !acc.isActive && acc.group !== 'LOANS');
@@ -341,7 +349,7 @@ const AccountsTab = () => {
                         </div>
                       </div>
                       <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-gray-900'}`}>
-                        {isPositive ? '+' : '-'}{formatCurrency(acc.balance)}
+                        {formatWithSign(acc.balance)}
                       </div>
                     </div>
                   );
