@@ -168,7 +168,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   });
 
   const [splits, setSplits] = useState([
-    { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }
+    { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '', spendingType: '' }
   ]);
 
   // Use cached data from DataContext
@@ -217,9 +217,10 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             memo: s.memo || '',
             isLoan: s.isLoan || false,
             isTransfer: s.isTransfer || false,
-            transferAccount: s.transferAccount || ''
+            transferAccount: s.transferAccount || '',
+            spendingType: s.spendingType || ''
           }));
-          setSplits(loadedSplits.length > 0 ? loadedSplits : [{ amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
+          setSplits(loadedSplits.length > 0 ? loadedSplits : [{ amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '', spendingType: '' }]);
           setFormData({
             amount: Math.abs(editTransaction.totalAmount).toString(),
             payee: editTransaction.payee || '',
@@ -336,6 +337,11 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const handleSplitCategoryChange = (index, category) => {
     const newSplits = [...splits];
     newSplits[index].category = category;
+    // Set default spendingType from category if not already set
+    if (!newSplits[index].spendingType) {
+      const selectedCategory = categorySuggestions.find(c => c.name === category);
+      newSplits[index].spendingType = selectedCategory?.spendingType || 'need';
+    }
     setSplits(newSplits);
     setActiveSplitIndex(null);
   };
@@ -356,8 +362,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     setSplits(newSplits);
   };
 
+  const handleSplitSpendingTypeChange = (index, spendingType) => {
+    const newSplits = [...splits];
+    newSplits[index].spendingType = spendingType;
+    setSplits(newSplits);
+  };
+
   const addSplitLine = () => {
-    setSplits([...splits, { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '' }]);
+    setSplits([...splits, { amount: '', category: '', loan: '', memo: '', isLoan: false, isTransfer: false, transferAccount: '', spendingType: '' }]);
   };
 
   const removeSplitLine = (index) => {
@@ -510,6 +522,12 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
             transferAccount: s.transferAccount || null,
             memo: s.memo || null
           };
+          // Add spendingType for expense splits with category (not loan, not transfer)
+          if (activeTab === 'expense' && s.category && !s.isLoan && !s.isTransfer) {
+            // If not set, use category default
+            const selectedCat = categorySuggestions.find(c => c.name === s.category);
+            splitData.spendingType = s.spendingType || selectedCat?.spendingType || 'need';
+          }
           // Only include loanType if it's a loan split and we have a type
           if (s.isLoan && s.loan) {
             const determinedLoanType = s.newLoanType || loanTypeMap[s.loan] || null;
@@ -1138,6 +1156,52 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                                   </div>
                                 ))}
                               </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Want/Need Toggle - Only for Expense split with category selected */}
+                    {activeTab === 'expense' && split.category && !split.isLoan && !split.isTransfer && (
+                      <div className="mt-2">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSplitSpendingTypeChange(index, 'need')}
+                            className={`flex-1 py-2 rounded-lg font-medium text-sm transition-all ${
+                              (split.spendingType || 'need') === 'need'
+                                ? 'bg-blue-100 text-blue-700 border-2 border-blue-400'
+                                : 'bg-white text-gray-500 border border-gray-200'
+                            }`}
+                          >
+                            🎯 Need
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSplitSpendingTypeChange(index, 'want')}
+                            className={`flex-1 py-2 rounded-lg font-medium text-sm transition-all ${
+                              split.spendingType === 'want'
+                                ? 'bg-purple-100 text-purple-700 border-2 border-purple-400'
+                                : 'bg-white text-gray-500 border border-gray-200'
+                            }`}
+                          >
+                            ✨ Want
+                          </button>
+                        </div>
+                        {/* Show category default hint */}
+                        {(() => {
+                          const selectedCat = categorySuggestions.find(c => c.name === split.category);
+                          const defaultType = selectedCat?.spendingType || 'need';
+                          const currentType = split.spendingType || defaultType;
+                          const isOverridden = currentType !== defaultType;
+                          return (
+                            <div className="text-xs text-gray-400 mt-1 text-center">
+                              {isOverridden ? (
+                                <><span className={currentType === 'want' ? 'text-purple-600' : 'text-blue-600'}>Overridden</span> • Default: {defaultType === 'need' ? '🎯' : '✨'}</>
+                              ) : (
+                                <>Default from category</>
+                              )}
                             </div>
                           );
                         })()}
