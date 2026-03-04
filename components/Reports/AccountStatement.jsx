@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
@@ -14,7 +14,6 @@ const AccountStatement = ({
   onBack 
 }) => {
   const userId = useUserId();
-  const dateInputRef = useRef(null);
   
   // State
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,19 +48,13 @@ const AccountStatement = ({
   const [manualRefAmount, setManualRefAmount] = useState('');
   const [manualRefDate, setManualRefDate] = useState('');
 
-  // Helper to clear date filter and close calendar picker
+  // Helper to clear date filter
   const clearDateFilter = () => {
-    if (dateInputRef.current) {
-      dateInputRef.current.blur();
-    }
     setDateSearch('');
   };
 
   // Helper to clear all filters
   const clearAllFilters = () => {
-    if (dateInputRef.current) {
-      dateInputRef.current.blur();
-    }
     setDateSearch('');
     setStatusFilter('all');
     setFlowFilter('all');
@@ -358,31 +351,23 @@ const AccountStatement = ({
     });
 
     // Recalculate display balance based on sort direction
-    // When DESC: recalculate backwards from working balance
-    // - If dateSearch active: workingBalance = balance at end of that date
-    // - If no dateSearch: workingBalance = full account balance
+    // When DESC: start from working balance and subtract/add backwards
+    // When ASC: use original calculated balance
     if (sortConfig.key === 'date' && sortConfig.direction === 'desc' && result.length > 0) {
-      // Get correct working balance
-      // When dateSearch is set, use balance of the last transaction on/before that date
-      // (from transactionsWithBalance which is sorted ASC with correct running balance)
-      const workingBalance = dateSearch
-        ? (() => {
-            const upToDate = transactionsWithBalance.filter(t => t.date <= dateSearch);
-            return upToDate.length > 0 ? upToDate[upToDate.length - 1].balance : 0;
-          })()
-        : (transactionsWithBalance.length > 0 
-          ? transactionsWithBalance[transactionsWithBalance.length - 1].balance 
-          : 0);
+      // Get working balance (final balance after all transactions)
+      const workingBalance = transactionsWithBalance.length > 0 
+        ? transactionsWithBalance[transactionsWithBalance.length - 1].balance 
+        : 0;
       
       let runningBalance = workingBalance;
-      result = result.map((t) => {
+      result = result.map((t, index) => {
         const displayBalance = runningBalance;
-        // Going backwards in time: subtract inflow, add outflow
+        // For next row: subtract inflow, add outflow (going backwards in time)
         runningBalance = runningBalance - t.inflow + t.outflow;
         return { ...t, displayBalance };
       });
     } else {
-      // ASC: use original pre-calculated balance
+      // ASC or other sort: use original balance
       result = result.map(t => ({ ...t, displayBalance: t.balance }));
     }
 
@@ -864,10 +849,6 @@ const AccountStatement = ({
                 <button 
                   type="button"
                   onClick={() => {
-                    // Blur date input first to close any open calendar
-                    if (dateInputRef.current) {
-                      dateInputRef.current.blur();
-                    }
                     if (selectedAccount) {
                       // Clear account selection first - go back to account picker
                       setSelectedAccount('');
@@ -992,117 +973,104 @@ const AccountStatement = ({
               ))}
             </select>
 
-            <div className="flex-1 max-w-md">
-              <input
-                type="text"
-                placeholder="🔍 Search payee, category, memo, amount..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-              />
-            </div>
+            {selectedAccount && (
+              <>
+                <div className="flex-1 max-w-md">
+                  <input
+                    type="text"
+                    placeholder="🔍 Search payee, category, memo, amount..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
 
-            {/* Date Search - for checking balance at specific date */}
-            <div className="flex items-center gap-2">
-              <div className="relative w-[145px]">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="YYYY / MM / DD"
-                  value={dateSearch}
-                  onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
-                    let formatted = '';
-                    if (digits.length <= 4) {
-                      formatted = digits;
-                    } else if (digits.length <= 6) {
-                      formatted = digits.slice(0, 4) + '-' + digits.slice(4);
-                    } else {
-                      formatted = digits.slice(0, 4) + '-' + digits.slice(4, 6) + '-' + digits.slice(6);
-                    }
-                    setDateSearch(formatted);
+                {/* Date Search - for checking balance at specific date */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="📅 YYYY-MM-DD"
+                    value={dateSearch}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      // Allow typing digits and dashes only
+                      const cleaned = val.replace(/[^0-9-]/g, '');
+                      setDateSearch(cleaned);
+                    }}
+                    className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none w-[160px]"
+                    title="Enter date (YYYY-MM-DD) to see balance at that date"
+                  />
+                  {dateSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setDateSearch('')}
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-gray-100 rounded"
+                      title="Clear date filter"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Balance at Date Display */}
+                {dateSearch && /^\d{4}-\d{2}-\d{2}$/.test(dateSearch) && balanceAtDate !== null && (
+                  <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="text-xs text-amber-600">Balance at {dateSearch}</div>
+                    <div className={`font-bold ${balanceAtDate >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {balanceAtDate >= 0 ? '+' : ''}{formatCurrency(balanceAtDate)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Add Transaction Button */}
+                <button
+                  onClick={() => {
+                    setEditingTransaction(null);
+                    setShowTransactionModal(true);
                   }}
-                  className={`w-full px-3 py-2 bg-gray-50 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono tracking-wider ${
-                    dateSearch && !/^\d{4}-\d{2}-\d{2}$/.test(dateSearch)
-                      ? 'border-amber-300'
-                      : dateSearch && /^\d{4}-\d{2}-\d{2}$/.test(dateSearch)
-                        ? 'border-emerald-400'
-                        : 'border-gray-200'
-                  }`}
-                  title="Enter date to see balance (type 8 digits)"
-                />
-                {dateSearch && (
+                  className="px-4 py-2 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 flex items-center gap-1"
+                >
+                  <span>➕</span> Add
+                </button>
+
+                {/* Export CSV Button */}
+                {transactionsWithBalance.length > 0 && (
                   <button
-                    type="button"
-                    onClick={clearDateFilter}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-sm"
-                    title="Clear date filter"
+                    onClick={handleExportCSV}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 flex items-center gap-1"
                   >
-                    ✕
+                    <span>📥</span> Export CSV
                   </button>
                 )}
-              </div>
-            </div>
 
-            {/* Balance at Date Display */}
-            {dateSearch && balanceAtDate !== null && (
-              <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg">
-                <div className="text-xs text-amber-600">Balance at {dateSearch}</div>
-                <div className={`font-bold ${balanceAtDate >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {balanceAtDate >= 0 ? '+' : ''}{formatCurrency(balanceAtDate)}
-                </div>
-              </div>
-            )}
-
-            {/* Add Transaction Button */}
-            {selectedAccount && (
-              <button
-                onClick={() => {
-                  setEditingTransaction(null);
-                  setShowTransactionModal(true);
-                }}
-                className="px-4 py-2 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 flex items-center gap-1"
-              >
-                <span>➕</span> Add
-              </button>
-            )}
-
-            {/* Export CSV Button */}
-            {selectedAccount && transactionsWithBalance.length > 0 && (
-              <button
-                onClick={handleExportCSV}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 flex items-center gap-1"
-              >
-                <span>📥</span> Export CSV
-              </button>
-            )}
-
-            {/* Active filters indicator */}
-            {(dateSearch || statusFilter !== 'all' || flowFilter !== 'all') && (
-              <div className="flex items-center gap-2">
-                {dateSearch && (
-                  <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs">
-                    Date: ≤{dateSearch}
-                  </span>
+                {/* Active filters indicator */}
+                {(dateSearch || statusFilter !== 'all' || flowFilter !== 'all') && (
+                  <div className="flex items-center gap-2">
+                    {dateSearch && (
+                      <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs">
+                        Date: ≤{dateSearch}
+                      </span>
+                    )}
+                    {statusFilter !== 'all' && (
+                      <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
+                        Status: {statusFilter}
+                      </span>
+                    )}
+                    {flowFilter !== 'all' && (
+                      <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+                        {flowFilter}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={clearAllFilters}
+                      className="text-xs text-red-500 hover:underline"
+                    >
+                      Clear filters
+                    </button>
+                  </div>
                 )}
-                {statusFilter !== 'all' && (
-                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
-                    Status: {statusFilter}
-                  </span>
-                )}
-                {flowFilter !== 'all' && (
-                  <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
-                    {flowFilter}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="text-xs text-red-500 hover:underline"
-                >
-                  Clear filters
-                </button>
-              </div>
+              </>
             )}
           </div>
         </div>

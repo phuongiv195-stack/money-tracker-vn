@@ -7,18 +7,120 @@ import AddTransactionModal from './AddTransactionModal';
 
 const TransactionsTab = () => {
   const userId = useUserId();
-  const { transactions, accountNames, categoryNames, tagSuggestions, isLoading } = useData();
+  const { 
+    transactions, 
+    accountNames,
+    groupedAccounts,
+    categoryNames,
+    categories,
+    expenseCategories,
+    incomeCategories,
+    tagSuggestions,
+    parentTags,
+    getSubTags,
+    isLoading,
+    hasMoreTransactions,
+    loadingMore,
+    loadMoreTransactions,
+    transactionCount
+  } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - map each sub to "Parent > Sub"
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        // Parent has no sub-tags - map to itself
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
+
+  // Create selectable tags for filter dropdown
+  const selectableTagsForFilter = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        // Parent has sub-tags - add each sub-tag
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,
+            display: `${parent.name} > ${sub.name}`
+          });
+        });
+      } else {
+        // Parent has no sub-tags - add parent itself
+        tags.push({
+          value: parent.name,
+          display: parent.name
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
+
+  // Group categories by type and group for filter dropdown
+  const groupedCategoriesForFilter = useMemo(() => {
+    // Group expense categories by group
+    const expenseByGroup = {};
+    expenseCategories.forEach(cat => {
+      const group = cat.group || 'Other';
+      if (!expenseByGroup[group]) expenseByGroup[group] = [];
+      expenseByGroup[group].push(cat);
+    });
+
+    // Group income categories by group
+    const incomeByGroup = {};
+    incomeCategories.forEach(cat => {
+      const group = cat.group || 'Other';
+      if (!incomeByGroup[group]) incomeByGroup[group] = [];
+      incomeByGroup[group].push(cat);
+    });
+
+    // Sort groups and categories within each group
+    const sortedExpenseGroups = Object.keys(expenseByGroup).sort();
+    const sortedIncomeGroups = Object.keys(incomeByGroup).sort();
+
+    return {
+      expense: sortedExpenseGroups.map(group => ({
+        group,
+        categories: expenseByGroup[group].sort((a, b) => a.name.localeCompare(b.name))
+      })),
+      income: sortedIncomeGroups.map(group => ({
+        group,
+        categories: incomeByGroup[group].sort((a, b) => a.name.localeCompare(b.name))
+      }))
+    };
+  }, [expenseCategories, incomeCategories]);
   
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Loan notice modal state
+  const [loanNoticeModal, setLoanNoticeModal] = useState({ show: false, loanName: '' });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterAccount, setFilterAccount] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
-  const [filterTime, setFilterTime] = useState('all');
+  const [filterTime, setFilterTime] = useState('month');
   const [filterTag, setFilterTag] = useState('all');
+  const [filterSpendingType, setFilterSpendingType] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
   // Debounce search query (300ms delay)
@@ -37,6 +139,9 @@ const TransactionsTab = () => {
 
   // Long press state for duplicate
   const [longPressTimer, setLongPressTimer] = useState(null);
+  
+  // Display limit for performance
+  const [displayLimit, setDisplayLimit] = useState(100);
 
   const filteredTransactions = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -80,14 +185,27 @@ const TransactionsTab = () => {
         }
       }
 
-      // Tag filter
+      // Tag filter - supports both old 'tag' and new 'tags' fields
       if (filterTag !== 'all') {
-        if (t.tag !== filterTag) return false;
+        const transactionTags = t.tags || (t.tag ? [t.tag] : []);
+        if (!transactionTags.includes(filterTag)) return false;
+      }
+
+      // Spending type filter (want/need)
+      if (filterSpendingType !== 'all') {
+        if (t.type === 'split') {
+          // For split transactions, check if any split has the spending type
+          const hasSpendingType = t.splits?.some(s => s.spendingType === filterSpendingType);
+          if (!hasSpendingType) return false;
+        } else {
+          if (t.spendingType !== filterSpendingType) return false;
+        }
       }
 
       if (debouncedSearch.trim()) {
         const lowerQuery = debouncedSearch.toLowerCase();
-        const searchFields = [t.payee, t.category, t.memo, t.loan, t.account, t.tag].filter(Boolean).join(' ').toLowerCase();
+        const tagsString = (t.tags || (t.tag ? [t.tag] : [])).join(' ');
+        const searchFields = [t.payee, t.category, t.memo, t.loan, t.account, tagsString].filter(Boolean).join(' ').toLowerCase();
         
         let splitMatch = false;
         if (t.type === 'split' && t.splits) {
@@ -101,21 +219,42 @@ const TransactionsTab = () => {
 
       return true;
     });
-  }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, debouncedSearch]);
+  }, [transactions, filterType, filterAccount, filterCategory, filterTime, filterTag, filterSpendingType, debouncedSearch]);
+
+  // Apply display limit for performance
+  const displayedTransactions = useMemo(() => {
+    return filteredTransactions.slice(0, displayLimit);
+  }, [filteredTransactions, displayLimit]);
 
   const totals = useMemo(() => {
     let income = 0, expense = 0;
 
     filteredTransactions.forEach(t => {
       if (t.type === 'split') {
-        const amt = Number(t.totalAmount) || 0;
-        if (amt > 0) income += amt;
-        else expense += Math.abs(amt);
+        // For split transactions, only count non-transfer splits (category splits only)
+        if (t.splits && t.splits.length > 0) {
+          t.splits.forEach(s => {
+            // Skip transfer splits (check both isTransfer flag and transferAccount for old data)
+            if (s.isTransfer || s.transferAccount) {
+              return;
+            }
+            // Only count if has category (not loan, not transfer)
+            if (s.category && !s.isLoan) {
+              const amt = Number(s.amount) || 0;
+              if (t.splitType === 'income') {
+                income += Math.abs(amt);
+              } else {
+                expense += Math.abs(amt);
+              }
+            }
+          });
+        }
       } else if (t.type === 'income') {
         income += Math.abs(Number(t.amount));
       } else if (t.type === 'expense') {
         expense += Math.abs(Number(t.amount));
       }
+      // transfer and loan transactions are not counted in income/expense totals
     });
 
     return { income, expense, net: income - expense };
@@ -123,7 +262,7 @@ const TransactionsTab = () => {
 
   const groupedTransactions = useMemo(() => {
     const groups = {};
-    filteredTransactions.forEach(t => {
+    displayedTransactions.forEach(t => {
       const dateKey = t.date || 'Unknown';
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(t);
@@ -142,9 +281,14 @@ const TransactionsTab = () => {
     });
     
     return groups;
-  }, [filteredTransactions]);
+  }, [displayedTransactions]);
 
-  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all';
+  const hasActiveFilters = filterType !== 'all' || filterAccount !== 'all' || filterCategory !== 'all' || filterTime !== 'all' || filterTag !== 'all' || filterSpendingType !== 'all';
+
+  // Reset display limit when filters change
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [filterType, filterAccount, filterCategory, filterTime, filterTag, filterSpendingType, debouncedSearch]);
 
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0';
@@ -197,8 +341,13 @@ const TransactionsTab = () => {
         return newSet;
       });
     } else {
-      // Don't open edit modal for loan or unrealized_gain transactions
-      if (t.type === 'loan' || t.type === 'unrealized_gain') {
+      // Show notice for loan transactions
+      if (t.type === 'loan') {
+        setLoanNoticeModal({ show: true, loanName: t.loan || 'Loan' });
+        return;
+      }
+      // Don't open edit modal for unrealized_gain transactions
+      if (t.type === 'unrealized_gain') {
         return; // Frozen - no action
       }
       setEditingTransaction(t);
@@ -296,11 +445,7 @@ const TransactionsTab = () => {
               />
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className={`p-2 rounded-lg border transition-colors ${
-                  hasActiveFilters 
-                    ? 'bg-emerald-500 text-white border-emerald-500' 
-                    : 'bg-gray-50 text-gray-600 border-gray-300'
-                }`}
+                className="p-2 bg-gray-50 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 ⚙️
               </button>
@@ -337,8 +482,12 @@ const TransactionsTab = () => {
                     className="p-2 rounded border border-gray-200 text-sm"
                   >
                     <option value="all">All Accounts</option>
-                    {accountNames.map(acc => (
-                      <option key={acc} value={acc}>{acc}</option>
+                    {groupedAccounts.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.accounts.map(acc => (
+                          <option key={acc.name} value={acc.name}>{acc.icon} {acc.name}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                   <select 
@@ -347,24 +496,61 @@ const TransactionsTab = () => {
                     className="p-2 rounded border border-gray-200 text-sm"
                   >
                     <option value="all">All Categories</option>
-                    {categoryNames.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                    
+                    {/* Show based on type filter */}
+                    {(filterType === 'all' || filterType === 'expense' || filterType === 'split') && groupedCategoriesForFilter.expense.length > 0 && (
+                      <optgroup label="── EXPENSE ──">
+                        {groupedCategoriesForFilter.expense.map(({ group, categories: cats }) => (
+                          <React.Fragment key={`expense-${group}`}>
+                            <option disabled className="font-bold text-gray-500">📁 {group}</option>
+                            {cats.map(cat => (
+                              <option key={cat.id} value={cat.name}>
+                                &nbsp;&nbsp;&nbsp;{cat.icon || '📦'} {cat.name}
+                              </option>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </optgroup>
+                    )}
+                    
+                    {(filterType === 'all' || filterType === 'income' || filterType === 'split') && groupedCategoriesForFilter.income.length > 0 && (
+                      <optgroup label="── INCOME ──">
+                        {groupedCategoriesForFilter.income.map(({ group, categories: cats }) => (
+                          <React.Fragment key={`income-${group}`}>
+                            <option disabled className="font-bold text-gray-500">📁 {group}</option>
+                            {cats.map(cat => (
+                              <option key={cat.id} value={cat.name}>
+                                &nbsp;&nbsp;&nbsp;{cat.icon || '💰'} {cat.name}
+                              </option>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
-                {/* Tag Filter - Full Width */}
-                {tagSuggestions.length > 0 && (
+                {/* Tag & Wants/Needs Filter - Same Row */}
+                <div className="flex gap-2">
                   <select 
                     value={filterTag} 
                     onChange={(e) => setFilterTag(e.target.value)}
-                    className="w-full p-2 rounded border border-gray-200 text-sm"
+                    className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
                   >
                     <option value="all">🏷️ All Tags</option>
-                    {tagSuggestions.map(tag => (
-                      <option key={tag} value={tag}>🏷️ {tag}</option>
+                    {selectableTagsForFilter.map(tag => (
+                      <option key={tag.value} value={tag.value}>🏷️ {tag.display}</option>
                     ))}
                   </select>
-                )}
+                  <select 
+                    value={filterSpendingType} 
+                    onChange={(e) => setFilterSpendingType(e.target.value)}
+                    className="flex-1 p-2 rounded border border-gray-200 text-sm min-w-0"
+                  >
+                    <option value="all">All Needs/Wants</option>
+                    <option value="need">🔵 Needs</option>
+                    <option value="want">🟣 Wants</option>
+                  </select>
+                </div>
                 {hasActiveFilters && (
                   <button
                     onClick={() => {
@@ -373,6 +559,7 @@ const TransactionsTab = () => {
                       setFilterCategory('all');
                       setFilterTime('all');
                       setFilterTag('all');
+                      setFilterSpendingType('all');
                     }}
                     className="text-xs text-red-500 font-medium"
                   >
@@ -490,9 +677,14 @@ const TransactionsTab = () => {
                             {isPositive ? '+' : '-'}{formatCurrency(amount)}
                           </div>
                           <div className="text-xs text-gray-400">{accountDisplay}</div>
-                          {t.tag && (
-                            <div className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded mt-0.5 inline-block">
-                              🏷️ {t.tag}
+                          {/* Support both old 'tag' and new 'tags' fields */}
+                          {(t.tags?.length > 0 || t.tag) && (
+                            <div className="flex flex-wrap gap-1 justify-end mt-0.5">
+                              {(t.tags || (t.tag ? [t.tag] : [])).map(tag => (
+                                <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded inline-block">
+                                  🏷️ {tagDisplayMap[tag] || tag}
+                                </span>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -500,11 +692,17 @@ const TransactionsTab = () => {
 
                       {/* Split details */}
                       {isSplit && t.splits && (
-                        <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">
+                        <div className="mt-1.5 space-y-0.5 pl-3 border-l-2 border-sky-200 ml-1">
                           {t.splits.map((s, i) => (
-                            <div key={i} className="flex justify-between text-sm">
+                            <div key={i} className="flex justify-between text-xs">
                               <span className="text-gray-600">
-                                {s.isLoan ? s.loan : s.category}
+                                {s.isTransfer 
+                                  ? (t.splitType === 'income' || t.type === 'income')
+                                    ? `Transfer: ${s.transferAccount} → ${t.account}`
+                                    : `Transfer: ${t.account} → ${s.transferAccount}`
+                                  : s.isLoan 
+                                    ? s.loan 
+                                    : s.category}
                                 {s.memo && <span className="text-gray-400 ml-1">• {s.memo}</span>}
                               </span>
                               <span className="text-gray-700 font-medium">
@@ -520,6 +718,44 @@ const TransactionsTab = () => {
               </div>
             </div>
           ))
+        )}
+
+        {/* Show More Button (for already loaded transactions) */}
+        {displayLimit < filteredTransactions.length && (
+          <div className="p-4 text-center">
+            <button
+              onClick={() => setDisplayLimit(prev => prev + 100)}
+              className="px-6 py-3 bg-emerald-100 text-emerald-700 rounded-lg font-medium hover:bg-emerald-200"
+            >
+              Show More ({filteredTransactions.length - displayLimit} remaining)
+            </button>
+          </div>
+        )}
+
+        {/* Load More Button */}
+        {hasMoreTransactions && !isLoading && transactionCount > 0 && (
+          <div className="p-4 text-center">
+            <button
+              onClick={loadMoreTransactions}
+              disabled={loadingMore}
+              className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50"
+            >
+              {loadingMore ? (
+                <span className="flex items-center gap-2 justify-center">
+                  <span className="animate-spin">⏳</span> Loading...
+                </span>
+              ) : (
+                `Load More (${transactionCount} loaded)`
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* All loaded indicator */}
+        {!hasMoreTransactions && transactionCount > 0 && (
+          <div className="p-4 text-center text-gray-400 text-sm">
+            ✓ All {transactionCount} transactions loaded
+          </div>
         )}
       </div>
 
@@ -578,6 +814,49 @@ const TransactionsTab = () => {
               >
                 OK
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loan Notice Modal */}
+      {loanNoticeModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-emerald-500 p-4 text-white text-center">
+              <div className="text-3xl mb-1">🏦</div>
+              <div className="font-bold">Loan Transaction</div>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-gray-700 text-center">
+                This is a loan transaction. To edit it, please go to the Loans tab.
+              </p>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-center">
+                <div className="text-sm text-emerald-600">Loan</div>
+                <div className="font-bold text-emerald-700">{loanNoticeModal.loanName}</div>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setLoanNoticeModal({ show: false, loanName: '' })}
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-200"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={() => {
+                    const loanName = loanNoticeModal.loanName;
+                    setLoanNoticeModal({ show: false, loanName: '' });
+                    // Navigate to Loans tab and open specific loan detail
+                    window.dispatchEvent(new CustomEvent('openLoans'));
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent('openLoanDetail', { detail: { loanName } }));
+                    }, 150);
+                  }}
+                  className="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-medium hover:bg-emerald-600"
+                >
+                  Go to Loans →
+                </button>
+              </div>
             </div>
           </div>
         </div>

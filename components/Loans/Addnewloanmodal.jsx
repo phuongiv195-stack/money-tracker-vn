@@ -39,11 +39,15 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
     account: '',
     date: getLocalToday(),
     memo: '',
-    tag: ''
+    tag: '',
+    tags: []
   });
 
   useEffect(() => {
     if (isOpen) {
+      // Reset loading state
+      setLoading(false);
+      
       // Set default account from accountNames (already sorted)
       const defaultAccount = accountNames[0] || '';
       setFormData({
@@ -53,7 +57,8 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
         account: defaultAccount,
         date: getLocalToday(),
         memo: '',
-        tag: ''
+        tag: '',
+        tags: []
       });
       setDisplayAmount('');
       setLoanType('borrow');
@@ -118,7 +123,8 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
         account: formData.account,
         date: formData.date,
         memo: formData.memo || (loanType === 'borrow' ? 'Initial borrow' : 'Initial lend'),
-        tag: formData.tag || null,
+        tag: formData.tags.length > 0 ? formData.tags[0] : null,
+        tags: formData.tags.length > 0 ? formData.tags : null,
         createdAt: new Date()
       };
 
@@ -200,7 +206,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               placeholder={loanType === 'borrow' ? "E.g. Mike, Bank..." : "E.g. John, Friend..."}
               value={formData.name}
               onChange={(e) => setFormData({...formData, name: e.target.value})}
-              className="w-full p-3 bg-gray-100 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-gray-200"
+              className="w-full p-3 bg-gray-100 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-gray-200 text-base"
               
             />
           </div>
@@ -213,7 +219,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               placeholder="Auto-generated..."
               value={formData.loanName}
               onChange={(e) => setFormData({...formData, loanName: e.target.value})}
-              className="w-full p-3 bg-emerald-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-emerald-200"
+              className="w-full p-3 bg-emerald-50 rounded-lg mt-1 focus:ring-2 focus:ring-emerald-500 outline-none border border-emerald-200 text-base"
             />
           </div>
 
@@ -238,7 +244,7 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Account</label>
             <select 
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none border border-gray-200"
+              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none border border-gray-200 text-base"
               value={formData.account}
               onChange={(e) => setFormData({...formData, account: e.target.value})}
             >
@@ -262,16 +268,16 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
             <div className="relative mt-1">
-              <input 
-                type="date" 
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                value={formData.date}
-                onChange={(e) => setFormData({...formData, date: e.target.value})}
-              />
-              <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between">
+              <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between pointer-events-none">
                 <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
                 <span className="text-gray-400">📅</span>
               </div>
+              <input 
+                type="date" 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                value={formData.date}
+                onChange={(e) => setFormData({...formData, date: e.target.value})}
+              />
             </div>
           </div>
 
@@ -281,19 +287,44 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
             <input
               type="text"
               placeholder="Notes (optional)"
-              className="w-full p-3 bg-white rounded-lg mt-1 outline-none border border-gray-200"
+              className="w-full p-3 bg-white rounded-lg mt-1 outline-none border border-gray-200 text-base"
               value={formData.memo}
               onChange={(e) => setFormData({...formData, memo: e.target.value})}
             />
           </div>
 
-          {/* Tag */}
+          {/* Tags */}
           <div className="relative">
-            <label className="text-xs text-gray-500 uppercase font-semibold">Tag</label>
+            <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
+            
+            {/* Selected tags chips */}
+            {formData.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1 mb-2">
+                {formData.tags.map(tag => (
+                  <span 
+                    key={tag}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm"
+                  >
+                    🏷️ {tag}
+                    <button
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData, 
+                        tags: formData.tags.filter(t => t !== tag)
+                      })}
+                      className="text-emerald-500 hover:text-emerald-700 ml-1"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            
             <input
               type="text"
-              placeholder="e.g. DaNang2025 (optional)"
-              className="w-full p-3 bg-white rounded-lg mt-1 outline-none border border-gray-200"
+              placeholder={formData.tags.length > 0 ? "Add another tag..." : "e.g. DaNang2025 (optional)"}
+              className="w-full p-3 bg-white rounded-lg mt-1 outline-none border border-gray-200 text-base"
               value={formData.tag}
               onChange={(e) => {
                 setFormData({...formData, tag: e.target.value});
@@ -301,18 +332,39 @@ const AddNewLoanModal = ({ isOpen, onClose, onSave }) => {
               }}
               onFocus={() => setShowTagList(true)}
               onBlur={() => setTimeout(() => setShowTagList(false), 200)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && formData.tag.trim()) {
+                  e.preventDefault();
+                  const newTag = formData.tag.trim();
+                  if (!formData.tags.includes(newTag)) {
+                    setFormData({
+                      ...formData,
+                      tags: [...formData.tags, newTag],
+                      tag: ''
+                    });
+                  }
+                  setShowTagList(false);
+                }
+              }}
             />
             
             {showTagList && tagSuggestions.length > 0 && (
               <div className="absolute z-20 w-full bg-white shadow-xl max-h-36 overflow-y-auto rounded-lg mt-1 border border-gray-200">
                 {tagSuggestions
-                  .filter(tag => tag.toLowerCase().includes((formData.tag || '').toLowerCase()))
+                  .filter(tag => 
+                    tag.toLowerCase().includes((formData.tag || '').toLowerCase()) &&
+                    !formData.tags.includes(tag)
+                  )
                   .map(tag => (
                     <div 
                       key={tag} 
                       className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
                       onClick={() => {
-                        setFormData({...formData, tag});
+                        setFormData({
+                          ...formData, 
+                          tags: [...formData.tags, tag],
+                          tag: ''
+                        });
                         setShowTagList(false);
                       }}
                     >

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { collection, query, where, onSnapshot, doc, setDoc, getDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
@@ -28,11 +28,6 @@ const DesktopReports = ({ onBack }) => {
   // Edit transaction modal
   const [editTransaction, setEditTransaction] = useState(null);
 
-  // Exchange rate state
-  const [exchangeRate, setExchangeRate] = useState(30000);
-  const [displayExchangeRate, setDisplayExchangeRate] = useState('30,000');
-  const exchangeRateLoadedRef = useRef(false);
-
   // Fetch transactions
   useEffect(() => {
     if (!userId) return;
@@ -55,78 +50,6 @@ const DesktopReports = ({ onBack }) => {
     });
     return () => unsubscribe();
   }, [userId]);
-
-  // Load exchange rate from Firebase
-  useEffect(() => {
-    if (!userId) return;
-    const loadExchangeRate = async () => {
-      try {
-        const docRef = doc(db, 'userSettings', userId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.detailedReportExchangeRate !== undefined) {
-            const rate = Number(data.detailedReportExchangeRate);
-            setExchangeRate(rate);
-            setDisplayExchangeRate(rate.toLocaleString('en-US', { maximumFractionDigits: 2 }));
-          }
-        }
-        exchangeRateLoadedRef.current = true;
-      } catch (error) {
-        console.error('Error loading exchange rate:', error);
-        exchangeRateLoadedRef.current = true;
-      }
-    };
-    loadExchangeRate();
-  }, [userId]);
-
-  // Save exchange rate to Firebase (debounced)
-  const saveExchangeRateTimeoutRef = useRef(null);
-  useEffect(() => {
-    if (!userId || !exchangeRateLoadedRef.current) return;
-    if (saveExchangeRateTimeoutRef.current) {
-      clearTimeout(saveExchangeRateTimeoutRef.current);
-    }
-    saveExchangeRateTimeoutRef.current = setTimeout(async () => {
-      try {
-        const docRef = doc(db, 'userSettings', userId);
-        await setDoc(docRef, { detailedReportExchangeRate: exchangeRate }, { merge: true });
-      } catch (error) {
-        console.error('Error saving exchange rate:', error);
-      }
-    }, 500);
-    return () => {
-      if (saveExchangeRateTimeoutRef.current) {
-        clearTimeout(saveExchangeRateTimeoutRef.current);
-      }
-    };
-  }, [exchangeRate, userId]);
-
-  // Handle exchange rate input
-  const handleExchangeRateChange = (e) => {
-    const raw = e.target.value.replace(/,/g, '');
-    if (raw === '' || /^\d*\.?\d{0,2}$/.test(raw)) {
-      const num = Number(raw) || 0;
-      setExchangeRate(num);
-      if (raw.endsWith('.') || raw.includes('.')) {
-        const parts = raw.split('.');
-        const intPart = parts[0] ? Number(parts[0]).toLocaleString('en-US') : '';
-        const decPart = parts[1] !== undefined ? '.' + parts[1] : '.';
-        setDisplayExchangeRate(intPart + decPart);
-      } else if (num) {
-        setDisplayExchangeRate(num.toLocaleString('en-US'));
-      } else {
-        setDisplayExchangeRate('');
-      }
-    }
-  };
-
-  // Format USD
-  const formatUSD = (amountVND) => {
-    if (!exchangeRate || exchangeRate === 0) return '$0.00';
-    const usd = amountVND / exchangeRate;
-    return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   // Get months in date range
   const getDateRangeMonths = () => {
@@ -239,11 +162,11 @@ const DesktopReports = ({ onBack }) => {
 
       if (t.type === 'income') {
         if (!t.category) return; // Skip income without category
-        const cat = categories.find(c => c.name === t.category && c.type === 'income') || categories.find(c => c.name === t.category);
+        const cat = categories.find(c => c.name === t.category);
         processCategory(t.category, t.amount, 'income', cat?.group);
       } else if (t.type === 'expense') {
         if (!t.category) return; // Skip expense without category
-        const cat = categories.find(c => c.name === t.category && c.type === 'expense') || categories.find(c => c.name === t.category);
+        const cat = categories.find(c => c.name === t.category);
         processCategory(t.category, t.amount, 'expense', cat?.group);
       } else if (t.type === 'split' && t.splits) {
         t.splits.forEach(s => {
@@ -254,73 +177,27 @@ const DesktopReports = ({ onBack }) => {
             const splitSpendingType = s.spendingType || 'need';
             if (splitSpendingType !== wantNeedFilter) return;
           }
+          const cat = categories.find(c => c.name === s.category);
           const type = t.splitType || 'expense';
-          const cat = categories.find(c => c.name === s.category && c.type === type) || categories.find(c => c.name === s.category);
           processCategory(s.category, s.amount, type, cat?.group);
         });
       }
     });
 
-    // Group categories by their group - build from categories array first to preserve exact order from Category tab
-    const groupCategories = (catMap, type) => {
-      // Step 1: Build groups from categories array in exact order (same as CategoriesTab)
-      const filteredCats = categories.filter(c => c.type === type);
-      
-      // Build sorted groups with ordered categories (exact same logic as CategoriesTab)
-      const orderedGroups = {};
-      filteredCats.forEach(cat => {
-        const groupName = cat.group || 'Other';
-        if (!orderedGroups[groupName]) orderedGroups[groupName] = [];
-        orderedGroups[groupName].push(cat);
-      });
-      // Sort categories within each group by order (same as CategoriesTab)
-      Object.keys(orderedGroups).forEach(groupName => {
-        orderedGroups[groupName].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-      });
-      
-      // Get sorted group names (same as CategoriesTab sortedGroupNames)
-      const grpOrderMap = {};
-      filteredCats.forEach(cat => {
-        if (cat.group && grpOrderMap[cat.group] === undefined) {
-          grpOrderMap[cat.group] = cat.groupOrder ?? 999;
-        }
-      });
-
-      // Step 2: Build report groups, only including categories that have transaction data
+    // Group categories by their group
+    const groupCategories = (catMap) => {
       const groups = {};
-      Object.keys(orderedGroups).forEach(groupName => {
-        const orderedCatsInGroup = orderedGroups[groupName];
-        orderedCatsInGroup.forEach(catDef => {
-          if (!catMap.has(catDef.name)) return; // Skip categories without transactions
-          const data = catMap.get(catDef.name);
-          if (!groups[groupName]) {
-            groups[groupName] = { categories: [], months: {}, total: 0, groupOrder: grpOrderMap[groupName] ?? 999 };
-          }
-          // Push in the same order as Category tab (no need to sort later)
-          groups[groupName].categories.push({ name: catDef.name, ...data });
-          groups[groupName].total += data.total;
-          monthKeys.forEach(mk => {
-            groups[groupName].months[mk] = (groups[groupName].months[mk] || 0) + (data.months[mk] || 0);
-          });
-        });
-      });
-      
-      // Also add any categories from catMap that aren't in the categories array (edge case)
       catMap.forEach((data, catName) => {
         const groupName = data.group || 'Other';
-        const alreadyAdded = groups[groupName]?.categories.some(c => c.name === catName);
-        if (!alreadyAdded) {
-          if (!groups[groupName]) {
-            groups[groupName] = { categories: [], months: {}, total: 0, groupOrder: grpOrderMap[groupName] ?? 999 };
-          }
-          groups[groupName].categories.push({ name: catName, ...data });
-          groups[groupName].total += data.total;
-          monthKeys.forEach(mk => {
-            groups[groupName].months[mk] = (groups[groupName].months[mk] || 0) + (data.months[mk] || 0);
-          });
+        if (!groups[groupName]) {
+          groups[groupName] = { categories: [], months: {}, total: 0 };
         }
+        groups[groupName].categories.push({ name: catName, ...data });
+        groups[groupName].total += data.total;
+        monthKeys.forEach(mk => {
+          groups[groupName].months[mk] = (groups[groupName].months[mk] || 0) + (data.months[mk] || 0);
+        });
       });
-
       return groups;
     };
 
@@ -349,8 +226,8 @@ const DesktopReports = ({ onBack }) => {
         key: `${m.year}-${String(m.month + 1).padStart(2, '0')}`,
         label: new Date(m.year, m.month).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
       })),
-      income: groupCategories(incomeCategories, 'income'),
-      expense: groupCategories(expenseCategories, 'expense'),
+      income: groupCategories(incomeCategories),
+      expense: groupCategories(expenseCategories),
       incomeTotals,
       expenseTotals,
       grandTotalIncome: Object.values(incomeTotals).reduce((a, b) => a + b, 0),
@@ -483,23 +360,6 @@ const DesktopReports = ({ onBack }) => {
     );
   };
 
-  // Check if all categories across all groups are checked
-  const isAllCategoriesChecked = useMemo(() => {
-    const allKeys = [];
-    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
-      groupData.categories.forEach(cat => {
-        allKeys.push(`income-cat-${cat.name}`);
-      });
-    });
-    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
-      groupData.categories.forEach(cat => {
-        allKeys.push(`expense-cat-${cat.name}`);
-      });
-    });
-    if (allKeys.length === 0) return true;
-    return allKeys.every(key => checkedCategories[key]);
-  }, [reportData, checkedCategories]);
-
   // Check All / Uncheck All functions
   const checkAllCategories = () => {
     const newChecked = {};
@@ -539,16 +399,6 @@ const DesktopReports = ({ onBack }) => {
   const formatCurrency = (val) => {
     if (val === 0 || val === undefined) return '';
     return new Intl.NumberFormat('en-US').format(Math.round(val));
-  };
-
-  // Get sorted group entries (by groupOrder, then alphabetical)
-  const getSortedGroupEntries = (groups) => {
-    return Object.entries(groups).sort(([aName, aData], [bName, bData]) => {
-      const orderA = aData.groupOrder ?? 999;
-      const orderB = bData.groupOrder ?? 999;
-      if (orderA !== orderB) return orderA - orderB;
-      return aName.localeCompare(bName);
-    });
   };
 
   // Get transactions for a specific category and month
@@ -651,30 +501,30 @@ const DesktopReports = ({ onBack }) => {
   // Export to CSV
   const exportCSV = () => {
     const rows = [];
-    const headers = ['Type', 'Group', 'Category', ...reportData.months.map(m => m.label), 'Total VND', 'Total USD'];
+    const headers = ['Type', 'Group', 'Category', ...reportData.months.map(m => m.label), 'Total'];
     rows.push(headers);
 
     // Income
-    rows.push(['Income', '', '', ...reportData.months.map(() => ''), '', '']);
-    getSortedGroupEntries(reportData.income).forEach(([groupName, groupData]) => {
-      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total, exchangeRate ? (groupData.total / exchangeRate).toFixed(2) : '']);
+    rows.push(['Income', '', '', ...reportData.months.map(() => ''), '']);
+    Object.entries(reportData.income).forEach(([groupName, groupData]) => {
+      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total]);
       groupData.categories.forEach(cat => {
-        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, exchangeRate ? (cat.total / exchangeRate).toFixed(2) : '']);
+        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total]);
       });
     });
-    rows.push(['Total Income', '', '', ...reportData.months.map(m => reportData.incomeTotals[m.key] || ''), reportData.grandTotalIncome, exchangeRate ? (reportData.grandTotalIncome / exchangeRate).toFixed(2) : '']);
+    rows.push(['Total Income', '', '', ...reportData.months.map(m => reportData.incomeTotals[m.key] || ''), reportData.grandTotalIncome]);
 
     rows.push([]); // Empty row
 
     // Expense
-    rows.push(['Expenses', '', '', ...reportData.months.map(() => ''), '', '']);
-    getSortedGroupEntries(reportData.expense).forEach(([groupName, groupData]) => {
-      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total, exchangeRate ? (groupData.total / exchangeRate).toFixed(2) : '']);
+    rows.push(['Expenses', '', '', ...reportData.months.map(() => ''), '']);
+    Object.entries(reportData.expense).forEach(([groupName, groupData]) => {
+      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total]);
       groupData.categories.forEach(cat => {
-        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, exchangeRate ? (cat.total / exchangeRate).toFixed(2) : '']);
+        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total]);
       });
     });
-    rows.push(['Total Expenses', '', '', ...reportData.months.map(m => reportData.expenseTotals[m.key] || ''), reportData.grandTotalExpense, exchangeRate ? (reportData.grandTotalExpense / exchangeRate).toFixed(2) : '']);
+    rows.push(['Total Expenses', '', '', ...reportData.months.map(m => reportData.expenseTotals[m.key] || ''), reportData.grandTotalExpense]);
 
     rows.push([]); // Empty row
     rows.push(['Net Income', '', '', ...reportData.months.map(m => (reportData.incomeTotals[m.key] || 0) - (reportData.expenseTotals[m.key] || 0)), reportData.grandTotalIncome - reportData.grandTotalExpense]);
@@ -867,19 +717,6 @@ const DesktopReports = ({ onBack }) => {
               </div>
             </div>
 
-            {/* Exchange Rate Input */}
-            <div className="flex justify-center items-center gap-2 mb-4">
-              <span className="text-gray-600 text-sm">Exchange Rate:</span>
-              <input
-                type="text"
-                value={displayExchangeRate}
-                onChange={handleExchangeRateChange}
-                className="w-28 px-3 py-1.5 border rounded-lg text-center font-medium text-gray-700"
-                placeholder="30,000"
-              />
-              <span className="text-gray-600 text-sm">VND = 1 USD</span>
-            </div>
-
             {/* Expand/Collapse Buttons + Check/Uncheck All */}
             <div className="flex gap-2 mb-4 justify-center">
               <button
@@ -897,23 +734,15 @@ const DesktopReports = ({ onBack }) => {
               <div className="w-px bg-gray-300 mx-1"></div>
               <button
                 onClick={checkAllCategories}
-                className={`px-3 py-1 text-sm rounded-lg ${
-                  isAllCategoriesChecked 
-                    ? 'text-emerald-600 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100' 
-                    : 'text-gray-600 bg-white border border-gray-200 hover:bg-gray-50'
-                }`}
+                className="px-3 py-1 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
               >
-                {isAllCategoriesChecked ? '☑' : '☐'} Check All
+                ☑ Check All
               </button>
               <button
                 onClick={uncheckAllCategories}
-                className={`px-3 py-1 text-sm rounded-lg ${
-                  !isAllCategoriesChecked 
-                    ? 'text-red-600 bg-red-50 border border-red-200 hover:bg-red-100' 
-                    : 'text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100'
-                }`}
+                className="px-3 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
               >
-                {!isAllCategoriesChecked ? '☑' : '☐'} Uncheck All
+                ☐ Uncheck All
               </button>
             </div>
 
@@ -932,21 +761,18 @@ const DesktopReports = ({ onBack }) => {
                         </th>
                       ))}
                       <th className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap bg-gray-100">
-                        Total VND
-                      </th>
-                      <th className="text-right py-3 px-3 font-semibold text-gray-700 whitespace-nowrap bg-gray-100">
-                        Total USD
+                        Total
                       </th>
                     </tr>
               </thead>
               <tbody>
                 {/* Income Section */}
                 <tr className="bg-emerald-50 border-b border-emerald-200">
-                  <td colSpan={reportData.months.length + 3} className="py-2 px-3 font-bold text-emerald-700">
+                  <td colSpan={reportData.months.length + 2} className="py-2 px-3 font-bold text-emerald-700">
                     📈 Income
                   </td>
                 </tr>
-                {getSortedGroupEntries(reportData.income).map(([groupName, groupData]) => (
+                {Object.entries(reportData.income).map(([groupName, groupData]) => (
                   <React.Fragment key={`income-${groupName}`}>
                     {/* Group Row */}
                     <tr 
@@ -985,11 +811,6 @@ const DesktopReports = ({ onBack }) => {
                           .filter(cat => checkedCategories[`income-cat-${cat.name}`])
                           .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
-                      <td className={`py-2 px-3 text-right font-medium text-emerald-700 bg-gray-50 ${!isGroupFullyChecked('income', groupData) && !isGroupIndeterminate('income', groupData) ? 'opacity-30' : ''}`}>
-                        {formatUSD(groupData.categories
-                          .filter(cat => checkedCategories[`income-cat-${cat.name}`])
-                          .reduce((sum, cat) => sum + cat.total, 0))}
-                      </td>
                     </tr>
                     {/* Category Rows */}
                     {expandedGroups[`income-${groupName}`] && groupData.categories.map(cat => {
@@ -1020,9 +841,6 @@ const DesktopReports = ({ onBack }) => {
                           <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
                             {isChecked ? formatCurrency(cat.total) : ''}
                           </td>
-                          <td className="py-1.5 px-3 text-right text-gray-500 bg-gray-100/50">
-                            {isChecked ? formatUSD(cat.total) : ''}
-                          </td>
                         </tr>
                       );
                     })}
@@ -1041,21 +859,18 @@ const DesktopReports = ({ onBack }) => {
                   <td className="py-2 px-3 text-right font-bold text-emerald-800 bg-emerald-200">
                     {formatCurrency(filteredReportData.grandTotalIncome)}
                   </td>
-                  <td className="py-2 px-3 text-right font-bold text-emerald-800 bg-emerald-200">
-                    {formatUSD(filteredReportData.grandTotalIncome)}
-                  </td>
                 </tr>
 
                 {/* Spacer */}
-                <tr><td colSpan={reportData.months.length + 3} className="py-2"></td></tr>
+                <tr><td colSpan={reportData.months.length + 2} className="py-2"></td></tr>
 
                 {/* Expense Section */}
                 <tr className="bg-red-50 border-b border-red-200">
-                  <td colSpan={reportData.months.length + 3} className="py-2 px-3 font-bold text-red-700">
+                  <td colSpan={reportData.months.length + 2} className="py-2 px-3 font-bold text-red-700">
                     📉 Expenses
                   </td>
                 </tr>
-                {getSortedGroupEntries(reportData.expense).map(([groupName, groupData]) => (
+                {Object.entries(reportData.expense).map(([groupName, groupData]) => (
                   <React.Fragment key={`expense-${groupName}`}>
                     {/* Group Row */}
                     <tr 
@@ -1094,11 +909,6 @@ const DesktopReports = ({ onBack }) => {
                           .filter(cat => checkedCategories[`expense-cat-${cat.name}`])
                           .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
-                      <td className={`py-2 px-3 text-right font-medium text-red-700 bg-gray-50 ${!isGroupFullyChecked('expense', groupData) && !isGroupIndeterminate('expense', groupData) ? 'opacity-30' : ''}`}>
-                        {formatUSD(groupData.categories
-                          .filter(cat => checkedCategories[`expense-cat-${cat.name}`])
-                          .reduce((sum, cat) => sum + cat.total, 0))}
-                      </td>
                     </tr>
                     {/* Category Rows */}
                     {expandedGroups[`expense-${groupName}`] && groupData.categories.map(cat => {
@@ -1129,9 +939,6 @@ const DesktopReports = ({ onBack }) => {
                           <td className="py-1.5 px-3 text-right text-gray-700 bg-gray-100/50">
                             {isChecked ? formatCurrency(cat.total) : ''}
                           </td>
-                          <td className="py-1.5 px-3 text-right text-gray-500 bg-gray-100/50">
-                            {isChecked ? formatUSD(cat.total) : ''}
-                          </td>
                         </tr>
                       );
                     })}
@@ -1150,13 +957,10 @@ const DesktopReports = ({ onBack }) => {
                   <td className="py-2 px-3 text-right font-bold text-red-800 bg-red-200">
                     {formatCurrency(filteredReportData.grandTotalExpense)}
                   </td>
-                  <td className="py-2 px-3 text-right font-bold text-red-800 bg-red-200">
-                    {formatUSD(filteredReportData.grandTotalExpense)}
-                  </td>
                 </tr>
 
                 {/* Spacer */}
-                <tr><td colSpan={reportData.months.length + 3} className="py-2"></td></tr>
+                <tr><td colSpan={reportData.months.length + 2} className="py-2"></td></tr>
 
                 {/* Net Income */}
                 <tr className="bg-blue-50 border-2 border-blue-200">
@@ -1174,10 +978,6 @@ const DesktopReports = ({ onBack }) => {
                   <td className={`py-3 px-3 text-right font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
                     {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
                     {formatCurrency(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
-                  </td>
-                  <td className={`py-3 px-3 text-right font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
-                    {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
-                    {formatUSD(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
                   </td>
                 </tr>
               </tbody>

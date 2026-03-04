@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { writeBatch, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useData } from '../../contexts/DataContext';
@@ -9,7 +9,26 @@ import { useToast } from '../Toast/ToastProvider';
 
 const LoansTab = () => {
   const toast = useToast();
-  const { loanTransactions, splitTransactions, futureTransactions, groupedAccounts, isLoading } = useData();
+  const { loanTransactions, splitTransactions, futureTransactions, groupedAccounts, parentTags, getSubTags, isLoading } = useData();
+  
+  // Create tag display map for showing "Parent > Sub" format
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          map[sub.name] = `${parent.name} > ${sub.name}`;
+        });
+      } else {
+        map[parent.name] = parent.name;
+      }
+    });
+    
+    return map;
+  }, [parentTags, getSubTags]);
   
   const [isAddNewLoanOpen, setIsAddNewLoanOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
@@ -17,8 +36,9 @@ const LoansTab = () => {
   const [activateAccount, setActivateAccount] = useState('');
   const [activateDate, setActivateDate] = useState('');
   const [isAddFutureOpen, setIsAddFutureOpen] = useState(false);
+  const [editingFutureTransaction, setEditingFutureTransaction] = useState(null);
 
-  // Long press & action state
+  // Action state
   const [actionLoan, setActionLoan] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -27,21 +47,30 @@ const LoansTab = () => {
   const [successMessage, setSuccessMessage] = useState(null);
   const [showArchivedLoans, setShowArchivedLoans] = useState(false);
 
-  // Long press refs
-  const longPressTriggered = useRef(false);
-  const longPressTimer = useRef(null);
-  const touchStartPos = useRef({ x: 0, y: 0 });
-
-  // Cleanup timer
+  // Listen for openLoanDetail event to navigate directly to a specific loan
   useEffect(() => {
-    return () => {
-      if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    const handleOpenLoanDetail = (e) => {
+      const loanName = e.detail?.loanName;
+      if (loanName) {
+        // selectedLoan needs to be an object with 'name' property
+        setSelectedLoan({ name: loanName });
+      }
     };
+    window.addEventListener('openLoanDetail', handleOpenLoanDetail);
+    return () => window.removeEventListener('openLoanDetail', handleOpenLoanDetail);
   }, []);
 
   // Calculate loan data including splits
   const loanData = useMemo(() => {
     const loans = {};
+    
+    // First, get list of archived loan names from loan transactions
+    const archivedLoanNames = new Set();
+    loanTransactions.forEach(t => {
+      if (t.archived && t.loan) {
+        archivedLoanNames.add(t.loan);
+      }
+    });
 
     // Process regular loan transactions
     loanTransactions.forEach(t => {
@@ -50,6 +79,9 @@ const LoansTab = () => {
       
       const loanName = t.loan;
       if (!loanName) return;
+      
+      // Skip if this loan name is archived (some transactions might not have archived flag yet)
+      if (archivedLoanNames.has(loanName)) return;
 
       if (!loans[loanName]) {
         loans[loanName] = {
@@ -78,16 +110,37 @@ const LoansTab = () => {
     splitTransactions.forEach(t => {
       if (!t.splits || t.archived) return;
       
-      t.splits.forEach(split => {
+      t.splits.forEach((split, splitIndex) => {
         if (!split.isLoan || !split.loan) return;
         
         const loanName = split.loan;
         
+        // Skip if this loan name is archived
+        if (archivedLoanNames.has(loanName)) return;
+        
         if (!loans[loanName]) {
+          // Check if there's an existing loan transaction with this name
           const existingLoan = loanTransactions.find(lt => lt.loan === loanName);
+          
+          // Determine loanType: 
+          // 1. From split.loanType if available
+          // 2. From existing loan transaction
+          // 3. Infer from loan name (Lend to X = lend, Borrow from X = borrow)
+          // 4. Default to 'borrow'
+          let determinedLoanType = split.loanType || existingLoan?.loanType;
+          if (!determinedLoanType) {
+            if (loanName.toLowerCase().startsWith('lend to')) {
+              determinedLoanType = 'lend';
+            } else if (loanName.toLowerCase().startsWith('borrow from')) {
+              determinedLoanType = 'borrow';
+            } else {
+              determinedLoanType = 'borrow'; // default
+            }
+          }
+          
           loans[loanName] = {
             name: loanName,
-            loanType: existingLoan?.loanType || 'borrow',
+            loanType: determinedLoanType,
             balance: 0,
             paidBack: 0,
             received: 0,
@@ -107,16 +160,18 @@ const LoansTab = () => {
         }
 
         loans[loanName].transactions.push({
-          id: `${t.id}-split-${split.loan}`,
+          id: `${t.id}-split-${splitIndex}-${split.loan}`,
           type: 'loan',
           loan: loanName,
           loanType: loans[loanName].loanType,
           amount: signedAmt,
           date: t.date,
-          memo: split.memo || `From split: ${t.payee || 'Split transaction'}`,
+          payee: t.payee || null,
+          memo: split.memo || null,
           account: t.account,
           isSplitPart: true,
-          parentId: t.id
+          parentSplitId: t.id,
+          clearStatus: t.clearStatus || 'uncleared'
         });
       });
     });
@@ -132,6 +187,14 @@ const LoansTab = () => {
   // Calculate ARCHIVED loan data
   const archivedLoanData = useMemo(() => {
     const loans = {};
+    
+    // Get list of archived loan names
+    const archivedLoanNames = new Set();
+    loanTransactions.forEach(t => {
+      if (t.archived && t.loan) {
+        archivedLoanNames.add(t.loan);
+      }
+    });
 
     // Process archived loan transactions
     loanTransactions.forEach(t => {
@@ -162,6 +225,60 @@ const LoansTab = () => {
 
       loans[loanName].transactions.push(t);
     });
+    
+    // Also include split transactions for archived loans
+    splitTransactions.forEach(t => {
+      if (!t.splits || t.archived) return;
+      
+      t.splits.forEach((split, splitIndex) => {
+        if (!split.isLoan || !split.loan) return;
+        
+        const loanName = split.loan;
+        
+        // Only include if this loan name is archived
+        if (!archivedLoanNames.has(loanName)) return;
+        
+        if (!loans[loanName]) {
+          // Get loanType from existing archived loan transaction
+          const existingLoan = loanTransactions.find(lt => lt.loan === loanName && lt.archived);
+          
+          loans[loanName] = {
+            name: loanName,
+            loanType: existingLoan?.loanType || split.loanType || 'borrow',
+            balance: 0,
+            paidBack: 0,
+            received: 0,
+            transactions: []
+          };
+        }
+
+        const isIncomeParent = Number(t.totalAmount) > 0;
+        const splitAmt = Number(split.amount) || 0;
+        const signedAmt = isIncomeParent ? splitAmt : -splitAmt;
+        loans[loanName].balance += signedAmt;
+
+        if (loans[loanName].loanType === 'borrow' && signedAmt < 0) {
+          loans[loanName].paidBack += Math.abs(signedAmt);
+        } else if (loans[loanName].loanType === 'lend' && signedAmt > 0) {
+          loans[loanName].received += signedAmt;
+        }
+
+        loans[loanName].transactions.push({
+          id: `${t.id}-split-${splitIndex}-${split.loan}`,
+          type: 'loan',
+          loan: loanName,
+          loanType: loans[loanName].loanType,
+          amount: signedAmt,
+          date: t.date,
+          payee: t.payee || null,
+          memo: split.memo || null,
+          account: t.account,
+          isSplitPart: true,
+          parentSplitId: t.id,
+          clearStatus: t.clearStatus || 'uncleared'
+        });
+      });
+    });
 
     // Sort transactions by date desc
     Object.values(loans).forEach(loan => {
@@ -169,7 +286,7 @@ const LoansTab = () => {
     });
 
     return loans;
-  }, [loanTransactions]);
+  }, [loanTransactions, splitTransactions]);
 
   // Get archived loans as array
   const archivedLoans = useMemo(() => {
@@ -216,76 +333,54 @@ const LoansTab = () => {
     if (navigator.vibrate) navigator.vibrate(50);
   };
 
-  const handleLongPressStart = (loan, e) => {
-    longPressTriggered.current = false;
-    
-    if (e?.touches?.[0]) {
-      touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    } else if (e) {
-      touchStartPos.current = { x: e.clientX, y: e.clientY };
-    }
-    
-    longPressTimer.current = setTimeout(() => {
-      longPressTriggered.current = true;
-      triggerHaptic();
-      setActionLoan(loan);
-      setEditLoanName(loan.name);
-      setShowEditModal(true);
-    }, 400);
-  };
-
-  const handleLongPressMove = (e) => {
-    if (!longPressTimer.current) return;
-    
-    let currentX, currentY;
-    if (e?.touches?.[0]) {
-      currentX = e.touches[0].clientX;
-      currentY = e.touches[0].clientY;
-    } else {
-      currentX = e.clientX;
-      currentY = e.clientY;
-    }
-    
-    const deltaX = Math.abs(currentX - touchStartPos.current.x);
-    const deltaY = Math.abs(currentY - touchStartPos.current.y);
-    
-    if (deltaX > 10 || deltaY > 10) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  const handleLongPressEnd = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
   const handleLoanClick = (loan) => {
-    // Nếu long press đã triggered thì không mở detail
-    if (longPressTriggered.current) {
-      longPressTriggered.current = false;
-      return;
-    }
-    // Nếu timer vẫn đang chạy (chưa đủ 400ms) thì clear và mở detail
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
     setSelectedLoan(loan);
   };
 
   // Loan action handlers
   const handleRenameLoan = async () => {
     if (!actionLoan || !editLoanName.trim()) return;
+    const oldName = actionLoan.name;
+    const newName = editLoanName.trim();
+    
+    if (oldName === newName) {
+      setShowEditModal(false);
+      return;
+    }
+    
     try {
       const batch = writeBatch(db);
+      
+      // Update regular loan transactions
       actionLoan.transactions.forEach(t => {
         if (!t.isSplitPart) {
-          batch.update(doc(db, 'transactions', t.id), { loan: editLoanName.trim() });
+          batch.update(doc(db, 'transactions', t.id), { loan: newName });
         }
       });
+      
+      // Update split transactions that contain this loan
+      // Find parent split transactions and update the loan name in splits array
+      const splitParentIds = new Set();
+      actionLoan.transactions.forEach(t => {
+        if (t.isSplitPart && t.parentSplitId) {
+          splitParentIds.add(t.parentSplitId);
+        }
+      });
+      
+      // Get parent split transactions and update their splits array
+      splitParentIds.forEach(parentId => {
+        const parentTx = splitTransactions.find(st => st.id === parentId);
+        if (parentTx && parentTx.splits) {
+          const updatedSplits = parentTx.splits.map(split => {
+            if (split.loan === oldName) {
+              return { ...split, loan: newName };
+            }
+            return split;
+          });
+          batch.update(doc(db, 'transactions', parentId), { splits: updatedSplits });
+        }
+      });
+      
       await batch.commit();
       setShowEditModal(false);
       setActionLoan(null);
@@ -297,6 +392,19 @@ const LoansTab = () => {
 
   const handleDeleteLoan = async () => {
     if (!actionLoan) return;
+    
+    // Check if loan has split parts - cannot delete directly
+    const splitParts = actionLoan.transactions.filter(t => t.isSplitPart);
+    const regularParts = actionLoan.transactions.filter(t => !t.isSplitPart);
+    
+    if (splitParts.length > 0 && regularParts.length === 0) {
+      // All transactions are from splits - cannot delete
+      toast.error('Cannot delete: All transactions are from split transactions. Delete the original split transactions first.');
+      setShowDeleteModal(false);
+      setActionLoan(null);
+      return;
+    }
+    
     try {
       const batch = writeBatch(db);
       actionLoan.transactions.forEach(t => {
@@ -307,7 +415,12 @@ const LoansTab = () => {
       await batch.commit();
       setShowDeleteModal(false);
       setActionLoan(null);
-      setSuccessMessage('Loan deleted!');
+      
+      if (splitParts.length > 0) {
+        toast.info(`Deleted ${regularParts.length} transaction(s). ${splitParts.length} split transaction(s) remain - delete them from the original split.`);
+      } else {
+        setSuccessMessage('Loan deleted!');
+      }
     } catch (err) {
       toast.error('Error: ' + err.message);
     }
@@ -346,22 +459,10 @@ const LoansTab = () => {
     }
   };
 
-  // Handle 3-dot menu click
-  const handleMenuClick = (e, loan) => {
-    e.stopPropagation();
-    triggerHaptic();
-    setActionLoan(loan);
-    setEditLoanName(loan.name);
-    setShowEditModal(true);
-  };
-
   // Render loan item
   const LoanItem = ({ loan, index, total, isBorrow }) => (
     <div
       onClick={() => handleLoanClick(loan)}
-      onTouchStart={(e) => handleLongPressStart(loan, e)}
-      onTouchMove={handleLongPressMove}
-      onTouchEnd={handleLongPressEnd}
       onContextMenu={(e) => { e.preventDefault(); triggerHaptic(); setActionLoan(loan); setEditLoanName(loan.name); setShowEditModal(true); }}
       className={`p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50 active:bg-gray-100 select-none ${
         index !== total - 1 ? 'border-b' : ''
@@ -373,24 +474,10 @@ const LoansTab = () => {
           {isBorrow ? `Paid back: ${formatCurrency(loan.paidBack)}` : `Received: ${formatCurrency(loan.received)}`}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="text-right">
-          <div className={`font-bold ${isBorrow ? (loan.balance >= 0 ? 'text-emerald-600' : 'text-gray-900') : 'text-gray-900'}`}>
-            {loan.balance === 0 ? '0' : (isBorrow ? formatBalance(loan.balance) : `-${formatCurrency(loan.balance)}`)}
-          </div>
-          <div className="text-xs text-gray-400">
-            {loan.transactions.length} txn
-          </div>
+      <div className="text-right">
+        <div className={`font-bold ${isBorrow ? (loan.balance >= 0 ? 'text-emerald-600' : 'text-gray-900') : 'text-gray-900'}`}>
+          {loan.balance === 0 ? '0' : (isBorrow ? formatBalance(loan.balance) : `-${formatCurrency(loan.balance)}`)}
         </div>
-        {/* 3-dot menu button */}
-        <button
-          onClick={(e) => handleMenuClick(e, loan)}
-          className="p-2 -mr-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"
-        >
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-          </svg>
-        </button>
       </div>
     </div>
   );
@@ -402,42 +489,43 @@ const LoansTab = () => {
       {/* Header */}
       <div className="bg-emerald-600 p-6 text-white">
         <div className="flex justify-between items-center mb-4">
-          <div></div>
-          <h1 className="text-xl font-bold">Loans</h1>
+          <div className="w-20"></div>
+          <h1 className="text-xl font-bold tracking-wide">LOANS</h1>
           <button
             onClick={() => setIsAddNewLoanOpen(true)}
-            className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1 text-sm font-medium"
+            className="bg-white/20 hover:bg-white/30 rounded-lg px-4 py-2 text-base font-medium"
           >
             + New
           </button>
         </div>
         
-        <div className="flex justify-around">
+        <div className="flex justify-around mt-2">
           <div className="text-center">
             <div className="text-sm opacity-80">I Borrowed</div>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-bold">
               {formatBalance(totals.borrowed)}
             </div>
           </div>
           <div className="text-center">
             <div className="text-sm opacity-80">I Lent</div>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-bold">
               {totals.lent === 0 ? '0' : `-${formatCurrency(totals.lent)}`}
             </div>
           </div>
-        </div>
-        
-        <div className="text-xs text-center mt-3 opacity-70">
-          Tap to view • ⋮ to edit
         </div>
       </div>
 
       {/* Borrowed Section */}
       {borrowed.length > 0 && (
         <div className="px-4 mt-4">
-          <h2 className="text-sm font-bold text-gray-500 uppercase mb-2">
-            I Borrowed ({borrowed.length})
-          </h2>
+          <div className="flex justify-between items-center mb-2">
+            <h2 className="text-sm font-bold text-gray-500 uppercase">
+              💸 I borrowed
+            </h2>
+            <span className="text-sm text-gray-500 font-bold">
+              {formatBalance(totals.borrowed)}
+            </span>
+          </div>
           <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
             {borrowed.map((loan, index) => (
               <LoanItem key={loan.name} loan={loan} index={index} total={borrowed.length} isBorrow={true} />
@@ -449,9 +537,14 @@ const LoansTab = () => {
       {/* Lent Section */}
       {lent.length > 0 && (
         <div className="px-4 mt-4">
-          <h2 className="text-sm font-bold text-gray-500 uppercase mb-2">
-            I Lent ({lent.length})
-          </h2>
+          <div className="flex justify-between items-center mb-2">
+            <h2 className="text-sm font-bold text-gray-500 uppercase">
+              💰 I lent
+            </h2>
+            <span className="text-sm text-gray-500 font-bold">
+              {totals.lent === 0 ? '0' : `-${formatCurrency(totals.lent)}`}
+            </span>
+          </div>
           <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
             {lent.map((loan, index) => (
               <LoanItem key={loan.name} loan={loan} index={index} total={lent.length} isBorrow={false} />
@@ -468,7 +561,7 @@ const LoansTab = () => {
           </h2>
           <button
             onClick={() => setIsAddFutureOpen(true)}
-            className="bg-amber-500 text-white px-3 py-1 rounded-lg text-sm font-medium hover:bg-amber-600"
+            className="bg-amber-500 text-white px-4 py-2 rounded-lg text-base font-medium hover:bg-amber-600"
           >
             + Schedule
           </button>
@@ -480,38 +573,65 @@ const LoansTab = () => {
               const amount = t.type === 'split' ? Number(t.totalAmount) : Number(t.amount);
               const isPositive = amount > 0;
               const displayDate = t.date ? new Date(t.date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Unknown';
+              const tags = t.tags || (t.tag ? [t.tag] : []);
               
               return (
                 <div
                   key={t.id || index}
-                  onClick={() => {
-                    setActivatingTransaction(t);
-                    setActivateAccount('');
-                    setActivateDate(t.date || '');
-                  }}
-                  className={`p-4 flex justify-between items-center cursor-pointer hover:bg-amber-50 ${
-                    index !== futureTransactions.length - 1 ? 'border-b' : ''
-                  }`}
+                  className={`p-4 ${index !== futureTransactions.length - 1 ? 'border-b' : ''}`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-amber-500 text-lg">📅</span>
-                      <div>
-                        <div className="font-medium text-gray-800">
-                          {t.payee || t.category || 'Future Transaction'}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {displayDate} • {t.category}
-                          {t.tag && <span className="text-emerald-600"> • 🏷️ {t.tag}</span>}
+                  <div 
+                    className="flex justify-between items-start cursor-pointer"
+                    onClick={() => setEditingFutureTransaction(t)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-500 text-lg">{t.isLoan ? '💸' : '📅'}</span>
+                        <div>
+                          <div className="font-medium text-gray-800">
+                            {t.payee || t.category || t.loan || 'Future Transaction'}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {displayDate} • {t.isLoan ? (
+                              <span className="text-sky-600">{t.loan}</span>
+                            ) : t.category}
+                          </div>
+                          {t.memo && (
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {t.memo}
+                            </div>
+                          )}
+                          {tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {tags.map(tag => (
+                                <span key={tag} className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                  🏷️ {tagDisplayMap[tag] || tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {isPositive ? '+' : ''}{new Intl.NumberFormat('en-US').format(amount)}
+                    <div className="text-right">
+                      <div className={`font-bold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {isPositive ? '+' : ''}{new Intl.NumberFormat('en-US').format(amount)}
+                      </div>
+                      <div className="text-xs text-gray-400">Tap to edit</div>
                     </div>
-                    <div className="text-xs text-amber-500">Tap to activate</div>
+                  </div>
+                  {/* Activate button */}
+                  <div className="flex justify-center">
+                    <button
+                      onClick={() => {
+                        setActivatingTransaction(t);
+                        setActivateAccount('');
+                        setActivateDate(t.date || '');
+                      }}
+                      className="mt-3 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+                    >
+                      ✓ Activate
+                    </button>
                   </div>
                 </div>
               );
@@ -597,10 +717,20 @@ const LoansTab = () => {
         forceFuture={true}
       />
 
-      {selectedLoan && (
+      {/* Edit Future Transaction Modal */}
+      <AddTransactionModal
+        isOpen={editingFutureTransaction !== null}
+        onClose={() => setEditingFutureTransaction(null)}
+        onSave={() => setEditingFutureTransaction(null)}
+        editTransaction={editingFutureTransaction}
+        forceFuture={true}
+      />
+
+      {selectedLoan && loanData[selectedLoan.name] && (
         <LoanDetail
-          loan={selectedLoan}
+          loan={loanData[selectedLoan.name]}
           onClose={() => setSelectedLoan(null)}
+          onLoanRenamed={(newName) => setSelectedLoan(prev => ({ ...prev, name: newName }))}
         />
       )}
 
@@ -781,12 +911,20 @@ const LoansTab = () => {
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="font-medium text-gray-800">
-                      {activatingTransaction.payee || activatingTransaction.category || 'Transaction'}
+                      {activatingTransaction.payee || activatingTransaction.category || activatingTransaction.loan || 'Transaction'}
                     </div>
                     <div className="text-sm text-gray-500">
-                      {activatingTransaction.category}
-                      {activatingTransaction.tag && (
-                        <span className="text-emerald-600"> • 🏷️ {activatingTransaction.tag}</span>
+                      {activatingTransaction.isLoan ? (
+                        <span className="text-sky-600">💸 {activatingTransaction.loan}</span>
+                      ) : (
+                        activatingTransaction.category
+                      )}
+                      {activatingTransaction.tags && activatingTransaction.tags.length > 0 ? (
+                        activatingTransaction.tags.map(tag => (
+                          <span key={tag} className="text-emerald-600"> • 🏷️ {tagDisplayMap[tag] || tag}</span>
+                        ))
+                      ) : activatingTransaction.tag && (
+                        <span className="text-emerald-600"> • 🏷️ {tagDisplayMap[activatingTransaction.tag] || activatingTransaction.tag}</span>
                       )}
                     </div>
                   </div>
@@ -808,18 +946,18 @@ const LoansTab = () => {
               <div>
                 <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
                 <div className="relative mt-1">
-                  <input 
-                    type="date" 
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    value={activateDate}
-                    onChange={(e) => setActivateDate(e.target.value)}
-                  />
-                  <div className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+                  <div className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between pointer-events-none">
                     <span className="text-gray-800">
                       {activateDate ? new Date(activateDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Select date'}
                     </span>
                     <span className="text-gray-400">📅</span>
                   </div>
+                  <input 
+                    type="date" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    value={activateDate}
+                    onChange={(e) => setActivateDate(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -857,11 +995,40 @@ const LoansTab = () => {
                       return;
                     }
                     try {
-                      await updateDoc(doc(db, 'transactions', activatingTransaction.id), {
-                        account: activateAccount,
-                        date: activateDate,
-                        isFuture: false
-                      });
+                      if (activatingTransaction.isLoan) {
+                        // Convert to loan transaction
+                        const determinedLoanType = activatingTransaction.loanType || 
+                          (activatingTransaction.loan?.toLowerCase().startsWith('lend to') ? 'lend' : 
+                           activatingTransaction.loan?.toLowerCase().startsWith('borrow from') ? 'borrow' : 'lend');
+                        
+                        // Keep original amount (negative for expense/lend out)
+                        const loanAmount = Number(activatingTransaction.amount);
+                        
+                        const updateData = {
+                          type: 'loan',
+                          loan: activatingTransaction.loan,
+                          loanType: determinedLoanType,
+                          amount: loanAmount,
+                          account: activateAccount,
+                          date: activateDate,
+                          isFuture: false,
+                          // Preserve payee and memo
+                          payee: activatingTransaction.payee || null,
+                          memo: activatingTransaction.memo || null,
+                          // Clear fields not needed for loan
+                          isLoan: null,
+                          category: null,
+                          spendingType: null
+                        };
+                        await updateDoc(doc(db, 'transactions', activatingTransaction.id), updateData);
+                      } else {
+                        // Regular expense activation
+                        await updateDoc(doc(db, 'transactions', activatingTransaction.id), {
+                          account: activateAccount,
+                          date: activateDate,
+                          isFuture: false
+                        });
+                      }
                       toast.success('Transaction activated!');
                       setActivatingTransaction(null);
                       setActivateAccount('');
@@ -871,7 +1038,7 @@ const LoansTab = () => {
                     }
                   }}
                   disabled={!activateAccount || !activateDate}
-                  className="flex-1 py-3 bg-emerald-500 text-white rounded-lg font-medium hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   ✓ Activate
                 </button>

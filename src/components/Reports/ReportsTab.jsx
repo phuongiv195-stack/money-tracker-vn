@@ -11,9 +11,8 @@ import PayeeReport from './PayeeReport';
 const ReportsTab = () => {
   const { 
     transactions, 
-    tagSuggestions,
-    parentTags,
-    getSubTags,
+    allParentTags,
+    getAllSubTags,
     isLoading, 
     accounts, 
     categories, 
@@ -32,31 +31,31 @@ const ReportsTab = () => {
   const [selectedTag, setSelectedTag] = useState('');
   const [expandedCategories, setExpandedCategories] = useState({}); // Track which categories are expanded
   
-  // Create selectable tags list for tag selector
+  // Create selectable tags list for tag selector (includes archived tags for reports)
   // - If a parent has sub-tags, show the parent (for filtering all sub-tags)
   // - Display format: "ParentName" for parents, shows sub-tag breakdown in report
   const selectableTagsForReport = useMemo(() => {
     const tags = [];
     
-    parentTags.forEach(parent => {
+    allParentTags.forEach(parent => {
       tags.push({
         value: parent.name,
         display: parent.name,
-        hasSubTags: getSubTags(parent.id).length > 0,
+        hasSubTags: getAllSubTags(parent.id).length > 0,
         parentId: parent.id
       });
     });
     
     return tags.sort((a, b) => a.display.localeCompare(b.display));
-  }, [parentTags, getSubTags]);
+  }, [allParentTags, getAllSubTags]);
 
-  // Get sub-tags for selected tag (if it's a parent with subs)
+  // Get sub-tags for selected tag (if it's a parent with subs) - includes archived
   const selectedTagSubTags = useMemo(() => {
     if (!selectedTag) return [];
     const tagObj = selectableTagsForReport.find(t => t.value === selectedTag);
     if (!tagObj || !tagObj.hasSubTags) return [];
-    return getSubTags(tagObj.parentId);
-  }, [selectedTag, selectableTagsForReport, getSubTags]);
+    return getAllSubTags(tagObj.parentId);
+  }, [selectedTag, selectableTagsForReport, getAllSubTags]);
   
   // Account Statement state (lifted up for back button handling)
   const [selectedStatementAccount, setSelectedStatementAccount] = useState('');
@@ -1072,7 +1071,7 @@ const ReportsTab = () => {
               <option value="">-- Choose a tag --</option>
               {selectableTagsForReport.map(tag => (
                 <option key={tag.value} value={tag.value}>
-                  🏷️ {tag.display}{tag.hasSubTags ? ` (${getSubTags(tag.parentId).length} sub-tags)` : ''}
+                  🏷️ {tag.display}{tag.hasSubTags ? ` (${getAllSubTags(tag.parentId).length} sub-tags)` : ''}
                 </option>
               ))}
             </select>
@@ -1347,7 +1346,7 @@ const ReportsTab = () => {
           )}
 
           {/* Empty State - No tag selected but tags exist */}
-          {!selectedTag && tagSuggestions.length > 0 && (
+          {!selectedTag && selectableTagsForReport.length > 0 && (
             <div className="text-center text-gray-500 py-10">
               <span className="text-5xl">🏷️</span>
               <p className="mt-2">Select a tag to view report</p>
@@ -1355,7 +1354,7 @@ const ReportsTab = () => {
           )}
 
           {/* Empty State - No tags exist */}
-          {tagSuggestions.length === 0 && (
+          {selectableTagsForReport.length === 0 && (
             <div className="text-center py-10 px-4">
               <span className="text-5xl">🏷️</span>
               <p className="text-gray-700 font-medium mt-3">No tags yet</p>
@@ -1710,8 +1709,8 @@ const ReportsTab = () => {
                 Track spending by trip, event, or project
               </p>
               <p className="text-xs text-gray-400 mt-1">
-                {tagSuggestions.length > 0 
-                  ? `${tagSuggestions.length} tag${tagSuggestions.length > 1 ? 's' : ''} available`
+                {selectableTagsForReport.length > 0 
+                  ? `${selectableTagsForReport.length} tag${selectableTagsForReport.length > 1 ? 's' : ''} available`
                   : '📝 Add tags when creating transactions'
                 }
               </p>

@@ -552,6 +552,15 @@ export const DataProvider = ({ children }) => {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [archivedTagObjects]);
 
+  // Get ALL parent tags (active + archived) - for reports
+  const allParentTags = useMemo(() => {
+    const activeTags = userTags
+      .map(tag => typeof tag === 'string' ? { id: tag, name: tag } : tag)
+      .filter(tag => !tag.parentTagId);
+    const archivedTags = archivedTagObjects.filter(tag => !tag.parentTagId);
+    return [...activeTags, ...archivedTags].sort((a, b) => a.name.localeCompare(b.name));
+  }, [userTags, archivedTagObjects]);
+
   // Get sub-tags for a parent tag
   const getSubTags = useCallback((parentTagId) => {
     return userTags
@@ -566,6 +575,15 @@ export const DataProvider = ({ children }) => {
       .filter(tag => tag.parentTagId === parentTagId)
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [archivedTagObjects]);
+
+  // Get ALL sub-tags for a parent tag (active + archived) - for reports
+  const getAllSubTags = useCallback((parentTagId) => {
+    const activeSubs = userTags
+      .map(tag => typeof tag === 'string' ? null : tag)
+      .filter(tag => tag && tag.parentTagId === parentTagId);
+    const archivedSubs = archivedTagObjects.filter(tag => tag.parentTagId === parentTagId);
+    return [...activeSubs, ...archivedSubs].sort((a, b) => a.name.localeCompare(b.name));
+  }, [userTags, archivedTagObjects]);
 
   // Function to add a new tag to userTags
   // Can be a parent tag (no parentTagId) or sub-tag (with parentTagId)
@@ -942,8 +960,10 @@ export const DataProvider = ({ children }) => {
     archivedTagObjects,
     parentTags,
     archivedParentTags,
+    allParentTags,
     getSubTags,
     getArchivedSubTags,
+    getAllSubTags,
     addUserTag,
     removeUserTag,
     renameUserTag,
@@ -964,7 +984,7 @@ export const DataProvider = ({ children }) => {
     categoryNames, expenseCategories, incomeCategories,
     loanTransactions, splitTransactions, nonLoanTransactions, futureTransactions, loanNames,
     payeeSuggestions, payeeToCategoryMap, payeeToAccountMap, 
-    tagSuggestions, userTags, archivedTags, archivedTagObjects, parentTags, archivedParentTags, getSubTags, getArchivedSubTags, addUserTag, removeUserTag, renameUserTag, archiveUserTag, restoreUserTag,
+    tagSuggestions, userTags, archivedTags, archivedTagObjects, parentTags, archivedParentTags, allParentTags, getSubTags, getArchivedSubTags, getAllSubTags, addUserTag, removeUserTag, renameUserTag, archiveUserTag, restoreUserTag,
     getTransactionsByMonth, getTransactionsByAccount, getTransactionsByCategory,
     getAccountByName, getCategoryByName
   ]);

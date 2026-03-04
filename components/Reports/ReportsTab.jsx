@@ -2,18 +2,71 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import DesktopReports from './DesktopReports';
+import AccountStatement from './AccountStatement';
+import SpendingBreakdown from './SpendingBreakdown';
+import IncomeBreakdown from './IncomeBreakdown';
+import BalanceSheet from './BalanceSheet';
+import PayeeReport from './PayeeReport';
 
 const ReportsTab = () => {
-  const { transactions, tagSuggestions, isLoading } = useData();
+  const { 
+    transactions, 
+    allParentTags,
+    getAllSubTags,
+    isLoading, 
+    accounts, 
+    categories, 
+    groupedAccounts,
+    hasMoreTransactions,
+    loadAllTransactions,
+    loadingMore
+  } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
   
   // Detail view state
-  const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | 'tag-report' | null
+  const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | 'tag-report' | 'desktop-detail' | 'account-statement' | 'payee-report' | null
   const [dateRange, setDateRange] = useState('this-month');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
   const [selectedTag, setSelectedTag] = useState('');
   const [expandedCategories, setExpandedCategories] = useState({}); // Track which categories are expanded
+  
+  // Create selectable tags list for tag selector (includes archived tags for reports)
+  // - If a parent has sub-tags, show the parent (for filtering all sub-tags)
+  // - Display format: "ParentName" for parents, shows sub-tag breakdown in report
+  const selectableTagsForReport = useMemo(() => {
+    const tags = [];
+    
+    allParentTags.forEach(parent => {
+      tags.push({
+        value: parent.name,
+        display: parent.name,
+        hasSubTags: getAllSubTags(parent.id).length > 0,
+        parentId: parent.id
+      });
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [allParentTags, getAllSubTags]);
+
+  // Get sub-tags for selected tag (if it's a parent with subs) - includes archived
+  const selectedTagSubTags = useMemo(() => {
+    if (!selectedTag) return [];
+    const tagObj = selectableTagsForReport.find(t => t.value === selectedTag);
+    if (!tagObj || !tagObj.hasSubTags) return [];
+    return getAllSubTags(tagObj.parentId);
+  }, [selectedTag, selectableTagsForReport, getAllSubTags]);
+  
+  // Account Statement state (lifted up for back button handling)
+  const [selectedStatementAccount, setSelectedStatementAccount] = useState('');
+
+  // Reset dateRange when exiting detail view
+  useEffect(() => {
+    if (!detailView) {
+      setDateRange('this-month');
+      setCustomRange({ from: '', to: '' });
+    }
+  }, [detailView]);
 
   // Check screen size - only show desktop reports on large screens
   useEffect(() => {
@@ -22,11 +75,27 @@ const ReportsTab = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Register back handler
-  useBackHandler(!!detailView, () => setDetailView(null));
+  // Auto-load all transactions when entering detail view that needs full data
+  useEffect(() => {
+    if (detailView && hasMoreTransactions && !loadingMore) {
+      // Load all for detailed reports
+      loadAllTransactions();
+    }
+  }, [detailView, hasMoreTransactions, loadingMore, loadAllTransactions]);
+
+  // Register back handler - handle account-statement differently
+  useBackHandler(!!detailView, () => {
+    if (detailView === 'account-statement' && selectedStatementAccount) {
+      // Clear account selection first - go back to account picker
+      setSelectedStatementAccount('');
+    } else {
+      // Go back to Reports Tab
+      setDetailView(null);
+    }
+  });
 
   // Colors for pie chart
-  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#9ca3af'];
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16', '#ef4444', '#0ea5e9', '#a855f7', '#9ca3af'];
 
   // Get date range based on selection
   const getDateRangeMonths = () => {
@@ -88,10 +157,16 @@ const ReportsTab = () => {
 
     let income = 0, expense = 0;
     const catMap = {};
+    const incomeCatMap = {};
 
     monthlyTrans.forEach(t => {
       const amt = Number(t.amount);
-      if (t.type === 'income') income += amt;
+      if (t.type === 'income') {
+        income += amt;
+        if (t.category) {
+          incomeCatMap[t.category] = (incomeCatMap[t.category] || 0) + Math.abs(amt);
+        }
+      }
       if (t.type === 'expense') {
         expense += Math.abs(amt);
         if (t.category) {
@@ -101,15 +176,16 @@ const ReportsTab = () => {
       // Handle split transactions
       if (t.type === 'split' && t.splits) {
         t.splits.forEach(s => {
-          if (!s.isLoan) {
+          // Skip loan and transfer splits
+          if (s.isLoan || s.isTransfer || s.transferAccount) return;
+          if (s.category) {
             const splitAmt = Math.abs(s.amount);
             if (t.splitType === 'expense') {
               expense += splitAmt;
-              if (s.category) {
-                catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
-              }
+              catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
             } else if (t.splitType === 'income') {
               income += splitAmt;
+              incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
             }
           }
         });
@@ -120,7 +196,11 @@ const ReportsTab = () => {
       .map(([name, value]) => ({ name, value, percent: expense > 0 ? (value / expense) * 100 : 0 }))
       .sort((a, b) => b.value - a.value);
 
-    return { income, expense, net: income - expense, categoryData };
+    const incomeCategoryData = Object.entries(incomeCatMap)
+      .map(([name, value]) => ({ name, value, percent: income > 0 ? (value / income) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    return { income, expense, net: income - expense, categoryData, incomeCategoryData };
   }, [transactions, currentDate]);
 
   // Needs vs Wants summary (for main view)
@@ -147,15 +227,17 @@ const ReportsTab = () => {
       }
       if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
         t.splits.forEach(s => {
-          if (!s.isLoan) {
+          // Skip transfer and loan splits
+          if (s.isTransfer || s.transferAccount || s.isLoan) return;
+          if (s.category) {
             const splitAmt = Math.abs(s.amount);
             const spendingType = s.spendingType || 'need';
             if (spendingType === 'need') {
               needs += splitAmt;
-              if (s.category) needCatMap[s.category] = (needCatMap[s.category] || 0) + splitAmt;
+              needCatMap[s.category] = (needCatMap[s.category] || 0) + splitAmt;
             } else {
               wants += splitAmt;
-              if (s.category) wantCatMap[s.category] = (wantCatMap[s.category] || 0) + splitAmt;
+              wantCatMap[s.category] = (wantCatMap[s.category] || 0) + splitAmt;
             }
           }
         });
@@ -193,7 +275,9 @@ const ReportsTab = () => {
         }
         if (t.type === 'split' && t.splitType === 'expense' && t.splits) {
           t.splits.forEach(s => {
-            if (!s.isLoan) {
+            // Skip transfer and loan splits
+            if (s.isTransfer || s.transferAccount || s.isLoan) return;
+            if (s.category) {
               const splitAmt = Math.abs(s.amount);
               const spendingType = s.spendingType || 'need';
               if (spendingType === 'need') needs += splitAmt;
@@ -204,7 +288,7 @@ const ReportsTab = () => {
       });
 
       return {
-        month: isToday ? 'Today' : `${month + 1}/${String(year).slice(2)}`,
+        month: isToday ? 'Today' : `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
         monthKey: monthStr,
         needs,
         wants,
@@ -242,13 +326,13 @@ const ReportsTab = () => {
         }
         if (t.type === 'split' && t.splits) {
           t.splits.forEach(s => {
-            if (!s.isLoan) {
+            // Skip loan and transfer splits
+            if (s.isLoan || s.isTransfer || s.transferAccount) return;
+            if (s.category) {
               const splitAmt = Math.abs(s.amount);
               if (t.splitType === 'expense') {
                 expense += splitAmt;
-                if (s.category) {
-                  catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
-                }
+                catMap[s.category] = (catMap[s.category] || 0) + splitAmt;
               } else if (t.splitType === 'income') {
                 income += splitAmt;
               }
@@ -263,12 +347,65 @@ const ReportsTab = () => {
 
       return {
         monthStr,
-        label: `${month + 1}/${String(year).slice(2)}`,
+        label: `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
         fullLabel: new Date(year, month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
         income,
         expense,
         net: income - expense,
         categoryData
+      };
+    });
+  }, [transactions, dateRange, customRange]);
+
+  // Income monthly data for income breakdown detail view
+  const incomeMonthlyData = useMemo(() => {
+    const months = getDateRangeMonths();
+    const today = new Date().toISOString().split('T')[0];
+    
+    return months.map(({ year, month, isToday }) => {
+      const monthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const monthlyTrans = transactions.filter(t => {
+        if (!t.date || t.type === 'loan') return false;
+        if (isToday) {
+          return t.date === today;
+        }
+        return t.date.startsWith(monthStr);
+      });
+
+      let totalIncome = 0;
+      const incomeCatMap = {};
+
+      monthlyTrans.forEach(t => {
+        if (t.type === 'income') {
+          const amt = Math.abs(Number(t.amount));
+          totalIncome += amt;
+          if (t.category) {
+            incomeCatMap[t.category] = (incomeCatMap[t.category] || 0) + amt;
+          }
+        }
+        if (t.type === 'split' && t.splitType === 'income' && t.splits) {
+          t.splits.forEach(s => {
+            // Skip transfer and loan splits
+            if (s.isTransfer || s.transferAccount || s.isLoan) return;
+            if (s.category) {
+              const splitAmt = Math.abs(s.amount);
+              totalIncome += splitAmt;
+              incomeCatMap[s.category] = (incomeCatMap[s.category] || 0) + splitAmt;
+            }
+          });
+        }
+      });
+
+      const incomeCategoryData = Object.entries(incomeCatMap)
+        .map(([name, value]) => ({ name, value, percent: totalIncome > 0 ? (value / totalIncome) * 100 : 0 }))
+        .sort((a, b) => b.value - a.value);
+
+      return {
+        monthStr,
+        label: `${String(month + 1).padStart(2, '0')}/${String(year).slice(2)}`,
+        fullLabel: new Date(year, month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        income: totalIncome,
+        incomeCategoryData
       };
     });
   }, [transactions, dateRange, customRange]);
@@ -295,8 +432,8 @@ const ReportsTab = () => {
     const { categoryData, expense } = currentMonthSummary;
     if (expense === 0) return <div className="w-24 h-24 rounded-full bg-emerald-100 flex items-center justify-center"></div>;
 
-    const chartData = categoryData.slice(0, 5);
-    const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
+    const chartData = categoryData.slice(0, 10);
+    const otherValue = categoryData.slice(10).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / expense) * 100 });
     }
@@ -382,8 +519,8 @@ const ReportsTab = () => {
 
     if (totalExpense === 0) return <div className="text-gray-400 text-sm py-10 text-center">No data</div>;
 
-    const chartData = categoryData.slice(0, 5);
-    const otherValue = categoryData.slice(5).reduce((sum, item) => sum + item.value, 0);
+    const chartData = categoryData.slice(0, 12);
+    const otherValue = categoryData.slice(12).reduce((sum, item) => sum + item.value, 0);
     if (otherValue > 0) {
       chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalExpense) * 100 });
     }
@@ -431,7 +568,84 @@ const ReportsTab = () => {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-medium text-gray-900">-{formatCurrency(item.value)}</span>
-                <span className="text-xs text-gray-400 w-10 text-right">{item.percent.toFixed(0)}%</span>
+                <span className="text-xs text-gray-400 w-10 text-right">{item.percent < 1 && item.percent > 0 ? '<1' : item.percent.toFixed(0)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
+  // Render full income pie chart for detail view
+  const renderFullIncomePieChart = () => {
+    // Aggregate all months income data
+    const allCatMap = {};
+    let totalIncome = 0;
+    
+    incomeMonthlyData.forEach(m => {
+      m.incomeCategoryData.forEach(cat => {
+        allCatMap[cat.name] = (allCatMap[cat.name] || 0) + cat.value;
+      });
+      totalIncome += m.income;
+    });
+
+    const categoryData = Object.entries(allCatMap)
+      .map(([name, value]) => ({ name, value, percent: totalIncome > 0 ? (value / totalIncome) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    if (totalIncome === 0) return <div className="text-gray-400 text-sm py-10 text-center">No income data</div>;
+
+    const chartData = categoryData.slice(0, 12);
+    const otherValue = categoryData.slice(12).reduce((sum, item) => sum + item.value, 0);
+    if (otherValue > 0) {
+      chartData.push({ name: 'Others', value: otherValue, percent: (otherValue / totalIncome) * 100 });
+    }
+
+    // Circle circumference: 2 * PI * r = 2 * 3.14159 * 40 ≈ 251.3
+    const circumference = 2 * Math.PI * 40;
+    let cumulativeOffset = 0;
+
+    return (
+      <>
+        {/* Total - outside chart */}
+        <div className="text-center mb-2">
+          <span className="text-sm text-gray-500">Total Income</span>
+          <div className="text-xl font-bold text-emerald-600">+{formatCurrency(totalIncome)}</div>
+        </div>
+
+        <div className="relative w-48 h-48 mx-auto">
+          <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
+            {chartData.map((item, index) => {
+              const segmentLength = (item.percent / 100) * circumference;
+              const offset = cumulativeOffset;
+              cumulativeOffset += segmentLength;
+              return (
+                <circle
+                  key={index}
+                  cx="50" cy="50" r="40"
+                  fill="transparent"
+                  stroke={COLORS[index % COLORS.length]}
+                  strokeWidth="20"
+                  strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                  strokeDashoffset={-offset}
+                />
+              );
+            })}
+          </svg>
+        </div>
+        
+        {/* Legend - use chartData to match pie segments */}
+        <div className="space-y-2 mt-4">
+          {chartData.map((item, index) => (
+            <div key={item.name} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 flex-1">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                <span className="text-gray-700 truncate">{item.name}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-emerald-600">+{formatCurrency(item.value)}</span>
+                <span className="text-xs text-gray-400 w-10 text-right">{item.percent < 1 && item.percent > 0 ? '<1' : item.percent.toFixed(0)}%</span>
               </div>
             </div>
           ))}
@@ -483,11 +697,11 @@ const ReportsTab = () => {
 
   // Date range selector
   const renderDateSelector = () => (
-    <div className="mb-4">
+    <div className="mb-4 flex justify-center">
       <select
         value={dateRange}
         onChange={(e) => setDateRange(e.target.value)}
-        className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm"
+        className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm"
       >
         <option value="today">Today</option>
         <option value="this-month">This Month</option>
@@ -500,21 +714,98 @@ const ReportsTab = () => {
       </select>
       
       {dateRange === 'custom' && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="month"
-            value={customRange.from}
-            onChange={(e) => setCustomRange({ ...customRange, from: e.target.value })}
-            className="flex-1 p-2 bg-gray-50 rounded-lg border text-sm"
-            placeholder="From"
-          />
-          <input
-            type="month"
-            value={customRange.to}
-            onChange={(e) => setCustomRange({ ...customRange, to: e.target.value })}
-            className="flex-1 p-2 bg-gray-50 rounded-lg border text-sm"
-            placeholder="To"
-          />
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {/* From */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500 text-sm">From:</span>
+            <select
+              value={customRange.from ? customRange.from.split('-')[0] : ''}
+              onChange={(e) => {
+                const year = e.target.value;
+                const month = customRange.from ? customRange.from.split('-')[1] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, from: `${year}-${month}` });
+                } else if (year) {
+                  setCustomRange({ ...customRange, from: `${year}-` });
+                } else {
+                  setCustomRange({ ...customRange, from: '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Year</option>
+              {[2026, 2027, 2028, 2029, 2030].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <select
+              value={customRange.from ? customRange.from.split('-')[1] : ''}
+              onChange={(e) => {
+                const month = e.target.value;
+                const year = customRange.from ? customRange.from.split('-')[0] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, from: `${year}-${month}` });
+                } else if (month) {
+                  setCustomRange({ ...customRange, from: `-${month}` });
+                } else {
+                  setCustomRange({ ...customRange, from: year ? `${year}-` : '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Month</option>
+              {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          
+          <span className="text-gray-400 text-sm">→</span>
+          
+          {/* To */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500 text-sm">To:</span>
+            <select
+              value={customRange.to ? customRange.to.split('-')[0] : ''}
+              onChange={(e) => {
+                const year = e.target.value;
+                const month = customRange.to ? customRange.to.split('-')[1] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, to: `${year}-${month}` });
+                } else if (year) {
+                  setCustomRange({ ...customRange, to: `${year}-` });
+                } else {
+                  setCustomRange({ ...customRange, to: '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Year</option>
+              {[2026, 2027, 2028, 2029, 2030].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <select
+              value={customRange.to ? customRange.to.split('-')[1] : ''}
+              onChange={(e) => {
+                const month = e.target.value;
+                const year = customRange.to ? customRange.to.split('-')[0] : '';
+                if (year && month) {
+                  setCustomRange({ ...customRange, to: `${year}-${month}` });
+                } else if (month) {
+                  setCustomRange({ ...customRange, to: `-${month}` });
+                } else {
+                  setCustomRange({ ...customRange, to: year ? `${year}-` : '' });
+                }
+              }}
+              className="p-2 bg-gray-50 rounded-lg border text-sm"
+            >
+              <option value="">Month</option>
+              {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
     </div>
@@ -529,23 +820,23 @@ const ReportsTab = () => {
     totals.net = totals.income - totals.expense;
 
     return (
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className="mt-4 overflow-x-auto flex justify-center">
+        <table className="text-sm">
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="text-left py-2 px-2 text-gray-500 font-medium">Month</th>
-              <th className="text-right py-2 px-2 text-gray-500 font-medium">Income</th>
-              <th className="text-right py-2 px-2 text-gray-500 font-medium">Spending</th>
-              <th className="text-right py-2 px-2 text-gray-500 font-medium">Net</th>
+              <th className="text-left py-2 px-3 text-gray-500 font-medium">Month</th>
+              <th className="text-right py-2 px-3 text-gray-500 font-medium">Income</th>
+              <th className="text-right py-2 px-3 text-gray-500 font-medium">Spending</th>
+              <th className="text-right py-2 px-3 text-gray-500 font-medium">Net</th>
             </tr>
           </thead>
           <tbody>
             {monthlyData.map((m, idx) => (
               <tr key={idx} className="border-b border-gray-100">
-                <td className="py-2 px-2 text-gray-700">{m.label}</td>
-                <td className="py-2 px-2 text-right text-emerald-600">+{formatCurrency(m.income)}</td>
-                <td className="py-2 px-2 text-right text-red-600">-{formatCurrency(m.expense)}</td>
-                <td className={`py-2 px-2 text-right font-medium ${m.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                <td className="py-2 px-3 text-gray-700">{m.label}</td>
+                <td className="py-2 px-3 text-right text-emerald-600">+{formatCurrency(m.income)}</td>
+                <td className="py-2 px-3 text-right text-red-600">-{formatCurrency(m.expense)}</td>
+                <td className={`py-2 px-3 text-right font-medium ${m.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                   {m.net >= 0 ? '+' : '-'}{formatCurrency(m.net)}
                 </td>
               </tr>
@@ -554,10 +845,10 @@ const ReportsTab = () => {
           {monthlyData.length > 1 && (
             <tfoot>
               <tr className="border-t-2 border-gray-300 font-bold">
-                <td className="py-2 px-2 text-gray-700">Total</td>
-                <td className="py-2 px-2 text-right text-emerald-600">+{formatCurrency(totals.income)}</td>
-                <td className="py-2 px-2 text-right text-red-600">-{formatCurrency(totals.expense)}</td>
-                <td className={`py-2 px-2 text-right ${totals.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                <td className="py-2 px-3 text-gray-700">Total</td>
+                <td className="py-2 px-3 text-right text-emerald-600">+{formatCurrency(totals.income)}</td>
+                <td className="py-2 px-3 text-right text-red-600">-{formatCurrency(totals.expense)}</td>
+                <td className={`py-2 px-3 text-right ${totals.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                   {totals.net >= 0 ? '+' : '-'}{formatCurrency(totals.net)}
                 </td>
               </tr>
@@ -570,16 +861,92 @@ const ReportsTab = () => {
 
   if (isLoading) return <div className="p-4 text-center">Loading reports...</div>;
 
+  // Spending Breakdown - Desktop Full Screen
+  if (detailView === 'spending-breakdown' && isDesktop) {
+    return (
+      <SpendingBreakdown 
+        transactions={transactions}
+        categories={categories}
+        accounts={accounts}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
+  // Income Breakdown - Desktop Full Screen
+  if (detailView === 'income-breakdown' && isDesktop) {
+    return (
+      <IncomeBreakdown 
+        transactions={transactions}
+        categories={categories}
+        accounts={accounts}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
+  // Balance Sheet - Desktop Full Screen
+  if (detailView === 'balance-sheet' && isDesktop) {
+    return (
+      <BalanceSheet 
+        transactions={transactions}
+        accounts={accounts}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
   // Desktop Detailed Reports - Full Screen
   if (detailView === 'desktop-detail' && isDesktop) {
     return <DesktopReports onBack={() => setDetailView(null)} />;
   }
 
+  // Account Statement - Desktop Only
+  if (detailView === 'account-statement' && isDesktop) {
+    return (
+      <AccountStatement 
+        accounts={accounts} 
+        transactions={transactions} 
+        categories={categories}
+        groupedAccounts={groupedAccounts}
+        selectedAccount={selectedStatementAccount}
+        setSelectedAccount={setSelectedStatementAccount}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
+  // Payee Report
+  if (detailView === 'payee-report') {
+    return (
+      <PayeeReport 
+        transactions={transactions}
+        categories={categories}
+        onBack={() => setDetailView(null)} 
+      />
+    );
+  }
+
   // Tag Report Detail View
   if (detailView === 'tag-report') {
     // Calculate tag report data
+    // If selected tag has sub-tags, include transactions with any of those sub-tags
     const tagTransactions = selectedTag 
-      ? transactions.filter(t => t.tag === selectedTag)
+      ? transactions.filter(t => {
+          const transactionTags = t.tags || (t.tag ? [t.tag] : []);
+          
+          // Check if transaction has the selected tag directly
+          if (transactionTags.includes(selectedTag)) return true;
+          
+          // If selected tag has sub-tags, also include transactions with any sub-tag
+          if (selectedTagSubTags.length > 0) {
+            return selectedTagSubTags.some(subTag => 
+              transactionTags.includes(subTag.name)
+            );
+          }
+          
+          return false;
+        })
       : [];
     
     // Calculate totals
@@ -603,6 +970,12 @@ const ReportsTab = () => {
           if (s.isLoan && s.loan) {
             const splitAmt = Number(s.amount) || 0;
             if (t.splitType === 'expense') {
+              // Split expense with loan = you paid for someone (lend)
+              // Amount should be negative (money out of your pocket)
+              loanBreakdown[s.loan] = (loanBreakdown[s.loan] || 0) - splitAmt;
+            } else if (t.splitType === 'income') {
+              // Split income with loan = someone paid you back
+              // Amount should be positive (money into your pocket)
               loanBreakdown[s.loan] = (loanBreakdown[s.loan] || 0) + splitAmt;
             }
           } else if (s.category) {
@@ -693,18 +1066,21 @@ const ReportsTab = () => {
             <select
               value={selectedTag}
               onChange={(e) => { setSelectedTag(e.target.value); setExpandedCategories({}); }}
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 border border-gray-200 outline-none"
+              className="block p-3 bg-gray-50 rounded-lg mt-1 border border-gray-200 outline-none"
             >
               <option value="">-- Choose a tag --</option>
-              {tagSuggestions.map(tag => (
-                <option key={tag} value={tag}>🏷️ {tag}</option>
+              {selectableTagsForReport.map(tag => (
+                <option key={tag.value} value={tag.value}>
+                  🏷️ {tag.display}{tag.hasSubTags ? ` (${getAllSubTags(tag.parentId).length} sub-tags)` : ''}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Report Content */}
           {selectedTag && (
-            <>
+            <div className="flex justify-center">
+              <div className="inline-block space-y-4">
               {/* 1. Total Project Cost */}
               <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl p-4 text-white">
                 <div className="text-sm opacity-80">💰 Total Project Cost</div>
@@ -734,68 +1110,204 @@ const ReportsTab = () => {
 
               {/* 3. By Category with Expandable Transactions */}
               {sortedCategories.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center gap-4 mb-3">
-                    <h3 className="font-semibold text-gray-800">📂 By Category</h3>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          const allExpanded = {};
-                          sortedCategories.forEach(([cat]) => { allExpanded[cat] = true; });
-                          setExpandedCategories(allExpanded);
-                        }}
-                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
-                      >
-                        Expand All
-                      </button>
-                      <button
-                        onClick={() => setExpandedCategories({})}
-                        className="text-sm text-gray-600 px-3 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
-                      >
-                        Collapse All
-                      </button>
+                  <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                      <h3 className="font-semibold text-gray-800">📂 By Category</h3>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            const allExpanded = {};
+                            sortedCategories.forEach(([cat]) => { allExpanded[cat] = true; });
+                            setExpandedCategories(allExpanded);
+                          }}
+                          className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                        >
+                          Expand All
+                        </button>
+                        <button
+                          onClick={() => setExpandedCategories({})}
+                          className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                        >
+                          Collapse All
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Category list - mobile friendly */}
+                    <div className="space-y-1">
+                      {sortedCategories.map(([cat, amount]) => {
+                        const isExpanded = expandedCategories[cat];
+                        const catTrans = categoryTransactions[cat] || [];
+                        
+                        return (
+                          <div key={cat}>
+                            {/* Category Row */}
+                            <div 
+                              className="flex items-center justify-between py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50"
+                              onClick={() => toggleCategory(cat)}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                <span className="text-gray-700 truncate">{cat}</span>
+                                <span className="text-gray-400 text-xs flex-shrink-0">({catTrans.length})</span>
+                              </div>
+                              <span className="text-red-600 font-medium text-sm ml-2 flex-shrink-0">{formatCurrency(amount)}</span>
+                            </div>
+                            {/* Expanded Transactions */}
+                            {isExpanded && catTrans.length > 0 && (
+                              <div className="bg-emerald-50 border-l-2 border-emerald-200 ml-3 mb-2">
+                                {catTrans
+                                  .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                  .map((t, idx) => (
+                                    <div key={t.id || idx} className="px-3 py-2 border-b border-emerald-100 last:border-b-0">
+                                      <div className="flex justify-between items-start gap-2">
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-gray-700 font-medium text-sm truncate">{t.displayName}</div>
+                                          <div className="text-gray-400 text-xs">{t.date}{t.memo && ` • ${t.memo}`}</div>
+                                        </div>
+                                        <span className="text-red-600 font-medium text-sm flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                  
-                  {/* Category list */}
-                  <div className="space-y-0">
-                    {sortedCategories.map(([cat, amount]) => {
-                      const isExpanded = expandedCategories[cat];
-                      const catTrans = categoryTransactions[cat] || [];
-                      
-                      return (
-                        <div key={cat}>
-                          {/* Category Row */}
-                          <div 
-                            className="flex items-center py-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                            onClick={() => toggleCategory(cat)}
-                          >
-                            <span className={`text-gray-400 text-xs w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                            <span className="text-gray-700 min-w-0 flex-shrink">{cat}</span>
-                            <span className="text-gray-400 text-xs mx-2">({catTrans.length})</span>
-                            <span className="text-red-600 font-medium ml-auto">{formatCurrency(amount)}</span>
-                          </div>
-                          
-                          {/* Expanded Transactions */}
-                          {isExpanded && catTrans.length > 0 && (
-                            <div className="border-l-2 border-gray-200 ml-2 bg-gray-50">
-                              {catTrans
-                                .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                                .map((t, idx) => (
-                                  <div key={t.id || idx} className="flex items-center py-1.5 pl-3 pr-1 text-sm border-b border-gray-100 last:border-b-0">
-                                    <span className="text-gray-600 min-w-0 flex-shrink truncate">{t.displayName}</span>
-                                    <span className="text-gray-400 text-xs mx-2 flex-shrink-0">{t.date}</span>
-                                    <span className="text-red-500 ml-auto flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
-                                  </div>
-                                ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               )}
+
+              {/* 3.5. By Sub-tag (if selected tag has sub-tags) */}
+              {selectedTagSubTags.length > 0 && (() => {
+                // Calculate breakdown by sub-tag
+                const subTagBreakdown = {};
+                const subTagTransactions = {};
+                
+                // Initialize all sub-tags with 0
+                selectedTagSubTags.forEach(subTag => {
+                  const subTagName = subTag.name;
+                  subTagBreakdown[subTagName] = 0;
+                  subTagTransactions[subTagName] = [];
+                });
+                
+                // Calculate amounts for sub-tags that have transactions
+                tagTransactions.forEach(t => {
+                  const transactionTags = t.tags || (t.tag ? [t.tag] : []);
+                  
+                  selectedTagSubTags.forEach(subTag => {
+                    const subTagName = subTag.name;
+                    if (!transactionTags.includes(subTagName)) return;
+                    
+                    if (t.type === 'split') {
+                      const amt = Math.abs(Number(t.totalAmount) || 0);
+                      subTagBreakdown[subTagName] += amt;
+                      subTagTransactions[subTagName].push({
+                        ...t,
+                        displayAmount: amt,
+                        displayName: t.payee || 'Split'
+                      });
+                    } else if (t.type === 'expense' || t.type === 'income') {
+                      const amt = Math.abs(Number(t.amount) || 0);
+                      subTagBreakdown[subTagName] += amt;
+                      subTagTransactions[subTagName].push({
+                        ...t,
+                        displayAmount: amt,
+                        displayName: t.payee || t.category || 'Transaction'
+                      });
+                    }
+                  });
+                });
+                
+                // Sort alphabetically - SHOW ALL sub-tags including 0 amount
+                const sortedSubTags = Object.entries(subTagBreakdown)
+                  .sort((a, b) => a[0].localeCompare(b[0])); // Sort alphabetically
+                
+                return (
+                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <h3 className="font-semibold text-gray-800">🏷️ By Sub-tag</h3>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              const allExpanded = {};
+                              sortedSubTags.forEach(([subTagName]) => { 
+                                allExpanded[`subtag_${subTagName}`] = true; 
+                              });
+                              setExpandedCategories(prev => ({ ...prev, ...allExpanded }));
+                            }}
+                            className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                          >
+                            Expand All
+                          </button>
+                          <button
+                            onClick={() => {
+                              const clearedSubTags = {};
+                              sortedSubTags.forEach(([subTagName]) => { 
+                                clearedSubTags[`subtag_${subTagName}`] = false; 
+                              });
+                              setExpandedCategories(prev => ({ ...prev, ...clearedSubTags }));
+                            }}
+                            className="text-xs text-gray-600 px-2 py-1 bg-gray-100 rounded-lg border border-gray-200 hover:bg-gray-200"
+                          >
+                            Collapse All
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Sub-tag list - mobile friendly */}
+                      <div className="space-y-1">
+                        {sortedSubTags.map(([subTagName, amount]) => {
+                          const isExpanded = expandedCategories[`subtag_${subTagName}`];
+                          const subTrans = subTagTransactions[subTagName] || [];
+                          
+                          return (
+                            <div key={subTagName}>
+                              {/* Sub-tag Row */}
+                              <div 
+                                className="flex items-center justify-between py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50"
+                                onClick={() => {
+                                  const key = `subtag_${subTagName}`;
+                                  setExpandedCategories(prev => ({
+                                    ...prev,
+                                    [key]: !prev[key]
+                                  }));
+                                }}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                  <span className="text-gray-700 truncate text-sm">{selectedTag} › {subTagName}</span>
+                                  <span className="text-gray-400 text-xs flex-shrink-0">({subTrans.length})</span>
+                                </div>
+                                <span className={`font-medium text-sm ml-2 flex-shrink-0 ${amount > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                                  {amount > 0 ? formatCurrency(amount) : '0₫'}
+                                </span>
+                              </div>
+                              {/* Expanded Transactions */}
+                              {isExpanded && subTrans.length > 0 && (
+                                <div className="bg-emerald-50 border-l-2 border-emerald-200 ml-3 mb-2">
+                                  {subTrans
+                                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                    .map((t, idx) => (
+                                      <div key={t.id || idx} className="px-3 py-2 border-b border-emerald-100 last:border-b-0">
+                                        <div className="flex justify-between items-start gap-2">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-gray-700 font-medium text-sm truncate">{t.displayName}</div>
+                                            <div className="text-gray-400 text-xs">{t.date}{t.memo && ` • ${t.memo}`}</div>
+                                          </div>
+                                          <span className="text-red-600 font-medium text-sm flex-shrink-0">-{formatCurrency(t.displayAmount)}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                );
+              })()}
 
               {/* 4. Settlement - Ai nợ ai */}
               {sortedLoans.length > 0 && (
@@ -829,14 +1341,35 @@ const ReportsTab = () => {
                   After loans settled (e.g. everyone pays me back)
                 </div>
               </div>
-            </>
+              </div>
+            </div>
           )}
 
-          {/* Empty State */}
-          {!selectedTag && (
+          {/* Empty State - No tag selected but tags exist */}
+          {!selectedTag && selectableTagsForReport.length > 0 && (
             <div className="text-center text-gray-500 py-10">
               <span className="text-5xl">🏷️</span>
               <p className="mt-2">Select a tag to view report</p>
+            </div>
+          )}
+
+          {/* Empty State - No tags exist */}
+          {selectableTagsForReport.length === 0 && (
+            <div className="text-center py-10 px-4">
+              <span className="text-5xl">🏷️</span>
+              <p className="text-gray-700 font-medium mt-3">No tags yet</p>
+              <p className="text-gray-500 text-sm mt-2">
+                Add tags when creating transactions to track spending by trip, event, or project.
+              </p>
+              <div className="mt-4 p-4 bg-amber-50 rounded-xl border border-amber-200 text-left">
+                <p className="text-amber-800 text-sm font-medium">💡 How to add tags:</p>
+                <ol className="text-amber-700 text-sm mt-2 space-y-1 list-decimal list-inside">
+                  <li>Open Add Transaction</li>
+                  <li>Scroll down to "Tags" field</li>
+                  <li>Type your tag name (e.g. "DaNang2025")</li>
+                  <li>Press <span className="font-bold">Enter</span> to add the tag</li>
+                </ol>
+              </div>
             </div>
           )}
         </div>
@@ -845,14 +1378,14 @@ const ReportsTab = () => {
   }
 
   // Detail View - Full Screen (Mobile)
-  if (detailView === 'spending' || detailView === 'income-expense' || detailView === 'need-want') {
+  if (detailView === 'spending' || detailView === 'income-expense' || detailView === 'need-want' || detailView === 'income') {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-white">
           <button onClick={() => setDetailView(null)} className="text-gray-500 text-lg">✕</button>
           <h2 className="font-semibold text-lg">
-            {detailView === 'spending' ? 'Spending by Category' : detailView === 'income-expense' ? 'Income vs Expense' : 'Needs vs Wants'}
+            {detailView === 'spending' ? 'Spending Breakdown' : detailView === 'income' ? 'Income Breakdown' : detailView === 'income-expense' ? 'Income vs Expense' : 'Needs vs Wants'}
           </h2>
           <div className="w-8"></div>
         </div>
@@ -862,9 +1395,25 @@ const ReportsTab = () => {
           {renderDateSelector()}
           
           {detailView === 'spending' ? (
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              {renderFullPieChart()}
-            </div>
+            <>
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                {renderFullPieChart()}
+              </div>
+              {/* Desktop note */}
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg text-center">
+                <span className="text-blue-600 text-sm">💻 View full Spending Breakdown with more features on desktop</span>
+              </div>
+            </>
+          ) : detailView === 'income' ? (
+            <>
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                {renderFullIncomePieChart()}
+              </div>
+              {/* Desktop note */}
+              <div className="mt-4 p-3 bg-emerald-50 rounded-lg text-center">
+                <span className="text-emerald-600 text-sm">💻 View full Income Breakdown with more features on desktop</span>
+              </div>
+            </>
           ) : detailView === 'income-expense' ? (
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               {renderFullBarChart()}
@@ -903,23 +1452,23 @@ const ReportsTab = () => {
               </div>
 
               {/* Needs vs Wants Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto flex justify-center">
+                <table className="text-sm">
                   <thead>
                     <tr className="border-b border-gray-200">
-                      <th className="text-left py-2 text-gray-600 font-medium">Month</th>
-                      <th className="text-right py-2 text-blue-600 font-medium">Needs</th>
-                      <th className="text-right py-2 text-purple-600 font-medium">Wants</th>
-                      <th className="text-right py-2 text-gray-600 font-medium">Total</th>
+                      <th className="text-left py-2 px-3 text-gray-600 font-medium">Month</th>
+                      <th className="text-right py-2 px-3 text-blue-600 font-medium">Needs</th>
+                      <th className="text-right py-2 px-3 text-purple-600 font-medium">Wants</th>
+                      <th className="text-right py-2 px-3 text-gray-600 font-medium">Total</th>
                     </tr>
                   </thead>
                   <tbody>
                     {needWantMonthlyData.map((m, idx) => (
                       <tr key={idx} className="border-b border-gray-100">
-                        <td className="py-2 text-gray-800">{m.month}</td>
-                        <td className="py-2 text-right text-blue-600">{formatCurrency(m.needs)}</td>
-                        <td className="py-2 text-right text-purple-600">{formatCurrency(m.wants)}</td>
-                        <td className="py-2 text-right text-gray-700">{formatCurrency(m.total)}</td>
+                        <td className="py-2 px-3 text-gray-800">{m.month}</td>
+                        <td className="py-2 px-3 text-right text-blue-600">{formatCurrency(m.needs)}</td>
+                        <td className="py-2 px-3 text-right text-purple-600">{formatCurrency(m.wants)}</td>
+                        <td className="py-2 px-3 text-right text-gray-700">{formatCurrency(m.total)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -932,10 +1481,10 @@ const ReportsTab = () => {
                       const wantsPercent = grandTotal > 0 ? Math.round((totalWants / grandTotal) * 100) : 0;
                       return (
                         <tr className="border-t-2 border-gray-300 font-semibold">
-                          <td className="py-2 text-gray-800">Total</td>
-                          <td className="py-2 text-right text-blue-700">{formatCurrency(totalNeeds)} <span className="text-xs font-normal">({needsPercent}%)</span></td>
-                          <td className="py-2 text-right text-purple-700">{formatCurrency(totalWants)} <span className="text-xs font-normal">({wantsPercent}%)</span></td>
-                          <td className="py-2 text-right text-gray-800">{formatCurrency(grandTotal)}</td>
+                          <td className="py-2 px-3 text-gray-800">Total</td>
+                          <td className="py-2 px-3 text-right text-blue-700">{formatCurrency(totalNeeds)} <span className="text-xs font-normal">({needsPercent}%)</span></td>
+                          <td className="py-2 px-3 text-right text-purple-700">{formatCurrency(totalWants)} <span className="text-xs font-normal">({wantsPercent}%)</span></td>
+                          <td className="py-2 px-3 text-right text-gray-800">{formatCurrency(grandTotal)}</td>
                         </tr>
                       );
                     })()}
@@ -956,9 +1505,9 @@ const ReportsTab = () => {
       {/* Report Cards */}
       <div className="p-4 space-y-4">
         
-        {/* Card 1: Spending by Category */}
+        {/* Card 1: Spending Breakdown */}
         <div 
-          onClick={() => setDetailView('spending')}
+          onClick={() => isDesktop ? setDetailView('spending-breakdown') : setDetailView('spending')}
           className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
         >
           <div className="flex gap-4">
@@ -969,7 +1518,10 @@ const ReportsTab = () => {
             
             {/* Content */}
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-gray-800">Spending by Category</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-gray-800">Spending Breakdown</h3>
+                {isDesktop && <span className="text-xs text-blue-500">📊 Full View</span>}
+              </div>
               <div className="text-xs text-gray-500 mb-2">
                 {new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               </div>
@@ -987,6 +1539,54 @@ const ReportsTab = () => {
                     <span className="text-gray-600 truncate">{cat.name}</span>
                   </div>
                   <span className="text-gray-700">{formatCurrency(cat.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 1b: Income Breakdown */}
+        <div 
+          onClick={() => isDesktop ? setDetailView('income-breakdown') : setDetailView('income')}
+          className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center p-2">
+              {/* Income Donut Icon - colorful like spending */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#d1fae5" strokeWidth="8"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#3b82f6" strokeWidth="8" 
+                  strokeDasharray="60 151" strokeDashoffset="37" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#10b981" strokeWidth="8" 
+                  strokeDasharray="40 151" strokeDashoffset="-23" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#f59e0b" strokeWidth="8" 
+                  strokeDasharray="30 151" strokeDashoffset="-63" strokeLinecap="round"/>
+                <circle cx="32" cy="32" r="24" fill="none" stroke="#8b5cf6" strokeWidth="8" 
+                  strokeDasharray="21 151" strokeDashoffset="-93" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-gray-800">Income Breakdown</h3>
+                {isDesktop && <span className="text-xs text-emerald-500">📊 Full View</span>}
+              </div>
+              <div className="text-xs text-gray-500 mb-2">
+                {new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </div>
+              
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-sm font-semibold text-gray-700">Total Income</span>
+                <span className="text-sm font-bold text-emerald-600">+{formatCurrency(currentMonthSummary.income)}</span>
+              </div>
+              
+              {/* Top income categories */}
+              {currentMonthSummary.incomeCategoryData && currentMonthSummary.incomeCategoryData.slice(0, 3).map((cat, idx) => (
+                <div key={cat.name} className="flex justify-between items-center text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                    <span className="text-gray-600 truncate">{cat.name}</span>
+                  </div>
+                  <span className="text-emerald-600">+{formatCurrency(cat.value)}</span>
                 </div>
               ))}
             </div>
@@ -1094,30 +1694,183 @@ const ReportsTab = () => {
           </div>
         </div>
 
-        {/* Card 4: Tag Report */}
-        {tagSuggestions.length > 0 && (
-          <div 
-            onClick={() => setDetailView('tag-report')}
-            className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
-          >
-            <div className="flex gap-4 items-center">
-              <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center">
-                <span className="text-5xl">🏷️</span>
-              </div>
-              <div className="flex-1">
-                <h3 className="font-bold text-gray-800">Tag Report</h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Track spending by trip, event, or project
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {tagSuggestions.length} tag{tagSuggestions.length > 1 ? 's' : ''} available
-                </p>
-              </div>
+        {/* Card 4: Tag Report - Always visible */}
+        <div 
+          onClick={() => setDetailView('tag-report')}
+          className="bg-white rounded-xl shadow-sm p-4 cursor-pointer active:bg-gray-50"
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center">
+              <span className="text-5xl">🏷️</span>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-bold text-gray-800">Tag Report</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Track spending by trip, event, or project
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                {selectableTagsForReport.length > 0 
+                  ? `${selectableTagsForReport.length} tag${selectableTagsForReport.length > 1 ? 's' : ''} available`
+                  : '📝 Add tags when creating transactions'
+                }
+              </p>
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Card 5: Detailed Reports - Desktop Only */}
+        {/* Card 5: Account Statement - Desktop Only */}
+        <div 
+          onClick={() => {
+            if (isDesktop) {
+              setDetailView('account-statement');
+            }
+          }}
+          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-emerald-50 to-teal-100 rounded-xl flex items-center justify-center p-2">
+              {/* Account Statement Icon */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                {/* Paper background */}
+                <rect x="6" y="4" width="44" height="56" rx="3" fill="#E8F5E9" stroke="#1E3A5F" strokeWidth="2"/>
+                {/* Header bar */}
+                <rect x="6" y="4" width="44" height="12" rx="3" fill="#10B981"/>
+                {/* Table lines */}
+                <line x1="12" y1="24" x2="44" y2="24" stroke="#1E3A5F" strokeWidth="1.5"/>
+                <line x1="12" y1="32" x2="44" y2="32" stroke="#E5E7EB" strokeWidth="1"/>
+                <line x1="12" y1="40" x2="44" y2="40" stroke="#E5E7EB" strokeWidth="1"/>
+                <line x1="12" y1="48" x2="44" y2="48" stroke="#E5E7EB" strokeWidth="1"/>
+                {/* Vertical dividers */}
+                <line x1="28" y1="20" x2="28" y2="52" stroke="#E5E7EB" strokeWidth="1"/>
+                {/* Check marks */}
+                <text x="14" y="30" fontSize="8" fill="#10B981">✓</text>
+                <text x="14" y="38" fontSize="8" fill="#10B981">✓</text>
+                <text x="14" y="46" fontSize="8" fill="#F59E0B">🔒</text>
+                {/* Numbers */}
+                <text x="32" y="30" fontSize="6" fill="#1E3A5F" fontFamily="monospace">1,234</text>
+                <text x="32" y="38" fontSize="6" fill="#1E3A5F" fontFamily="monospace">5,678</text>
+                <text x="32" y="46" fontSize="6" fill="#1E3A5F" fontFamily="monospace">9,012</text>
+                {/* Dollar sign */}
+                <circle cx="52" cy="48" r="10" fill="#10B981" stroke="#1E3A5F" strokeWidth="1.5"/>
+                <text x="48" y="52" fontSize="12" fill="white" fontWeight="bold">$</text>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Account Ledger</h3>
+                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Desktop Only</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Table view with running balance, reconcile transactions
+              </p>
+              {!isDesktop && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 6: Balance Sheet - Desktop Only */}
+        <div 
+          onClick={() => {
+            if (isDesktop) {
+              setDetailView('balance-sheet');
+            }
+          }}
+          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-amber-50 to-orange-100 rounded-xl flex items-center justify-center p-2">
+              {/* Balance Sheet Icon */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                {/* Background */}
+                <rect x="8" y="8" width="48" height="48" rx="4" fill="#FEF3C7" stroke="#D97706" strokeWidth="2"/>
+                {/* Cash section */}
+                <rect x="12" y="14" width="40" height="10" rx="2" fill="#10B981"/>
+                <text x="16" y="21" fontSize="6" fill="white" fontWeight="bold">💵 CASH</text>
+                <text x="42" y="21" fontSize="5" fill="white">5.5M</text>
+                {/* Checking section */}
+                <rect x="12" y="26" width="40" height="10" rx="2" fill="#3B82F6"/>
+                <text x="16" y="33" fontSize="6" fill="white" fontWeight="bold">🏦 CHECK</text>
+                <text x="42" y="33" fontSize="5" fill="white">45M</text>
+                {/* Investment section */}
+                <rect x="12" y="38" width="40" height="10" rx="2" fill="#8B5CF6"/>
+                <text x="16" y="45" fontSize="6" fill="white" fontWeight="bold">📈 INVEST</text>
+                <text x="42" y="45" fontSize="5" fill="white">120M</text>
+                {/* Total */}
+                <text x="16" y="54" fontSize="6" fill="#1E3A5F" fontWeight="bold">TOTAL</text>
+                <text x="36" y="54" fontSize="6" fill="#D97706" fontWeight="bold">170.5M</text>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Balance Sheet</h3>
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Desktop Only</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Net worth snapshot by Cash, Checking, Investments
+              </p>
+              {!isDesktop && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 7: Payee Report */}
+        <div 
+          onClick={() => {
+            if (isDesktop) {
+              setDetailView('payee-report');
+            }
+          }}
+          className={`bg-white rounded-xl shadow-sm p-4 ${isDesktop ? 'cursor-pointer active:bg-gray-50' : 'opacity-60'}`}
+        >
+          <div className="flex gap-4 items-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-purple-50 to-pink-100 rounded-xl flex items-center justify-center p-2">
+              {/* Payee Report Icon */}
+              <svg viewBox="0 0 64 64" className="w-full h-full">
+                {/* Store building */}
+                <rect x="10" y="20" width="44" height="34" rx="2" fill="#E9D5FF" stroke="#7C3AED" strokeWidth="2"/>
+                {/* Roof */}
+                <path d="M 8 20 L 32 8 L 56 20" fill="#7C3AED" stroke="#7C3AED" strokeWidth="2"/>
+                {/* Door */}
+                <rect x="26" y="34" width="12" height="20" rx="1" fill="#A855F7"/>
+                {/* Windows */}
+                <rect x="14" y="26" width="8" height="8" rx="1" fill="#F3E8FF" stroke="#7C3AED" strokeWidth="1"/>
+                <rect x="42" y="26" width="8" height="8" rx="1" fill="#F3E8FF" stroke="#7C3AED" strokeWidth="1"/>
+                {/* Receipt */}
+                <rect x="46" y="38" width="12" height="16" rx="1" fill="white" stroke="#7C3AED" strokeWidth="1.5"/>
+                <line x1="48" y1="42" x2="56" y2="42" stroke="#7C3AED" strokeWidth="1"/>
+                <line x1="48" y1="46" x2="56" y2="46" stroke="#7C3AED" strokeWidth="1"/>
+                <line x1="48" y1="50" x2="56" y2="50" stroke="#7C3AED" strokeWidth="1"/>
+                {/* Money symbol */}
+                <circle cx="16" cy="44" r="6" fill="#10B981" stroke="#059669" strokeWidth="1.5"/>
+                <text x="13" y="48" fontSize="8" fill="white" fontWeight="bold">$</text>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Payee Report</h3>
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Desktop Only</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Analyze spending by vendor/merchant over time
+              </p>
+              {!isDesktop && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 7: Detailed Reports - Desktop Only */}
         <div 
           onClick={() => {
             if (isDesktop) {

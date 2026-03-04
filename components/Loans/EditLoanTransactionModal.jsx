@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { updateDoc, deleteDoc, doc, query, where, getDocs, collection } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
@@ -9,8 +8,46 @@ import { useToast } from '../Toast/ToastProvider';
 const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }) => {
   useBackHandler(isOpen, onClose);
   const toast = useToast();
-  const userId = useUserId();
-  const { tagSuggestions } = useData();
+  const { tagSuggestions, groupedAccounts, quickSelectGroupedAccounts, parentTags, getSubTags, addUserTag } = useData();
+  
+  // Create selectable tags list with "Parent > Sub" format
+  const selectableTags = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,
+            display: `${parent.name} > ${sub.name}`,
+            parentName: parent.name
+          });
+        });
+      } else {
+        tags.push({
+          value: parent.name,
+          display: parent.name,
+          parentName: null
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
+
+  // Create lookup map for tag display names
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    selectableTags.forEach(tag => {
+      map[tag.value] = tag.display;
+    });
+    return map;
+  }, [selectableTags]);
+  
+  // Duplicate mode - when true, creates new transaction instead of updating
+  const [isDuplicating, setIsDuplicating] = useState(false);
   
   const [loading, setLoading] = useState(false);
   const [displayAmount, setDisplayAmount] = useState('');
@@ -22,63 +59,30 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
     account: '',
     date: '',
     memo: '',
-    tag: ''
+    tag: '',
+    tags: []
   });
-
-  const [accounts, setAccounts] = useState([]);
 
   useEffect(() => {
     if (isOpen && transaction) {
-      loadAccounts();
-      
       const amt = Number(transaction.amount);
       const isPositive = amt > 0;
       
+      setLoading(false); // Reset loading state
+      setIsDuplicating(false); // Reset duplicate mode
       setDirection(isPositive ? 'in' : 'out');
       setFormData({
         amount: Math.abs(amt).toString(),
         account: transaction.account || '',
         date: transaction.date || new Date().toISOString().split('T')[0],
         memo: transaction.memo || '',
-        tag: transaction.tag || ''
+        tag: '',
+        tags: transaction.tags || (transaction.tag ? [transaction.tag] : [])
       });
       setDisplayAmount(Math.abs(amt).toLocaleString('en-US'));
       setShowTagList(false);
     }
   }, [isOpen, transaction]);
-
-  const loadAccounts = async () => {
-    try {
-      const q = query(
-        collection(db, 'accounts'), 
-        where('userId', '==', userId),
-        where('isActive', '==', true)
-      );
-      const snapshot = await getDocs(q);
-      
-      // Define group order priority
-      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'ASSETS': 2, 'INVESTMENTS': 3 };
-      
-      const accs = snapshot.docs
-        .map(d => ({ 
-          name: d.data().name, 
-          group: d.data().group,
-          order: d.data().order ?? 999 
-        }))
-        .filter(a => a.name)
-        .sort((a, b) => {
-          const groupA = groupOrder[a.group] ?? 99;
-          const groupB = groupOrder[b.group] ?? 99;
-          if (groupA !== groupB) return groupA - groupB;
-          return a.order - b.order;
-        })
-        .map(a => a.name);
-        
-      setAccounts(accs);
-    } catch (e) {
-      console.error("Load accounts error:", e);
-    }
-  };
 
   const formatDateForDisplay = (isoDate) => {
     if (!isoDate) return '';
@@ -109,18 +113,40 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
       const amt = Number(formData.amount);
       const finalAmount = direction === 'in' ? amt : -amt;
 
-      await updateDoc(doc(db, 'transactions', transaction.id), {
-        amount: finalAmount,
-        account: formData.account,
-        date: formData.date,
-        memo: formData.memo,
-        tag: formData.tag || null
-      });
+      if (isDuplicating) {
+        // Create new transaction when duplicating
+        const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+        await addDoc(collection(db, 'transactions'), {
+          type: 'loan',
+          loan: transaction.loan,
+          loanType: transaction.loanType,
+          amount: finalAmount,
+          account: formData.account,
+          date: formData.date,
+          memo: formData.memo,
+          tag: formData.tags.length > 0 ? formData.tags[0] : null,
+          tags: formData.tags.length > 0 ? formData.tags : null,
+          clearStatus: 'uncleared', // New transactions start as uncleared
+          userId: transaction.userId,
+          createdAt: serverTimestamp()
+        });
+        toast.success('Transaction duplicated!');
+      } else {
+        // Update existing transaction
+        await updateDoc(doc(db, 'transactions', transaction.id), {
+          amount: finalAmount,
+          account: formData.account,
+          date: formData.date,
+          memo: formData.memo,
+          tag: formData.tags.length > 0 ? formData.tags[0] : null,
+          tags: formData.tags.length > 0 ? formData.tags : null
+        });
+      }
 
       if (onSave) onSave();
       onClose();
     } catch (error) {
-      console.error("Error updating transaction:", error);
+      console.error("Error saving transaction:", error);
       toast.error("Error: " + error.message);
     }
     setLoading(false);
@@ -158,12 +184,31 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
         
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b">
-          <button onClick={onClose} className="text-gray-500 text-lg">✕</button>
-          <h2 className="font-semibold text-lg">Edit Transaction</h2>
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="text-gray-500 text-lg p-2 -ml-2">✕</button>
+            {/* Duplicate button - only show when NOT already duplicating */}
+            {!isDuplicating && (
+              <button 
+                onClick={() => {
+                  setIsDuplicating(true);
+                  // Update date to today when duplicating
+                  const today = new Date().toISOString().split('T')[0];
+                  setFormData(prev => ({ ...prev, date: today }));
+                  toast.success('Duplicating - edit and save as new');
+                }}
+                className="px-3 py-1.5 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
+              >
+                Copy
+              </button>
+            )}
+          </div>
+          <h2 className="font-semibold text-lg">
+            {isDuplicating ? 'Duplicate Transaction' : 'Edit Transaction'}
+          </h2>
           <button 
             onClick={handleSubmit} 
             disabled={loading}
-            className="text-emerald-600 font-bold disabled:opacity-50"
+            className="text-emerald-600 font-bold disabled:opacity-50 px-3 py-1.5"
           >
             {loading ? 'SAVING...' : 'SAVE'}
           </button>
@@ -196,19 +241,32 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
         <div className="p-4 space-y-4 overflow-y-auto">
           
           {/* Amount */}
-          <div className="text-center py-2">
+          <div className="text-center py-2 relative">
             <label className="text-xs text-gray-500 uppercase font-semibold block mb-2">Amount</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="0"
-              value={displayAmount}
-              onChange={handleAmountChange}
-              className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
-                direction === 'out' ? 'text-red-600' : 'text-emerald-600'
-              }`}
-              
-            />
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="0"
+                value={displayAmount}
+                onChange={handleAmountChange}
+                className={`text-4xl font-bold text-center w-full focus:outline-none bg-transparent ${
+                  direction === 'out' ? 'text-red-600' : 'text-emerald-600'
+                } ${isDuplicating && displayAmount ? 'pr-10' : ''}`}
+                
+              />
+              {/* Clear amount button - only show when duplicating and has value */}
+              {isDuplicating && displayAmount && (
+                <button
+                  type="button"
+                  onClick={() => setDisplayAmount('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                  title="Clear amount"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Account */}
@@ -219,8 +277,23 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
               value={formData.account}
               onChange={(e) => setFormData({...formData, account: e.target.value})}
             >
-              {accounts.map(acc => (
-                <option key={acc} value={acc}>{acc}</option>
+              {/* Show original account if it's hidden from quick select */}
+              {transaction && transaction.account && 
+               !quickSelectGroupedAccounts.some(g => g.accounts.some(a => a.name === transaction.account)) && (
+                <optgroup label="📌 Current">
+                  <option value={transaction.account}>
+                    {groupedAccounts.flatMap(g => g.accounts).find(a => a.name === transaction.account)?.icon || '💳'} {transaction.account}
+                  </option>
+                </optgroup>
+              )}
+              {quickSelectGroupedAccounts.map(group => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.accounts.map(acc => (
+                    <option key={acc.name} value={acc.name}>
+                      {acc.icon} {acc.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
@@ -229,57 +302,149 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
             <div className="relative mt-1">
-              <input 
-                type="date" 
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                value={formData.date}
-                onChange={(e) => setFormData({...formData, date: e.target.value})}
-              />
-              <div className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+              <div className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between pointer-events-none">
                 <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
                 <span className="text-gray-400">📅</span>
               </div>
+              <input 
+                type="date" 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                value={formData.date}
+                onChange={(e) => setFormData({...formData, date: e.target.value})}
+              />
             </div>
           </div>
 
           {/* Memo */}
           <div>
             <label className="text-xs text-gray-500 uppercase font-semibold">Memo</label>
-            <input
-              type="text"
-              placeholder="Notes (optional)"
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={formData.memo}
-              onChange={(e) => setFormData({...formData, memo: e.target.value})}
-            />
+            <div className="relative mt-1">
+              <input
+                type="text"
+                placeholder="Notes (optional)"
+                className="w-full p-3 bg-gray-50 rounded-lg outline-none pr-10"
+                value={formData.memo}
+                onChange={(e) => setFormData({...formData, memo: e.target.value})}
+              />
+              {/* Clear memo button - only show when memo has value */}
+              {formData.memo && (
+                <button
+                  type="button"
+                  onClick={() => setFormData({...formData, memo: ''})}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                  title="Clear memo"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Tag */}
+          {/* Tags - Same style as AddTransactionModal */}
           <div className="relative">
-            <label className="text-xs text-gray-500 uppercase font-semibold">Tag</label>
-            <input
-              type="text"
-              placeholder="e.g. DaNang2025 (optional)"
-              className="w-full p-3 bg-gray-50 rounded-lg mt-1 outline-none"
-              value={formData.tag}
-              onChange={(e) => {
-                setFormData({...formData, tag: e.target.value});
-                setShowTagList(true);
-              }}
-              onFocus={() => setShowTagList(true)}
-              onBlur={() => setTimeout(() => setShowTagList(false), 200)}
-            />
+            <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
+
+            {/* Available tags - above input */}
+            {selectableTags.filter(tag => !formData.tags.includes(tag.value)).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+                {selectableTags
+                  .filter(tag => !formData.tags.includes(tag.value))
+                  .map(tag => (
+                    <button
+                      key={tag.value}
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData,
+                        tags: [...formData.tags, tag.value]
+                      })}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm hover:bg-emerald-200 transition-colors"
+                    >
+                      🏷️ {tag.display}
+                    </button>
+                  ))}
+              </div>
+            )}
             
-            {showTagList && tagSuggestions.length > 0 && (
+            {/* Input box with selected tags inside */}
+            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg border border-gray-200 focus-within:border-emerald-400 min-h-[44px]">
+              {/* Selected tags */}
+              {formData.tags.map(tagValue => (
+                <span 
+                  key={tagValue}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-sm"
+                >
+                  🏷️ {tagDisplayMap[tagValue] || tagValue}
+                  <button
+                    type="button"
+                    onClick={() => setFormData({
+                      ...formData, 
+                      tags: formData.tags.filter(t => t !== tagValue)
+                    })}
+                    className="text-emerald-500 hover:text-emerald-700"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              
+              {/* Text input */}
+              <input
+                type="text"
+                placeholder={formData.tags.length > 0 ? "" : "Type new tag + Enter"}
+                className="flex-1 min-w-[100px] bg-transparent outline-none text-sm py-1"
+                value={formData.tag}
+                onChange={(e) => {
+                  setFormData({...formData, tag: e.target.value});
+                  setShowTagList(true);
+                }}
+                onFocus={() => setShowTagList(true)}
+                onBlur={() => setTimeout(() => setShowTagList(false), 200)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && formData.tag.trim()) {
+                    e.preventDefault();
+                    const newTag = formData.tag.trim();
+                    if (!formData.tags.includes(newTag)) {
+                      setFormData({
+                        ...formData,
+                        tags: [...formData.tags, newTag],
+                        tag: ''
+                      });
+                      // Save new tag to userTags collection
+                      addUserTag(newTag).catch(err => {
+                        console.error('Failed to save tag:', err);
+                      });
+                    }
+                    setShowTagList(false);
+                  }
+                  // Backspace to remove last tag when input is empty
+                  if (e.key === 'Backspace' && !formData.tag && formData.tags.length > 0) {
+                    setFormData({
+                      ...formData,
+                      tags: formData.tags.slice(0, -1)
+                    });
+                  }
+                }}
+              />
+            </div>
+            
+            {/* Autocomplete dropdown - only show when typing */}
+            {showTagList && formData.tag && tagSuggestions.length > 0 && (
               <div className="absolute z-20 w-full bg-white shadow-xl max-h-36 overflow-y-auto rounded-lg mt-1 border border-gray-200">
                 {tagSuggestions
-                  .filter(tag => tag.toLowerCase().includes((formData.tag || '').toLowerCase()))
+                  .filter(tag => 
+                    tag.toLowerCase().includes((formData.tag || '').toLowerCase()) &&
+                    !formData.tags.includes(tag)
+                  )
                   .map(tag => (
                     <div 
                       key={tag} 
                       className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
                       onClick={() => {
-                        setFormData({...formData, tag});
+                        setFormData({
+                          ...formData, 
+                          tags: [...formData.tags, tag],
+                          tag: ''
+                        });
                         setShowTagList(false);
                       }}
                     >
@@ -289,16 +454,24 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
                   ))}
               </div>
             )}
+            
+            {/* Helper text */}
+            <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+              <span className="font-bold">💡 Tip:</span>
+              <span>Type tag name and press <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-gray-700 font-mono">Enter</kbd> to save</span>
+            </div>
           </div>
 
-          {/* Delete Button */}
-          <button
-            onClick={handleDelete}
-            disabled={loading}
-            className="w-full py-3 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors border border-red-200 disabled:opacity-50"
-          >
-            🗑️ Delete Transaction
-          </button>
+          {/* Delete Button - only show when NOT duplicating */}
+          {!isDuplicating && (
+            <button
+              onClick={handleDelete}
+              disabled={loading}
+              className="w-full py-3 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors border border-red-200 disabled:opacity-50"
+            >
+              🗑️ Delete Transaction
+            </button>
+          )}
         </div>
       </div>
     </div>

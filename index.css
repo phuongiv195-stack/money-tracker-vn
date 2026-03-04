@@ -1,0 +1,171 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Disable pull-to-refresh only on detail views */
+.no-pull-refresh {
+  overscroll-behavior: none;
+}
+
+/* ========== FONT SIZE SETTINGS ========== */
+/* Normal size (default) - 15px for better readability */
+:root.font-size-normal {
+  font-size: 15px;
+}
+
+/* Large size */
+:root.font-size-large {
+  font-size: 17px;
+}
+
+/* Scale các elements theo font-size - Large */
+:root.font-size-large .text-xs {
+  font-size: 0.82rem;
+}
+
+:root.font-size-large .text-sm {
+  font-size: 0.95rem;
+}
+
+:root.font-size-large .text-base {
+  font-size: 1.1rem;
+}
+
+:root.font-size-large .text-lg {
+  font-size: 1.25rem;
+}
+
+:root.font-size-large .text-xl {
+  font-size: 1.4rem;
+}
+
+:root.font-size-large .text-2xl {
+  font-size: 1.7rem;
+}
+
+:root.font-size-large .text-3xl {
+  font-size: 2rem;
+}
+
+/* Tăng size cho các text cụ thể - Large */
+:root.font-size-large .text-\[10px\] {
+  font-size: 13px;
+}
+
+:root.font-size-large .text-\[11px\] {
+  font-size: 14px;
+}
+
+/* ========== END FONT SIZE ========== */
+
+/* Disable text selection to prevent Google Search popup on mobile */
+* {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Allow text selection in input fields */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Mobile-first responsive design */
+@media (max-width: 640px) {
+  :root.font-size-normal body {
+    font-size: 15px;
+  }
+  :root.font-size-large body {
+    font-size: 17px;
+  }
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
+}
+
+/* ========== DATE INPUT FIX ========== */
+/* Make date input clickable on entire area */
+input[type="date"] {
+  cursor: pointer;
+}
+
+/* For date inputs that overlay a display div */
+input[type="date"].absolute {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* Ensure the date picker opens when clicking anywhere */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Month input styling */
+input[type="month"] {
+  cursor: pointer;
+}
+
+input[type="month"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}

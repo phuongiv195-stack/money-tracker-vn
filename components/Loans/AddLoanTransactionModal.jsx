@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
@@ -10,7 +10,43 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
   useBackHandler(isOpen, onClose);
   const toast = useToast();
   const userId = useUserId();
-  const { tagSuggestions } = useData();
+  const { tagSuggestions, groupedAccounts, quickSelectGroupedAccounts, accountNames, parentTags, getSubTags, addUserTag } = useData();
+  
+  // Create selectable tags list with "Parent > Sub" format
+  const selectableTags = useMemo(() => {
+    const tags = [];
+    
+    parentTags.forEach(parent => {
+      const subs = getSubTags(parent.id);
+      
+      if (subs.length > 0) {
+        subs.forEach(sub => {
+          tags.push({
+            value: sub.name,
+            display: `${parent.name} > ${sub.name}`,
+            parentName: parent.name
+          });
+        });
+      } else {
+        tags.push({
+          value: parent.name,
+          display: parent.name,
+          parentName: null
+        });
+      }
+    });
+    
+    return tags.sort((a, b) => a.display.localeCompare(b.display));
+  }, [parentTags, getSubTags]);
+
+  // Create lookup map for tag display names
+  const tagDisplayMap = useMemo(() => {
+    const map = {};
+    selectableTags.forEach(tag => {
+      map[tag.value] = tag.display;
+    });
+    return map;
+  }, [selectableTags]);
   
   // Helper to get today's date in local timezone
   const getLocalToday = () => {
@@ -39,63 +75,28 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
     account: '',
     date: getLocalToday(),
     note: '',
-    tag: ''
+    tag: '',
+    tags: []
   });
-
-  const [accounts, setAccounts] = useState([]);
 
   const isBorrow = loan?.loanType === 'borrow';
 
   useEffect(() => {
     if (isOpen && loan) {
-      loadAccounts();
       setFormData({
         amount: '',
-        account: '',
+        account: accountNames[0] || '',
         date: getLocalToday(),
         note: '',
-        tag: ''
+        tag: '',
+        tags: []
       });
       setDisplayAmount('');
       setTransactionType(null);
       setShowTagList(false);
+      setLoading(false); // Reset loading state
     }
-  }, [isOpen, loan]);
-
-  const loadAccounts = async () => {
-    try {
-      const q = query(
-        collection(db, 'accounts'), 
-        where('userId', '==', userId),
-        where('isActive', '==', true)
-      );
-      const snapshot = await getDocs(q);
-      
-      const groupOrder = { 'SPENDING': 0, 'SAVINGS': 1, 'ASSETS': 2, 'INVESTMENTS': 3 };
-      
-      const accs = snapshot.docs
-        .map(d => ({ 
-          name: d.data().name, 
-          group: d.data().group,
-          order: d.data().order ?? 999 
-        }))
-        .filter(a => a.name)
-        .sort((a, b) => {
-          const groupA = groupOrder[a.group] ?? 99;
-          const groupB = groupOrder[b.group] ?? 99;
-          if (groupA !== groupB) return groupA - groupB;
-          return a.order - b.order;
-        })
-        .map(a => a.name);
-        
-      setAccounts(accs);
-      if (accs.length > 0) {
-        setFormData(prev => ({ ...prev, account: accs[0] }));
-      }
-    } catch (e) {
-      console.error("Load accounts error:", e);
-    }
-  };
+  }, [isOpen, loan, accountNames]);
 
   const handleAmountChange = (e) => {
     const rawValue = e.target.value.replace(/,/g, '');
@@ -165,7 +166,8 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
         account: formData.account,
         date: formData.date,
         memo: memo,
-        tag: formData.tag || null,
+        tag: formData.tags.length > 0 ? formData.tags[0] : null,
+        tags: formData.tags.length > 0 ? formData.tags : null,
         createdAt: new Date()
       };
 
@@ -350,11 +352,17 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
                 value={formData.account}
                 onChange={(e) => setFormData({...formData, account: e.target.value})}
               >
-                {accounts.length === 0 ? (
+                {accountNames.length === 0 ? (
                   <option value="">No accounts available</option>
                 ) : (
-                  accounts.map(acc => (
-                    <option key={acc} value={acc}>{acc}</option>
+                  quickSelectGroupedAccounts.map(group => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.accounts.map(acc => (
+                        <option key={acc.name} value={acc.name}>
+                          {acc.icon} {acc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))
                 )}
               </select>
@@ -364,16 +372,16 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
             <div>
               <label className="text-xs text-gray-500 uppercase font-semibold">Date</label>
               <div className="relative mt-1">
-                <input 
-                  type="date" 
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  value={formData.date}
-                  onChange={(e) => setFormData({...formData, date: e.target.value})}
-                />
-                <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between">
+                <div className="w-full p-3 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-between pointer-events-none">
                   <span className="text-gray-800">{formatDateForDisplay(formData.date)}</span>
                   <span className="text-gray-400">📅</span>
                 </div>
+                <input 
+                  type="date" 
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  value={formData.date}
+                  onChange={(e) => setFormData({...formData, date: e.target.value})}
+                />
               </div>
             </div>
 
@@ -389,32 +397,111 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
               />
             </div>
 
-            {/* Tag */}
+            {/* Tags - Same style as AddTransactionModal */}
             <div className="relative">
-              <label className="text-xs text-gray-500 uppercase font-semibold">Tag</label>
-              <input
-                type="text"
-                placeholder="e.g. DaNang2025 (optional)"
-                className="w-full p-3 bg-gray-100 rounded-lg mt-1 outline-none border border-gray-200"
-                value={formData.tag}
-                onChange={(e) => {
-                  setFormData({...formData, tag: e.target.value});
-                  setShowTagList(true);
-                }}
-                onFocus={() => setShowTagList(true)}
-                onBlur={() => setTimeout(() => setShowTagList(false), 200)}
-              />
+              <label className="text-xs text-gray-500 uppercase font-semibold">Tags</label>
+
+              {/* Available tags - above input */}
+              {selectableTags.filter(tag => !formData.tags.includes(tag.value)).length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+                  {selectableTags
+                    .filter(tag => !formData.tags.includes(tag.value))
+                    .map(tag => (
+                      <button
+                        key={tag.value}
+                        type="button"
+                        onClick={() => setFormData({
+                          ...formData,
+                          tags: [...formData.tags, tag.value]
+                        })}
+                        className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm hover:bg-emerald-200 transition-colors"
+                      >
+                        🏷️ {tag.display}
+                      </button>
+                    ))}
+                </div>
+              )}
               
-              {showTagList && tagSuggestions.length > 0 && (
+              {/* Input box with selected tags inside */}
+              <div className="flex flex-wrap items-center gap-1.5 p-2 bg-gray-50 rounded-lg border border-gray-200 focus-within:border-emerald-400 min-h-[44px]">
+                {/* Selected tags */}
+                {formData.tags.map(tagValue => (
+                  <span 
+                    key={tagValue}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-sm"
+                  >
+                    🏷️ {tagDisplayMap[tagValue] || tagValue}
+                    <button
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData, 
+                        tags: formData.tags.filter(t => t !== tagValue)
+                      })}
+                      className="text-emerald-500 hover:text-emerald-700"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                
+                {/* Text input */}
+                <input
+                  type="text"
+                  placeholder={formData.tags.length > 0 ? "" : "Type new tag + Enter"}
+                  className="flex-1 min-w-[100px] bg-transparent outline-none text-sm py-1"
+                  value={formData.tag}
+                  onChange={(e) => {
+                    setFormData({...formData, tag: e.target.value});
+                    setShowTagList(true);
+                  }}
+                  onFocus={() => setShowTagList(true)}
+                  onBlur={() => setTimeout(() => setShowTagList(false), 200)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && formData.tag.trim()) {
+                      e.preventDefault();
+                      const newTag = formData.tag.trim();
+                      if (!formData.tags.includes(newTag)) {
+                        setFormData({
+                          ...formData,
+                          tags: [...formData.tags, newTag],
+                          tag: ''
+                        });
+                        // Save new tag to userTags collection
+                        addUserTag(newTag).catch(err => {
+                          console.error('Failed to save tag:', err);
+                        });
+                      }
+                      setShowTagList(false);
+                    }
+                    // Backspace to remove last tag when input is empty
+                    if (e.key === 'Backspace' && !formData.tag && formData.tags.length > 0) {
+                      setFormData({
+                        ...formData,
+                        tags: formData.tags.slice(0, -1)
+                      });
+                    }
+                  }}
+                />
+              </div>
+              
+              {/* Autocomplete dropdown - only show when typing */}
+              {showTagList && formData.tag && tagSuggestions.length > 0 && (
                 <div className="absolute z-20 w-full bg-white shadow-xl max-h-36 overflow-y-auto rounded-lg mt-1 border border-gray-200">
                   {tagSuggestions
-                    .filter(tag => tag.toLowerCase().includes((formData.tag || '').toLowerCase()))
+                    .filter(tag => 
+                      tag.toLowerCase().includes((formData.tag || '').toLowerCase()) &&
+                      !formData.tags.includes(tag)
+                    )
                     .map(tag => (
                       <div 
                         key={tag} 
                         className="p-3 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
                         onClick={() => {
-                          setFormData({...formData, tag});
+                          setFormData({
+                            ...formData, 
+                            tags: [...formData.tags, tag],
+                            tag: ''
+                          });
                           setShowTagList(false);
                         }}
                       >
@@ -424,6 +511,12 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
                     ))}
                 </div>
               )}
+              
+              {/* Helper text */}
+              <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+                <span className="font-bold">💡 Tip:</span>
+                <span>Type tag name and press <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-gray-700 font-mono">Enter</kbd> to save</span>
+              </div>
             </div>
           </>
         )}
