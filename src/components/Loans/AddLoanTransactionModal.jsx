@@ -83,9 +83,10 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
 
   useEffect(() => {
     if (isOpen && loan) {
+      const firstQuickAccount = quickSelectGroupedAccounts[0]?.accounts[0]?.name || accountNames[0] || '';
       setFormData({
         amount: '',
-        account: accountNames[0] || '',
+        account: firstQuickAccount,
         date: getLocalToday(),
         note: '',
         tag: '',
@@ -96,7 +97,7 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
       setShowTagList(false);
       setLoading(false); // Reset loading state
     }
-  }, [isOpen, loan, accountNames]);
+  }, [isOpen, loan, accountNames, quickSelectGroupedAccounts]);
 
   const handleAmountChange = (e) => {
     const rawValue = e.target.value.replace(/,/g, '');
