@@ -820,12 +820,19 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                           if (autoCategory && !formData.category) {
                             newData.category = autoCategory;
                           }
-                          
+
                           // Auto-fill account if exists in current accounts list
                           if (autoAccount && accounts.includes(autoAccount)) {
                             newData.account = autoAccount;
                           }
-                          
+
+                          // Auto-fill first split's category if in split mode and empty
+                          if (autoCategory && isSplitMode && splits.length > 0 && !splits[0].category) {
+                            const newSplits = [...splits];
+                            newSplits[0] = { ...newSplits[0], category: autoCategory };
+                            setSplits(newSplits);
+                          }
+
                           setFormData(newData);
                           setShowPayeeList(false);
                         }}

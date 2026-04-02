@@ -494,8 +494,9 @@ export const DataProvider = ({ children }) => {
     sortedTrans.forEach(t => {
       if (t.payee && !payeeMap[t.payee]) {
         payeeMap[t.payee] = true;
-        if (t.category) {
-          categoryMap[t.payee] = t.category;
+        const resolvedCategory = t.category || (t.splits && t.splits[0]?.category) || null;
+        if (resolvedCategory) {
+          categoryMap[t.payee] = resolvedCategory;
         }
         if (t.account) {
           accountMap[t.payee] = t.account;

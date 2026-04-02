@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find 'C:\\\\Money Tracker VN\\\\money-tracker-starter\\\\src' -name *payee* -o -name *Payee*)",
+      "Bash(npm run:*)"
+    ]
+  }
+}
