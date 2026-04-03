@@ -5,7 +5,10 @@ const PayeeByCategoryReport = () => {
   const { transactions, categories } = useData();
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
   const [expandedCategories, setExpandedCategories] = useState({});
-  
+
+  // Category filter: 'all', 'group:GroupName', or a category name
+  const [selectedCategory, setSelectedCategory] = useState('all');
+
   // Mobile: single period filter
   const [mobileFilter, setMobileFilter] = useState('this-month');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
@@ -23,6 +26,55 @@ const PayeeByCategoryReport = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Build hierarchical category structure (same logic as CategoriesTab)
+  const hierarchicalCategories = useMemo(() => {
+    const groups = {};
+    categories.forEach(cat => {
+      const groupName = cat.group || 'Other';
+      if (!groups[groupName]) {
+        groups[groupName] = {
+          icon: '',
+          groupOrder: cat.groupOrder ?? 999,
+          items: []
+        };
+      }
+      // Use the lowest groupOrder found for this group
+      if ((cat.groupOrder ?? 999) < groups[groupName].groupOrder) {
+        groups[groupName].groupOrder = cat.groupOrder ?? 999;
+      }
+      groups[groupName].items.push(cat);
+    });
+
+    // Sort items within each group by order
+    Object.values(groups).forEach(g => {
+      g.items.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      // Use icon from first item as group icon
+      if (g.items.length > 0 && g.items[0].icon) {
+        g.icon = g.items[0].icon;
+      }
+    });
+
+    // Sort groups by groupOrder
+    const sortedGroupNames = Object.keys(groups).sort((a, b) => {
+      const diff = groups[a].groupOrder - groups[b].groupOrder;
+      return diff !== 0 ? diff : a.localeCompare(b);
+    });
+
+    return { groups, sortedGroupNames };
+  }, [categories]);
+
+  // Get the set of category names that match the filter
+  const filteredCategoryNames = useMemo(() => {
+    if (selectedCategory === 'all') return null; // null means no filter
+    if (selectedCategory.startsWith('group:')) {
+      const groupName = selectedCategory.slice(6);
+      const group = hierarchicalCategories.groups[groupName];
+      if (!group) return new Set();
+      return new Set(group.items.map(c => c.name));
+    }
+    return new Set([selectedCategory]);
+  }, [selectedCategory, hierarchicalCategories]);
 
   // Helper function to format currency (no $ sign, Vietnamese format)
   const formatCurrency = (amount) => {
@@ -88,11 +140,15 @@ const PayeeByCategoryReport = () => {
 
     transactions.forEach(trans => {
       if (!trans.date || trans.type === 'transfer') return;
-      
+
       // Filter by date range
       if (trans.date < startDate || trans.date > endDate) return;
 
       const category = trans.category || 'Uncategorized';
+
+      // Filter by selected category
+      if (filteredCategoryNames && !filteredCategoryNames.has(category)) return;
+
       const payee = trans.payee || 'No Payee';
       const amount = Math.abs(parseFloat(trans.amount) || 0);
 
@@ -136,7 +192,7 @@ const PayeeByCategoryReport = () => {
       sortedCategories,
       total
     };
-  }, [transactions, mobileFilter, customRange, isDesktop]);
+  }, [transactions, mobileFilter, customRange, isDesktop, filteredCategoryNames]);
 
   // Process data for DESKTOP (multiple periods)
   const desktopReportData = useMemo(() => {
@@ -146,11 +202,15 @@ const PayeeByCategoryReport = () => {
 
     transactions.forEach(trans => {
       if (!trans.date || trans.type === 'transfer') return;
-      
+
       const year = new Date(trans.date).getFullYear();
       if (!selectedYears.includes(year)) return;
 
       const category = trans.category || 'Uncategorized';
+
+      // Filter by selected category
+      if (filteredCategoryNames && !filteredCategoryNames.has(category)) return;
+
       const payee = trans.payee || 'No Payee';
       const amount = Math.abs(parseFloat(trans.amount) || 0);
 
@@ -207,7 +267,7 @@ const PayeeByCategoryReport = () => {
       sortedCategories,
       yearTotals
     };
-  }, [transactions, selectedYears, isDesktop]);
+  }, [transactions, selectedYears, isDesktop, filteredCategoryNames]);
 
   const toggleCategory = (category) => {
     setExpandedCategories(prev => ({
@@ -264,6 +324,32 @@ const PayeeByCategoryReport = () => {
               {filterOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Category Filter Dropdown */}
+          <div className="relative mt-3">
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border-2 border-teal-500 rounded-lg text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              <option value="all">All Categories</option>
+              {hierarchicalCategories.sortedGroupNames.map(groupName => {
+                const group = hierarchicalCategories.groups[groupName];
+                return (
+                  <optgroup key={groupName} label={`${group.icon ? group.icon + ' ' : ''}${groupName}`}>
+                    <option value={`group:${groupName}`}>
+                      All {groupName}
+                    </option>
+                    {group.items.map(cat => (
+                      <option key={cat.id} value={cat.name}>
+                        {cat.icon ? cat.icon + ' ' : ''}{cat.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
             </select>
           </div>
 
@@ -411,6 +497,30 @@ const PayeeByCategoryReport = () => {
                 </h1>
               </div>
               <div className="flex items-center gap-4">
+                {/* Category Filter */}
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="px-4 py-2 bg-white border-2 border-teal-500 rounded-xl text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-teal-500 max-w-xs"
+                >
+                  <option value="all">All Categories</option>
+                  {hierarchicalCategories.sortedGroupNames.map(groupName => {
+                    const group = hierarchicalCategories.groups[groupName];
+                    return (
+                      <optgroup key={groupName} label={`${group.icon ? group.icon + ' ' : ''}${groupName}`}>
+                        <option value={`group:${groupName}`}>
+                          All {groupName}
+                        </option>
+                        {group.items.map(cat => (
+                          <option key={cat.id} value={cat.name}>
+                            {cat.icon ? cat.icon + ' ' : ''}{cat.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+
                 {/* Year selectors */}
                 {selectedYears.map((year, idx) => (
                   <div key={idx} className="flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-2 border border-emerald-300">

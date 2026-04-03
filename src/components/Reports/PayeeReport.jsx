@@ -236,14 +236,53 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
     return map;
   }, [categoriesData]);
 
-  // Get unique categories for filter dropdown
-  const categoryFilterOptions = useMemo(() => {
-    const cats = new Set();
-    expenseTransactions.forEach(t => {
-      if (t.category) cats.add(t.category);
+  // Build hierarchical category structure for filter dropdown (same logic as CategoriesTab)
+  const hierarchicalCategories = useMemo(() => {
+    const groups = {};
+    categoriesData.forEach(cat => {
+      if (cat.type !== 'expense') return;
+      const groupName = cat.group || 'Other';
+      if (!groups[groupName]) {
+        groups[groupName] = {
+          icon: '',
+          groupOrder: cat.groupOrder ?? 999,
+          items: []
+        };
+      }
+      if ((cat.groupOrder ?? 999) < groups[groupName].groupOrder) {
+        groups[groupName].groupOrder = cat.groupOrder ?? 999;
+      }
+      groups[groupName].items.push(cat);
     });
-    return ['all', ...Array.from(cats).sort()];
-  }, [expenseTransactions]);
+
+    // Sort items within each group by order
+    Object.values(groups).forEach(g => {
+      g.items.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      if (g.items.length > 0 && g.items[0].icon) {
+        g.icon = g.items[0].icon;
+      }
+    });
+
+    // Sort groups by groupOrder
+    const sortedGroupNames = Object.keys(groups).sort((a, b) => {
+      const diff = groups[a].groupOrder - groups[b].groupOrder;
+      return diff !== 0 ? diff : a.localeCompare(b);
+    });
+
+    return { groups, sortedGroupNames };
+  }, [categoriesData]);
+
+  // Get the set of category names that match the current filter
+  const filteredCategoryNames = useMemo(() => {
+    if (categoryFilter === 'all') return null;
+    if (categoryFilter.startsWith('group:')) {
+      const groupName = categoryFilter.slice(6);
+      const group = hierarchicalCategories.groups[groupName];
+      if (!group) return new Set();
+      return new Set(group.items.map(c => c.name));
+    }
+    return new Set([categoryFilter]);
+  }, [categoryFilter, hierarchicalCategories]);
 
   // Generate compare periods
   const comparePeriods = useMemo(() => {
@@ -311,8 +350,8 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
         });
       }
       
-      if (categoryFilter !== 'all') {
-        filtered = filtered.filter(t => t.category === categoryFilter);
+      if (filteredCategoryNames) {
+        filtered = filtered.filter(t => filteredCategoryNames.has(t.category));
       }
       
       return filtered;
@@ -334,7 +373,7 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
     }
 
     return filtered;
-  }, [expenseTransactions, isCompareMode, compareType, compareFromMonth, compareFromYear, compareToMonth, compareToYear, getDateRangeValues, categoryFilter]);
+  }, [expenseTransactions, isCompareMode, compareType, compareFromMonth, compareFromYear, compareToMonth, compareToYear, getDateRangeValues, filteredCategoryNames]);
 
   // Aggregate data by payee AND category (for filter mode and compare mode)
   // This ensures same payee with different categories (from splits) are tracked separately
@@ -891,11 +930,22 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
                 onChange={(e) => setCategoryFilter(e.target.value)}
                 className="p-2 border rounded-lg bg-white"
               >
-                {categoryFilterOptions.map(cat => (
-                  <option key={cat} value={cat}>
-                    {cat === 'all' ? 'All Categories' : cat}
-                  </option>
-                ))}
+                <option value="all">All Categories</option>
+                {hierarchicalCategories.sortedGroupNames.map(groupName => {
+                  const group = hierarchicalCategories.groups[groupName];
+                  return (
+                    <optgroup key={groupName} label={`${group.icon ? group.icon + ' ' : ''}${groupName}`}>
+                      <option value={`group:${groupName}`}>
+                        All {groupName}
+                      </option>
+                      {group.items.map(cat => (
+                        <option key={cat.id} value={cat.name}>
+                          {cat.icon ? cat.icon + ' ' : ''}{cat.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
             </div>
 
