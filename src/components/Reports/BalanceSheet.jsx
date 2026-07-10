@@ -29,6 +29,9 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     loansGiven: true,
     loansOwed: true
   });
+
+  // Which items are checked (included in totals) — key: `${groupKey}-${name}`
+  const [checkedItems, setCheckedItems] = useState({});
   
   // Exchange rate state - will be loaded from Firebase
   const [exchangeRate, setExchangeRate] = useState(25000);
@@ -366,13 +369,91 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     // Net Worth = Assets - Liabilities
     const netWorth = totalAssets - totalLiabilities;
 
-    return { 
-      cash, checking, investments, fixedAssets, 
+    return {
+      cash, checking, investments, fixedAssets,
       loansGiven, loansOwed, totalLoansGiven, totalLoansOwed,
       totalAssets, totalLiabilities, netWorth,
-      asOfDate 
+      asOfDate
     };
   }, [selectedDate, config, accounts, transactions]);
+
+  // All groups with their item arrays (cash/checking/... hold {items,total}; loans are arrays)
+  const itemGroups = () => ([
+    ['cash', balanceData.cash.items],
+    ['checking', balanceData.checking.items],
+    ['investments', balanceData.investments.items],
+    ['fixedAssets', balanceData.fixedAssets.items],
+    ['loansGiven', balanceData.loansGiven],
+    ['loansOwed', balanceData.loansOwed],
+  ]);
+
+  // Default new items to checked (only fill in missing keys, preserve user choices)
+  useEffect(() => {
+    setCheckedItems(prev => {
+      const next = { ...prev };
+      let changed = false;
+      itemGroups().forEach(([gk, items]) => {
+        items.forEach(item => {
+          const key = `${gk}-${item.name}`;
+          if (next[key] === undefined) { next[key] = true; changed = true; }
+        });
+      });
+      return changed ? next : prev;
+    });
+  }, [balanceData]);
+
+  // An item counts as checked unless explicitly set to false
+  const isItemChecked = (groupKey, name) => checkedItems[`${groupKey}-${name}`] !== false;
+
+  const toggleItem = (groupKey, name) => {
+    const key = `${groupKey}-${name}`;
+    setCheckedItems(prev => ({ ...prev, [key]: prev[key] === false ? true : false }));
+  };
+
+  const isGroupFullyChecked = (groupKey, items) =>
+    items.length > 0 && items.every(i => isItemChecked(groupKey, i.name));
+
+  const isGroupIndeterminate = (groupKey, items) => {
+    const checked = items.filter(i => isItemChecked(groupKey, i.name)).length;
+    return checked > 0 && checked < items.length;
+  };
+
+  const toggleGroupCheck = (groupKey, items) => {
+    const allChecked = isGroupFullyChecked(groupKey, items);
+    setCheckedItems(prev => {
+      const next = { ...prev };
+      items.forEach(i => { next[`${groupKey}-${i.name}`] = !allChecked; });
+      return next;
+    });
+  };
+
+  const isAllItemsChecked = useMemo(() => {
+    const all = itemGroups().flatMap(([gk, items]) => items.map(i => isItemChecked(gk, i.name)));
+    return all.length > 0 && all.every(Boolean);
+  }, [balanceData, checkedItems]);
+
+  const setAllItemsChecked = (val) => {
+    setCheckedItems(prev => {
+      const next = { ...prev };
+      itemGroups().forEach(([gk, items]) => items.forEach(i => { next[`${gk}-${i.name}`] = val; }));
+      return next;
+    });
+  };
+
+  // Totals recomputed from only the checked items
+  const checkedTotals = useMemo(() => {
+    const groupTotal = (groupKey, items) =>
+      items.filter(i => isItemChecked(groupKey, i.name)).reduce((s, i) => s + i.balance, 0);
+    const cash = groupTotal('cash', balanceData.cash.items);
+    const checking = groupTotal('checking', balanceData.checking.items);
+    const investments = groupTotal('investments', balanceData.investments.items);
+    const fixedAssets = groupTotal('fixedAssets', balanceData.fixedAssets.items);
+    const loansGiven = groupTotal('loansGiven', balanceData.loansGiven);
+    const loansOwed = groupTotal('loansOwed', balanceData.loansOwed);
+    const totalAssets = cash + checking + investments + fixedAssets + loansGiven;
+    const totalLiabilities = loansOwed;
+    return { cash, checking, investments, fixedAssets, loansGiven, loansOwed, totalAssets, totalLiabilities, netWorth: totalAssets - totalLiabilities };
+  }, [balanceData, checkedItems]);
 
   // Get all active accounts grouped
   const groupedActiveAccounts = useMemo(() => {
@@ -460,43 +541,67 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
   const renderGroup = (groupKey, title, icon, data, colorClass) => {
     if (data.items.length === 0) return null;
     const isExpanded = expandedGroups[groupKey];
-    
+    const fullyChecked = isGroupFullyChecked(groupKey, data.items);
+    const indeterminate = isGroupIndeterminate(groupKey, data.items);
+    const groupTotal = data.items
+      .filter(i => isItemChecked(groupKey, i.name))
+      .reduce((s, i) => s + i.balance, 0);
+    const dim = !fullyChecked && !indeterminate;
+
     return (
       <div className="mb-4">
-        <div 
+        <div
           className={`flex items-center justify-between py-3 px-4 rounded-lg ${colorClass} cursor-pointer hover:opacity-90 transition-opacity`}
           onClick={() => toggleGroup(groupKey)}
         >
           <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={fullyChecked}
+              ref={el => { if (el) el.indeterminate = indeterminate; }}
+              onChange={() => toggleGroupCheck(groupKey, data.items)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4 rounded border-gray-300 focus:ring-0 cursor-pointer accent-emerald-500"
+              title="Check / uncheck this category"
+            />
             <span className="text-sm text-gray-500">{isExpanded ? '▼' : '▶'}</span>
             <span className="text-xl">{icon}</span>
             <span className="font-bold text-gray-800">{title}</span>
             {!isExpanded && <span className="text-xs text-gray-500">({data.items.length})</span>}
           </div>
-          <div className="flex items-center gap-6">
-            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(data.total)}</span>
-            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(data.total)}</span>
+          <div className={`flex items-center gap-6 ${dim ? 'opacity-30' : ''}`}>
+            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(groupTotal)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(groupTotal)}</span>
           </div>
         </div>
-        
+
         {isExpanded && (
           <div className="mt-1 space-y-1 ml-6">
-            {data.items.map((item, idx) => (
-              <div key={idx} className="flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded">
-                <div className="flex items-center gap-2">
-                  <span>{item.icon}</span>
-                  <span className="text-gray-700">{item.name}</span>
+            {data.items.map((item, idx) => {
+              const checked = isItemChecked(groupKey, item.name);
+              return (
+                <div key={idx} className={`flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded ${!checked ? 'opacity-40' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleItem(groupKey, item.name)}
+                      className="w-3.5 h-3.5 rounded border-gray-300 focus:ring-0 cursor-pointer accent-gray-500"
+                    />
+                    <span>{item.icon}</span>
+                    <span className={`text-gray-700 ${!checked ? 'line-through' : ''}`}>{item.name}</span>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                      {formatCurrency(item.balance)}
+                    </span>
+                    <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                      {formatUSD(item.balance)}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-6">
-                  <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {formatCurrency(item.balance)}
-                  </span>
-                  <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {formatUSD(item.balance)}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -507,43 +612,67 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
   const renderLoanGroup = (groupKey, title, icon, items, total, colorClass) => {
     if (items.length === 0) return null;
     const isExpanded = expandedGroups[groupKey];
-    
+    const fullyChecked = isGroupFullyChecked(groupKey, items);
+    const indeterminate = isGroupIndeterminate(groupKey, items);
+    const groupTotal = items
+      .filter(i => isItemChecked(groupKey, i.name))
+      .reduce((s, i) => s + i.balance, 0);
+    const dim = !fullyChecked && !indeterminate;
+
     return (
       <div className="mb-4">
-        <div 
+        <div
           className={`flex items-center justify-between py-3 px-4 rounded-lg ${colorClass} cursor-pointer hover:opacity-90 transition-opacity`}
           onClick={() => toggleGroup(groupKey)}
         >
           <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={fullyChecked}
+              ref={el => { if (el) el.indeterminate = indeterminate; }}
+              onChange={() => toggleGroupCheck(groupKey, items)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4 rounded border-gray-300 focus:ring-0 cursor-pointer accent-emerald-500"
+              title="Check / uncheck this category"
+            />
             <span className="text-sm text-gray-500">{isExpanded ? '▼' : '▶'}</span>
             <span className="text-xl">{icon}</span>
             <span className="font-bold text-gray-800">{title}</span>
             {!isExpanded && <span className="text-xs text-gray-500">({items.length})</span>}
           </div>
-          <div className="flex items-center gap-6">
-            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(total)}</span>
-            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(total)}</span>
+          <div className={`flex items-center gap-6 ${dim ? 'opacity-30' : ''}`}>
+            <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(groupTotal)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(groupTotal)}</span>
           </div>
         </div>
-        
+
         {isExpanded && (
           <div className="mt-1 space-y-1 ml-6">
-            {items.map((item, idx) => (
-              <div key={idx} className="flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded">
-                <div className="flex items-center gap-2">
-                  <span>👤</span>
-                  <span className="text-gray-700">{item.name}</span>
+            {items.map((item, idx) => {
+              const checked = isItemChecked(groupKey, item.name);
+              return (
+                <div key={idx} className={`flex items-center justify-between py-1.5 px-4 hover:bg-gray-50 rounded ${!checked ? 'opacity-40' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleItem(groupKey, item.name)}
+                      className="w-3.5 h-3.5 rounded border-gray-300 focus:ring-0 cursor-pointer accent-gray-500"
+                    />
+                    <span>👤</span>
+                    <span className={`text-gray-700 ${!checked ? 'line-through' : ''}`}>{item.name}</span>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                      {formatCurrency(item.balance)}
+                    </span>
+                    <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                      {formatUSD(item.balance)}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-6">
-                  <span className={`w-32 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {formatCurrency(item.balance)}
-                  </span>
-                  <span className={`w-28 text-right ${item.balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {formatUSD(item.balance)}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -830,18 +959,31 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
             <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
               <div className="border-b-2 border-emerald-500 pb-2 mb-4 flex justify-between items-center">
                 <h2 className="text-lg font-bold text-emerald-700">CURRENT ASSETS</h2>
-                <div className="flex gap-2">
-                  <button 
+                <div className="flex gap-2 items-center">
+                  <button
                     onClick={expandAll}
                     className="text-xs text-emerald-600 hover:text-emerald-800 px-2 py-1 rounded hover:bg-emerald-50"
                   >
                     Expand All
                   </button>
-                  <button 
+                  <button
                     onClick={collapseAll}
                     className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
                   >
                     Collapse All
+                  </button>
+                  <span className="w-px h-4 bg-gray-300 mx-1"></span>
+                  <button
+                    onClick={() => setAllItemsChecked(true)}
+                    className={`text-xs px-2 py-1 rounded ${isAllItemsChecked ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50'}`}
+                  >
+                    {isAllItemsChecked ? '☑' : '☐'} Check All
+                  </button>
+                  <button
+                    onClick={() => setAllItemsChecked(false)}
+                    className={`text-xs px-2 py-1 rounded ${!isAllItemsChecked ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
+                  >
+                    Uncheck All
                   </button>
                 </div>
               </div>
@@ -857,8 +999,8 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                 <div className="flex items-center justify-between py-3 px-4 bg-emerald-100 rounded-lg">
                   <span className="font-bold text-emerald-800">TOTAL ASSETS</span>
                   <div className="flex items-center gap-6">
-                    <span className="font-bold text-emerald-800 text-xl w-32 text-right">{formatCurrency(balanceData.totalAssets)}</span>
-                    <span className="font-bold text-emerald-800 text-xl w-28 text-right">{formatUSD(balanceData.totalAssets)}</span>
+                    <span className="font-bold text-emerald-800 text-xl w-32 text-right">{formatCurrency(checkedTotals.totalAssets)}</span>
+                    <span className="font-bold text-emerald-800 text-xl w-28 text-right">{formatUSD(checkedTotals.totalAssets)}</span>
                   </div>
                 </div>
               </div>
@@ -881,8 +1023,8 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                 <div className="flex items-center justify-between py-3 px-4 bg-red-100 rounded-lg">
                   <span className="font-bold text-red-800">TOTAL LIABILITIES</span>
                   <div className="flex items-center gap-6">
-                    <span className="font-bold text-red-800 text-xl w-32 text-right">{formatCurrency(balanceData.totalLiabilities)}</span>
-                    <span className="font-bold text-red-800 text-xl w-28 text-right">{formatUSD(balanceData.totalLiabilities)}</span>
+                    <span className="font-bold text-red-800 text-xl w-32 text-right">{formatCurrency(checkedTotals.totalLiabilities)}</span>
+                    <span className="font-bold text-red-800 text-xl w-28 text-right">{formatUSD(checkedTotals.totalLiabilities)}</span>
                   </div>
                 </div>
               </div>
@@ -904,10 +1046,10 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                 </div>
                 <div className="flex items-center gap-6">
                   <span className="text-white text-2xl font-bold w-36 text-right">
-                    {formatCurrency(balanceData.netWorth)}
+                    {formatCurrency(checkedTotals.netWorth)}
                   </span>
                   <span className="text-white text-2xl font-bold w-32 text-right">
-                    {formatUSD(balanceData.netWorth)}
+                    {formatUSD(checkedTotals.netWorth)}
                   </span>
                 </div>
               </div>

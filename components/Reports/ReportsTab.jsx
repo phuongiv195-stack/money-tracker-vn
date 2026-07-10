@@ -22,7 +22,7 @@ const ReportsTab = () => {
     loadingMore
   } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1080);
   
   // Detail view state
   const [detailView, setDetailView] = useState(null); // 'spending' | 'income-expense' | 'tag-report' | 'desktop-detail' | 'account-statement' | 'payee-report' | null
@@ -70,7 +70,7 @@ const ReportsTab = () => {
 
   // Check screen size - only show desktop reports on large screens
   useEffect(() => {
-    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1080);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -1765,7 +1765,7 @@ const ReportsTab = () => {
               </p>
               {!isDesktop && (
                 <p className="text-xs text-orange-600 mt-2">
-                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                  🖥️ Open on desktop (screen width ≥ 1080px) to access
                 </p>
               )}
             </div>
@@ -1814,7 +1814,7 @@ const ReportsTab = () => {
               </p>
               {!isDesktop && (
                 <p className="text-xs text-orange-600 mt-2">
-                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                  🖥️ Open on desktop (screen width ≥ 1080px) to access
                 </p>
               )}
             </div>
@@ -1863,7 +1863,7 @@ const ReportsTab = () => {
               </p>
               {!isDesktop && (
                 <p className="text-xs text-orange-600 mt-2">
-                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                  🖥️ Open on desktop (screen width ≥ 1080px) to access
                 </p>
               )}
             </div>
@@ -1915,7 +1915,7 @@ const ReportsTab = () => {
               </p>
               {!isDesktop && (
                 <p className="text-xs text-orange-600 mt-2">
-                  🖥️ Open on desktop (screen width ≥ 1024px) to access
+                  🖥️ Open on desktop (screen width ≥ 1080px) to access
                 </p>
               )}
             </div>

@@ -169,6 +169,8 @@ const AddLoanTransactionModal = ({ isOpen, onClose, onSave, loan }) => {
         memo: memo,
         tag: formData.tags.length > 0 ? formData.tags[0] : null,
         tags: formData.tags.length > 0 ? formData.tags : null,
+        clearStatus: 'uncleared', // Bank account clear status
+        loanClearStatus: 'uncleared', // Loan-specific status (independent from bank)
         createdAt: new Date()
       };
 

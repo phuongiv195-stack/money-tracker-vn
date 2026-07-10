@@ -126,7 +126,8 @@ const EditLoanTransactionModal = ({ isOpen, onClose, onSave, transaction, loan }
           memo: formData.memo,
           tag: formData.tags.length > 0 ? formData.tags[0] : null,
           tags: formData.tags.length > 0 ? formData.tags : null,
-          clearStatus: 'uncleared', // New transactions start as uncleared
+          clearStatus: 'uncleared', // New transactions start as uncleared (bank)
+          loanClearStatus: 'uncleared', // Loan-specific status (independent from bank)
           userId: transaction.userId,
           createdAt: serverTimestamp()
         });

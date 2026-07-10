@@ -314,7 +314,7 @@ const CategoriesTab = () => {
             <div 
               className="bg-gray-50 p-2 px-3 flex justify-between items-center font-semibold text-xs text-emerald-600 uppercase tracking-wider select-none"
             >
-              <span 
+              <span
                 className="flex-1 cursor-pointer active:opacity-70"
                 onTouchStart={(e) => handleLongPressStart(groupName, 'group', e)}
                 onTouchMove={handleLongPressMove}

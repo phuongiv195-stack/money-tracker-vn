@@ -3,7 +3,7 @@ import { useData } from '../../contexts/DataContext';
 
 const PayeeByCategoryReport = () => {
   const { transactions, categories } = useData();
-  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1080);
   const [expandedCategories, setExpandedCategories] = useState({});
 
   // Category filter: 'all', 'group:GroupName', or a category name
@@ -22,7 +22,7 @@ const PayeeByCategoryReport = () => {
 
   // Check screen size
   React.useEffect(() => {
-    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1080);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);

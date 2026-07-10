@@ -135,7 +135,20 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
   // Register back handler for hardware back button
   useBackHandler(isOpen, handleBackPress);
-  
+
+  // Close on Escape key (same as clicking the ✕)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   // Helper to get today's date in local timezone (YYYY-MM-DD format)
   const getLocalToday = () => {
     const now = new Date();
@@ -178,6 +191,24 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const payeeToCategoryMap = cachedPayeeToCategoryMap;
   const payeeToAccountMap = cachedPayeeToAccountMap;
   const categorySuggestions = categories;
+
+  // Spending-mode helpers: a category may allow both, need-only, or want-only
+  const getCategoryMode = (name) => categorySuggestions.find(c => c.name === name)?.spendingMode || 'both';
+  const getCategoryDefaultSpending = (name) => categorySuggestions.find(c => c.name === name)?.spendingType || 'need';
+  // Effective spending type given the category's lock + a current choice
+  const resolveSpendingType = (name, current) => {
+    const mode = getCategoryMode(name);
+    if (mode === 'need') return 'need';
+    if (mode === 'want') return 'want';
+    return current || getCategoryDefaultSpending(name);
+  };
+  // Value to use when a category is freshly selected (adopt its default / lock)
+  const spendingForNewCategory = (name) => {
+    const mode = getCategoryMode(name);
+    if (mode === 'need') return 'need';
+    if (mode === 'want') return 'want';
+    return getCategoryDefaultSpending(name);
+  };
 
   // Default account logic is now handled in the main useEffect below
 
@@ -337,10 +368,13 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
   const handleSplitCategoryChange = (index, category) => {
     const newSplits = [...splits];
     newSplits[index].category = category;
-    // Set default spendingType from category if not already set
-    if (!newSplits[index].spendingType) {
-      const selectedCategory = categorySuggestions.find(c => c.name === category);
-      newSplits[index].spendingType = selectedCategory?.spendingType || 'need';
+    const mode = getCategoryMode(category);
+    if (mode === 'need' || mode === 'want') {
+      // Locked category — force its only allowed value
+      newSplits[index].spendingType = mode;
+    } else if (!newSplits[index].spendingType) {
+      // Set default spendingType from category if not already set
+      newSplits[index].spendingType = getCategoryDefaultSpending(category);
     }
     setSplits(newSplits);
     setActiveSplitIndex(null);
@@ -380,11 +414,10 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
   // Handle category selection - also sets default spendingType from category
   const handleCategorySelect = (categoryName) => {
-    const selectedCategory = categorySuggestions.find(c => c.name === categoryName);
     setFormData({
-      ...formData, 
+      ...formData,
       category: categoryName,
-      spendingType: selectedCategory?.spendingType || formData.spendingType
+      spendingType: spendingForNewCategory(categoryName)
     });
     setShowCategoryList(false);
   };
@@ -524,9 +557,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           };
           // Add spendingType for expense splits with category (not loan, not transfer)
           if (activeTab === 'expense' && s.category && !s.isLoan && !s.isTransfer) {
-            // If not set, use category default
-            const selectedCat = categorySuggestions.find(c => c.name === s.category);
-            splitData.spendingType = s.spendingType || selectedCat?.spendingType || 'need';
+            // Respect the category's lock (need/want-only) or use its default
+            splitData.spendingType = resolveSpendingType(s.category, s.spendingType);
           }
           // Only include loanType if it's a loan split and we have a type
           if (s.isLoan && s.loan) {
@@ -617,7 +649,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           
           // Save spendingType only for expense transactions (not loan)
           if (activeTab === 'expense' && !formData.isLoan) {
-            transactionData.spendingType = formData.spendingType;
+            transactionData.spendingType = resolveSpendingType(formData.category, formData.spendingType);
           }
         }
 
@@ -1170,7 +1202,22 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                     )}
 
                     {/* Want/Need Toggle - Only for Expense split with category selected */}
-                    {activeTab === 'expense' && split.category && !split.isLoan && !split.isTransfer && (
+                    {activeTab === 'expense' && split.category && !split.isLoan && !split.isTransfer && (() => {
+                      const mode = getCategoryMode(split.category);
+                      // Locked category — show a read-only badge, no toggle
+                      if (mode === 'need' || mode === 'want') {
+                        return (
+                          <div className="mt-2">
+                            <div className={`py-2 rounded-lg font-medium text-sm text-center border-2 ${
+                              mode === 'need' ? 'bg-blue-100 text-blue-700 border-blue-400' : 'bg-purple-100 text-purple-700 border-purple-400'
+                            }`}>
+                              {mode === 'need' ? '🎯 Need' : '✨ Want'}
+                              <span className="text-xs opacity-60 ml-1">(fixed)</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
                       <div className="mt-2">
                         <div className="flex gap-2">
                           <button
@@ -1198,8 +1245,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                         </div>
                         {/* Show category default hint */}
                         {(() => {
-                          const selectedCat = categorySuggestions.find(c => c.name === split.category);
-                          const defaultType = selectedCat?.spendingType || 'need';
+                          const defaultType = getCategoryDefaultSpending(split.category);
                           const currentType = split.spendingType || defaultType;
                           const isOverridden = currentType !== defaultType;
                           return (
@@ -1213,7 +1259,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                           );
                         })()}
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Memo */}
                     <input
@@ -1489,7 +1536,24 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           )}
 
           {/* Want/Need Toggle - Only for Expense in non-split mode */}
-          {!isSplitMode && activeTab === 'expense' && formData.category && (
+          {!isSplitMode && activeTab === 'expense' && formData.category && (() => {
+            const mode = getCategoryMode(formData.category);
+            // Locked category — show a read-only badge, no toggle
+            if (mode === 'need' || mode === 'want') {
+              return (
+                <div>
+                  <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Spending Type</label>
+                  <div className={`py-2.5 rounded-lg font-medium text-center border-2 ${
+                    mode === 'need' ? 'bg-blue-100 text-blue-700 border-blue-400' : 'bg-purple-100 text-purple-700 border-purple-400'
+                  }`}>
+                    <span className="mr-1">{mode === 'need' ? '🎯' : '✨'}</span>
+                    {mode === 'need' ? 'Need' : 'Want'}
+                    <span className="text-xs opacity-60 ml-1">(fixed for this category)</span>
+                  </div>
+                </div>
+              );
+            }
+            return (
             <div>
               <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Spending Type</label>
               <div className="flex gap-2">
@@ -1518,8 +1582,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
               </div>
               {/* Show default from category hint */}
               {(() => {
-                const selectedCat = categorySuggestions.find(c => c.name === formData.category);
-                const defaultType = selectedCat?.spendingType || 'need';
+                const defaultType = getCategoryDefaultSpending(formData.category);
                 const isOverridden = formData.spendingType !== defaultType;
                 return (
                   <div className="text-xs text-gray-400 mt-1.5 text-center">
@@ -1532,7 +1595,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                 );
               })()}
             </div>
-          )}
+            );
+          })()}
 
           {/* Transfer Fields */}
           {activeTab === 'transfer' && (

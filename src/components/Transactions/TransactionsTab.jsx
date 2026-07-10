@@ -118,7 +118,7 @@ const TransactionsTab = () => {
   const [filterType, setFilterType] = useState('all');
   const [filterAccount, setFilterAccount] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
-  const [filterTime, setFilterTime] = useState('month');
+  const [filterTime, setFilterTime] = useState('all');
   const [filterTag, setFilterTag] = useState('all');
   const [filterSpendingType, setFilterSpendingType] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
@@ -209,12 +209,26 @@ const TransactionsTab = () => {
         
         let splitMatch = false;
         if (t.type === 'split' && t.splits) {
-          splitMatch = t.splits.some(s => 
+          splitMatch = t.splits.some(s =>
             [s.category, s.loan, s.memo].filter(Boolean).join(' ').toLowerCase().includes(lowerQuery)
           );
         }
 
-        if (!searchFields.includes(lowerQuery) && !splitMatch) return false;
+        // Amount search: exact match by number regardless of comma/decimal formatting
+        // e.g. "30000" matches an amount of 30,000 (not 3,000,000 or 130,000)
+        let amountMatch = false;
+        const digitsQuery = debouncedSearch.replace(/\D/g, '');
+        if (digitsQuery) {
+          const amountStr = String(Math.round(Math.abs(Number(t.amount) || 0)));
+          amountMatch = amountStr === digitsQuery;
+          if (!amountMatch && t.type === 'split' && t.splits) {
+            amountMatch = t.splits.some(s =>
+              String(Math.round(Math.abs(Number(s.amount) || 0))) === digitsQuery
+            );
+          }
+        }
+
+        if (!searchFields.includes(lowerQuery) && !splitMatch && !amountMatch) return false;
       }
 
       return true;

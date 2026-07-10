@@ -15,7 +15,8 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
     icon: '📦',
     type: defaultType,
     group: '',
-    spendingType: 'need' // default spending type for expense categories
+    spendingType: 'need', // default spending type for expense categories
+    spendingMode: 'both'   // 'both' | 'need' | 'want' — which options are allowed on transactions
   });
   const [loading, setLoading] = useState(false);
   const [existingGroups, setExistingGroups] = useState([]);
@@ -40,7 +41,8 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
             icon: '📦',
             type: editCategory.prefilledType || defaultType,
             group: editCategory.prefilledGroup,
-            spendingType: 'need'
+            spendingType: 'need',
+            spendingMode: 'both'
           });
         } else {
           // Regular edit mode
@@ -49,7 +51,8 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
             icon: editCategory.icon,
             type: editCategory.type,
             group: editCategory.group || '',
-            spendingType: editCategory.spendingType || 'need'
+            spendingType: editCategory.spendingType || 'need',
+            spendingMode: editCategory.spendingMode || 'both'
           });
         }
       } else {
@@ -58,7 +61,8 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
           icon: '📦',
           type: defaultType,
           group: '',
-          spendingType: 'need'
+          spendingType: 'need',
+          spendingMode: 'both'
         });
       }
     }
@@ -91,13 +95,40 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
 
     setLoading(true);
     try {
+      // Prevent duplicate category names within the same type (transactions are
+      // matched to categories by name, so duplicate names collide across groups)
+      const allCatsSnap = await getDocs(
+        query(collection(db, 'categories'), where('userId', '==', userId))
+      );
+      const newNameLower = formData.name.trim().toLowerCase();
+      const duplicate = allCatsSnap.docs.find(d => {
+        const data = d.data();
+        return data.type === formData.type
+          && (data.name || '').trim().toLowerCase() === newNameLower
+          && d.id !== editCategory?.id;
+      });
+      if (duplicate) {
+        toast.error(
+          `A ${formData.type} category named "${formData.name.trim()}" already exists in group "${duplicate.data().group || 'Other'}". Please use a different name.`
+        );
+        setLoading(false);
+        return;
+      }
+
+      // For locked modes the effective default is the locked value itself
+      const effectiveSpendingType =
+        formData.spendingMode === 'need' ? 'need'
+        : formData.spendingMode === 'want' ? 'want'
+        : formData.spendingType;
+
       const categoryData = {
         userId: userId,
         name: formData.name.trim(),
         icon: formData.icon,
         type: formData.type,
         group: formData.group.trim(),
-        spendingType: formData.type === 'expense' ? formData.spendingType : null
+        spendingType: formData.type === 'expense' ? effectiveSpendingType : null,
+        spendingMode: formData.type === 'expense' ? formData.spendingMode : null
       };
 
       // Check if this is edit mode (has id and not prefilledGroup)
@@ -308,40 +339,83 @@ const AddCategoryModal = ({ isOpen, onClose, onSave, defaultType = 'expense', ed
             </div>
           </div>
 
-          {/* Want/Need Toggle - Only for Expense categories */}
+          {/* Spending Type setup - Only for Expense categories */}
           {formData.type === 'expense' && (
             <div>
-              <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Default Spending Type</label>
+              <label className="text-xs text-gray-500 uppercase font-semibold mb-2 block">Spending Type</label>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setFormData({...formData, spendingType: 'need'})}
+                  onClick={() => setFormData({...formData, spendingMode: 'need', spendingType: 'need'})}
                   className={`flex-1 py-3 rounded-lg font-medium transition-all ${
-                    formData.spendingType === 'need'
+                    formData.spendingMode === 'need'
                       ? 'bg-blue-100 text-blue-700 border-2 border-blue-400'
                       : 'bg-gray-50 text-gray-500 border border-gray-200'
                   }`}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <span>🎯</span>
-                    <span>Need</span>
+                    <span>Need only</span>
                   </div>
                   <div className="text-xs opacity-70 mt-0.5">Essential</div>
                 </button>
                 <button
-                  onClick={() => setFormData({...formData, spendingType: 'want'})}
+                  onClick={() => setFormData({...formData, spendingMode: 'want', spendingType: 'want'})}
                   className={`flex-1 py-3 rounded-lg font-medium transition-all ${
-                    formData.spendingType === 'want'
+                    formData.spendingMode === 'want'
                       ? 'bg-purple-100 text-purple-700 border-2 border-purple-400'
                       : 'bg-gray-50 text-gray-500 border border-gray-200'
                   }`}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <span>✨</span>
-                    <span>Want</span>
+                    <span>Want only</span>
                   </div>
                   <div className="text-xs opacity-70 mt-0.5">Optional</div>
                 </button>
+                <button
+                  onClick={() => setFormData({...formData, spendingMode: 'both'})}
+                  className={`flex-1 py-3 rounded-lg font-medium transition-all ${
+                    formData.spendingMode === 'both'
+                      ? 'bg-emerald-100 text-emerald-700 border-2 border-emerald-400'
+                      : 'bg-gray-50 text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <span>🔀</span>
+                    <span>Both</span>
+                  </div>
+                  <div className="text-xs opacity-70 mt-0.5">Choose per txn</div>
+                </button>
               </div>
+
+              {/* When both are allowed, pick which one is the default on new transactions */}
+              {formData.spendingMode === 'both' && (
+                <div className="mt-2">
+                  <div className="text-xs text-gray-400 mb-1.5">Default for new transactions:</div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setFormData({...formData, spendingType: 'need'})}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
+                        formData.spendingType === 'need'
+                          ? 'bg-blue-100 text-blue-700 border-2 border-blue-400'
+                          : 'bg-gray-50 text-gray-500 border border-gray-200'
+                      }`}
+                    >
+                      🎯 Need
+                    </button>
+                    <button
+                      onClick={() => setFormData({...formData, spendingType: 'want'})}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
+                        formData.spendingType === 'want'
+                          ? 'bg-purple-100 text-purple-700 border-2 border-purple-400'
+                          : 'bg-gray-50 text-gray-500 border border-gray-200'
+                      }`}
+                    >
+                      ✨ Want
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

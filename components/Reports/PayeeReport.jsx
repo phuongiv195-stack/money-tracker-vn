@@ -7,7 +7,7 @@ const PayeeReport = ({ transactions, categories: categoriesData, onBack }) => {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sortBy, setSortBy] = useState('amount');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1080);
   const [searchPayee, setSearchPayee] = useState(''); // Search payee state
   
   // View mode state: 'byCategory' | 'byPayee'

@@ -171,7 +171,9 @@ const LoansTab = () => {
           account: t.account,
           isSplitPart: true,
           parentSplitId: t.id,
-          clearStatus: t.clearStatus || 'uncleared'
+          clearStatus: t.clearStatus || 'uncleared',
+          loanClearStatus: t.loanClearStatus ?? t.clearStatus ?? 'uncleared',
+          loanReconciledAt: t.loanReconciledAt ?? t.reconciledAt ?? null
         });
       });
     });
@@ -275,7 +277,9 @@ const LoansTab = () => {
           account: t.account,
           isSplitPart: true,
           parentSplitId: t.id,
-          clearStatus: t.clearStatus || 'uncleared'
+          clearStatus: t.clearStatus || 'uncleared',
+          loanClearStatus: t.loanClearStatus ?? t.clearStatus ?? 'uncleared',
+          loanReconciledAt: t.loanReconciledAt ?? t.reconciledAt ?? null
         });
       });
     });

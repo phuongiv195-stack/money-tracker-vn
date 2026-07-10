@@ -18,7 +18,10 @@ const DesktopReports = ({ onBack }) => {
   
   // Expand/collapse state
   const [expandedGroups, setExpandedGroups] = useState({});
-  
+
+  // Collapse an entire section (income / expense) to hide its detail rows
+  const [collapsedSections, setCollapsedSections] = useState({ income: false, expense: false });
+
   // Category filter state - which categories are checked (visible in report)
   const [checkedCategories, setCheckedCategories] = useState({});
 
@@ -127,6 +130,26 @@ const DesktopReports = ({ onBack }) => {
     const usd = amountVND / exchangeRate;
     return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
+
+  // USD value rounded to whole cents (so per-row displays reconcile with totals)
+  const roundUSDCents = (amountVND) => {
+    if (!exchangeRate || exchangeRate === 0) return 0;
+    return Math.round((amountVND / exchangeRate) * 100) / 100;
+  };
+
+  // Format an already-computed USD number
+  const formatUSDAmount = (usd) =>
+    `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // Sum of each group's USD (each group rounded to cents) so the Total USD row
+  // equals the sum of the visible group rows instead of converting the aggregate VND.
+  const sumGroupsUSD = (type) =>
+    Object.values(reportData[type] || {}).reduce((sum, groupData) => {
+      const groupVND = groupData.categories
+        .filter(cat => checkedCategories[`${type}-cat-${cat.name}`])
+        .reduce((s, cat) => s + cat.total, 0);
+      return sum + roundUSDCents(groupVND);
+    }, 0);
 
   // Get months in date range
   const getDateRangeMonths = () => {
@@ -535,6 +558,38 @@ const DesktopReports = ({ onBack }) => {
     setCheckedCategories(newChecked);
   };
 
+  // --- Section-level (all income / all expense) check helpers ---
+  const getSectionCategories = (type) =>
+    Object.values(reportData[type] || {}).flatMap(g => g.categories);
+
+  const isSectionFullyChecked = (type) => {
+    const cats = getSectionCategories(type);
+    return cats.length > 0 && cats.every(cat => checkedCategories[`${type}-cat-${cat.name}`]);
+  };
+
+  const isSectionIndeterminate = (type) => {
+    const cats = getSectionCategories(type);
+    const checked = cats.filter(cat => checkedCategories[`${type}-cat-${cat.name}`]).length;
+    return checked > 0 && checked < cats.length;
+  };
+
+  const setSectionChecked = (type, checked) => {
+    setCheckedCategories(prev => {
+      const next = { ...prev };
+      Object.entries(reportData[type] || {}).forEach(([groupName, groupData]) => {
+        next[`${type}-group-${groupName}`] = checked;
+        groupData.categories.forEach(cat => {
+          next[`${type}-cat-${cat.name}`] = checked;
+        });
+      });
+      return next;
+    });
+  };
+
+  const toggleSectionCollapse = (type) => {
+    setCollapsedSections(prev => ({ ...prev, [type]: !prev[type] }));
+  };
+
   // Format currency
   const formatCurrency = (val) => {
     if (val === 0 || val === undefined) return '';
@@ -654,30 +709,37 @@ const DesktopReports = ({ onBack }) => {
     const headers = ['Type', 'Group', 'Category', ...reportData.months.map(m => m.label), 'Total VND', 'Total USD'];
     rows.push(headers);
 
-    // Income
-    rows.push(['Income', '', '', ...reportData.months.map(() => ''), '', '']);
-    getSortedGroupEntries(reportData.income).forEach(([groupName, groupData]) => {
-      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total, exchangeRate ? (groupData.total / exchangeRate).toFixed(2) : '']);
-      groupData.categories.forEach(cat => {
-        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, exchangeRate ? (cat.total / exchangeRate).toFixed(2) : '']);
+    // Only export categories that are currently checked
+    const usdCell = (vnd) => exchangeRate ? roundUSDCents(vnd).toFixed(2) : '';
+
+    const pushSection = (label, type) => {
+      rows.push([label, '', '', ...reportData.months.map(() => ''), '', '']);
+      getSortedGroupEntries(reportData[type]).forEach(([groupName, groupData]) => {
+        const checkedCats = groupData.categories.filter(cat => checkedCategories[`${type}-cat-${cat.name}`]);
+        if (checkedCats.length === 0) return; // skip fully-unchecked groups
+        const groupTotal = checkedCats.reduce((sum, cat) => sum + cat.total, 0);
+        rows.push(['', groupName, '',
+          ...reportData.months.map(m => checkedCats.reduce((sum, cat) => sum + (cat.months[m.key] || 0), 0) || ''),
+          groupTotal, usdCell(groupTotal)]);
+        checkedCats.forEach(cat => {
+          rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, usdCell(cat.total)]);
+        });
       });
-    });
-    rows.push(['Total Income', '', '', ...reportData.months.map(m => reportData.incomeTotals[m.key] || ''), reportData.grandTotalIncome, exchangeRate ? (reportData.grandTotalIncome / exchangeRate).toFixed(2) : '']);
+    };
+
+    // Income
+    pushSection('Income', 'income');
+    rows.push(['Total Income', '', '', ...reportData.months.map(m => filteredReportData.incomeTotals[m.key] || ''), filteredReportData.grandTotalIncome, exchangeRate ? sumGroupsUSD('income').toFixed(2) : '']);
 
     rows.push([]); // Empty row
 
     // Expense
-    rows.push(['Expenses', '', '', ...reportData.months.map(() => ''), '', '']);
-    getSortedGroupEntries(reportData.expense).forEach(([groupName, groupData]) => {
-      rows.push(['', groupName, '', ...reportData.months.map(m => groupData.months[m.key] || ''), groupData.total, exchangeRate ? (groupData.total / exchangeRate).toFixed(2) : '']);
-      groupData.categories.forEach(cat => {
-        rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, exchangeRate ? (cat.total / exchangeRate).toFixed(2) : '']);
-      });
-    });
-    rows.push(['Total Expenses', '', '', ...reportData.months.map(m => reportData.expenseTotals[m.key] || ''), reportData.grandTotalExpense, exchangeRate ? (reportData.grandTotalExpense / exchangeRate).toFixed(2) : '']);
+    pushSection('Expenses', 'expense');
+    rows.push(['Total Expenses', '', '', ...reportData.months.map(m => filteredReportData.expenseTotals[m.key] || ''), filteredReportData.grandTotalExpense, exchangeRate ? sumGroupsUSD('expense').toFixed(2) : '']);
 
     rows.push([]); // Empty row
-    rows.push(['Net Income', '', '', ...reportData.months.map(m => (reportData.incomeTotals[m.key] || 0) - (reportData.expenseTotals[m.key] || 0)), reportData.grandTotalIncome - reportData.grandTotalExpense]);
+    const netVND = filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense;
+    rows.push(['Net Income', '', '', ...reportData.months.map(m => (filteredReportData.incomeTotals[m.key] || 0) - (filteredReportData.expenseTotals[m.key] || 0)), netVND, exchangeRate ? (sumGroupsUSD('income') - sumGroupsUSD('expense')).toFixed(2) : '']);
 
     // Convert to CSV string
     const csvContent = rows.map(row => row.map(cell => {
@@ -943,10 +1005,27 @@ const DesktopReports = ({ onBack }) => {
                 {/* Income Section */}
                 <tr className="bg-emerald-50 border-b border-emerald-200">
                   <td colSpan={reportData.months.length + 3} className="py-2 px-3 font-bold text-emerald-700">
-                    📈 Income
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isSectionFullyChecked('income')}
+                        ref={el => { if (el) el.indeterminate = isSectionIndeterminate('income'); }}
+                        onChange={(e) => setSectionChecked('income', e.target.checked)}
+                        className="w-4 h-4 rounded border-emerald-300 focus:ring-0 cursor-pointer accent-emerald-500"
+                        title="Check / uncheck all income"
+                      />
+                      <button
+                        onClick={() => toggleSectionCollapse('income')}
+                        className="flex items-center gap-2 hover:opacity-70"
+                        title="Collapse / expand income section"
+                      >
+                        <span>{collapsedSections.income ? '▶' : '▼'}</span>
+                        📈 Income
+                      </button>
+                    </div>
                   </td>
                 </tr>
-                {getSortedGroupEntries(reportData.income).map(([groupName, groupData]) => (
+                {!collapsedSections.income && getSortedGroupEntries(reportData.income).map(([groupName, groupData]) => (
                   <React.Fragment key={`income-${groupName}`}>
                     {/* Group Row */}
                     <tr 
@@ -1042,7 +1121,7 @@ const DesktopReports = ({ onBack }) => {
                     {formatCurrency(filteredReportData.grandTotalIncome)}
                   </td>
                   <td className="py-2 px-3 text-right font-bold text-emerald-800 bg-emerald-200">
-                    {formatUSD(filteredReportData.grandTotalIncome)}
+                    {formatUSDAmount(sumGroupsUSD('income'))}
                   </td>
                 </tr>
 
@@ -1052,10 +1131,27 @@ const DesktopReports = ({ onBack }) => {
                 {/* Expense Section */}
                 <tr className="bg-red-50 border-b border-red-200">
                   <td colSpan={reportData.months.length + 3} className="py-2 px-3 font-bold text-red-700">
-                    📉 Expenses
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isSectionFullyChecked('expense')}
+                        ref={el => { if (el) el.indeterminate = isSectionIndeterminate('expense'); }}
+                        onChange={(e) => setSectionChecked('expense', e.target.checked)}
+                        className="w-4 h-4 rounded border-red-300 focus:ring-0 cursor-pointer accent-red-500"
+                        title="Check / uncheck all expenses"
+                      />
+                      <button
+                        onClick={() => toggleSectionCollapse('expense')}
+                        className="flex items-center gap-2 hover:opacity-70"
+                        title="Collapse / expand expense section"
+                      >
+                        <span>{collapsedSections.expense ? '▶' : '▼'}</span>
+                        📉 Expenses
+                      </button>
+                    </div>
                   </td>
                 </tr>
-                {getSortedGroupEntries(reportData.expense).map(([groupName, groupData]) => (
+                {!collapsedSections.expense && getSortedGroupEntries(reportData.expense).map(([groupName, groupData]) => (
                   <React.Fragment key={`expense-${groupName}`}>
                     {/* Group Row */}
                     <tr 
@@ -1151,7 +1247,7 @@ const DesktopReports = ({ onBack }) => {
                     {formatCurrency(filteredReportData.grandTotalExpense)}
                   </td>
                   <td className="py-2 px-3 text-right font-bold text-red-800 bg-red-200">
-                    {formatUSD(filteredReportData.grandTotalExpense)}
+                    {formatUSDAmount(sumGroupsUSD('expense'))}
                   </td>
                 </tr>
 
@@ -1177,7 +1273,7 @@ const DesktopReports = ({ onBack }) => {
                   </td>
                   <td className={`py-3 px-3 text-right font-bold ${filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? 'text-emerald-700' : 'text-red-700'} bg-blue-100`}>
                     {filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense >= 0 ? '+' : '-'}
-                    {formatUSD(Math.abs(filteredReportData.grandTotalIncome - filteredReportData.grandTotalExpense))}
+                    {formatUSDAmount(Math.abs(sumGroupsUSD('income') - sumGroupsUSD('expense')))}
                   </td>
                 </tr>
               </tbody>
