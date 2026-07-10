@@ -962,28 +962,36 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                 <div className="flex gap-2 items-center">
                   <button
                     onClick={expandAll}
-                    className="text-xs text-emerald-600 hover:text-emerald-800 px-2 py-1 rounded hover:bg-emerald-50"
+                    className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
                   >
                     Expand All
                   </button>
                   <button
                     onClick={collapseAll}
-                    className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                    className="px-3 py-1 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
                   >
                     Collapse All
                   </button>
-                  <span className="w-px h-4 bg-gray-300 mx-1"></span>
+                  <div className="w-px bg-gray-300 mx-1 self-stretch"></div>
                   <button
                     onClick={() => setAllItemsChecked(true)}
-                    className={`text-xs px-2 py-1 rounded ${isAllItemsChecked ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50'}`}
+                    className={`px-3 py-1 text-sm rounded-lg ${
+                      isAllItemsChecked
+                        ? 'text-emerald-600 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100'
+                        : 'text-gray-600 bg-white border border-gray-200 hover:bg-gray-50'
+                    }`}
                   >
                     {isAllItemsChecked ? '☑' : '☐'} Check All
                   </button>
                   <button
                     onClick={() => setAllItemsChecked(false)}
-                    className={`text-xs px-2 py-1 rounded ${!isAllItemsChecked ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
+                    className={`px-3 py-1 text-sm rounded-lg ${
+                      !isAllItemsChecked
+                        ? 'text-red-600 bg-red-50 border border-red-200 hover:bg-red-100'
+                        : 'text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100'
+                    }`}
                   >
-                    Uncheck All
+                    {!isAllItemsChecked ? '☑' : '☐'} Uncheck All
                   </button>
                 </div>
               </div>

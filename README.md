@@ -2,6 +2,25 @@
 
 Personal Finance Tracking App - Mobile-first PWA
 
+## 📝 Changelog
+
+### 10 July 2026
+- **Reports:** raised the desktop breakpoint from 1024px → 1080px so vertical/portrait screens get the full desktop reports instead of the "Desktop Only" prompt.
+- **Profit & Loss** (renamed from "Detailed Reports"):
+  - Fixed the Total USD column so section totals equal the sum of the displayed rows (per-row rounding is reconciled).
+  - Added section-level check/uncheck and collapse toggles for the whole Income and Expenses sections.
+  - CSV export now respects the checkbox selection (unchecked categories/groups are excluded).
+- **Balance Sheet:**
+  - Added per-category and per-account checkboxes, Check All / Uncheck All, and totals (Assets, Liabilities, Net Worth) that reflect the current selection.
+  - Enlarged the Expand/Collapse and Check/Uncheck toolbar buttons to match Profit & Loss.
+- **Categories:**
+  - Added a Need-only / Want-only / Both spending-type setup per category; locked categories fix the want/need value on transactions.
+  - Added a guard preventing duplicate category names within a type (transactions match by name, so duplicates collided across groups).
+- **Transactions:**
+  - Locked categories show a fixed want/need badge instead of an editable toggle.
+  - The Add/Edit Transaction modal now closes on the Escape key.
+- **Reports layout:** moved Balance Sheet below Payee Report.
+
 ## 🚀 Quick Start
 
 ### 1. Install Dependencies
