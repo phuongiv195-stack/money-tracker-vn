@@ -124,13 +124,6 @@ const DesktopReports = ({ onBack }) => {
     }
   };
 
-  // Format USD
-  const formatUSD = (amountVND) => {
-    if (!exchangeRate || exchangeRate === 0) return '$0.00';
-    const usd = amountVND / exchangeRate;
-    return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
   // USD value rounded to whole cents (so per-row displays reconcile with totals)
   const roundUSDCents = (amountVND) => {
     if (!exchangeRate || exchangeRate === 0) return 0;
@@ -141,15 +134,20 @@ const DesktopReports = ({ onBack }) => {
   const formatUSDAmount = (usd) =>
     `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Sum of each group's USD (each group rounded to cents) so the Total USD row
-  // equals the sum of the visible group rows instead of converting the aggregate VND.
+  // USD for a group = sum of its checked categories' USD, each rounded to cents,
+  // so the group row equals the sum of its visible category rows.
+  const groupUSD = (type, groupData) =>
+    groupData.categories
+      .filter(cat => checkedCategories[`${type}-cat-${cat.name}`])
+      .reduce((s, cat) => s + roundUSDCents(cat.total), 0);
+
+  // Sum of each group's USD so the Total USD row equals the sum of the visible
+  // group rows (bottom-up: category cents → group → total, all reconcile).
   const sumGroupsUSD = (type) =>
-    Object.values(reportData[type] || {}).reduce((sum, groupData) => {
-      const groupVND = groupData.categories
-        .filter(cat => checkedCategories[`${type}-cat-${cat.name}`])
-        .reduce((s, cat) => s + cat.total, 0);
-      return sum + roundUSDCents(groupVND);
-    }, 0);
+    Object.values(reportData[type] || {}).reduce(
+      (sum, groupData) => sum + groupUSD(type, groupData),
+      0
+    );
 
   // Get months in date range
   const getDateRangeMonths = () => {
@@ -718,9 +716,12 @@ const DesktopReports = ({ onBack }) => {
         const checkedCats = groupData.categories.filter(cat => checkedCategories[`${type}-cat-${cat.name}`]);
         if (checkedCats.length === 0) return; // skip fully-unchecked groups
         const groupTotal = checkedCats.reduce((sum, cat) => sum + cat.total, 0);
+        const groupUsdCell = exchangeRate
+          ? checkedCats.reduce((sum, cat) => sum + roundUSDCents(cat.total), 0).toFixed(2)
+          : '';
         rows.push(['', groupName, '',
           ...reportData.months.map(m => checkedCats.reduce((sum, cat) => sum + (cat.months[m.key] || 0), 0) || ''),
-          groupTotal, usdCell(groupTotal)]);
+          groupTotal, groupUsdCell]);
         checkedCats.forEach(cat => {
           rows.push(['', '', cat.name, ...reportData.months.map(m => cat.months[m.key] || ''), cat.total, usdCell(cat.total)]);
         });
@@ -1065,9 +1066,7 @@ const DesktopReports = ({ onBack }) => {
                           .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
                       <td className={`py-2 px-3 text-right font-medium text-emerald-700 bg-gray-50 ${!isGroupFullyChecked('income', groupData) && !isGroupIndeterminate('income', groupData) ? 'opacity-30' : ''}`}>
-                        {formatUSD(groupData.categories
-                          .filter(cat => checkedCategories[`income-cat-${cat.name}`])
-                          .reduce((sum, cat) => sum + cat.total, 0))}
+                        {formatUSDAmount(groupUSD('income', groupData))}
                       </td>
                     </tr>
                     {/* Category Rows */}
@@ -1100,7 +1099,7 @@ const DesktopReports = ({ onBack }) => {
                             {isChecked ? formatCurrency(cat.total) : ''}
                           </td>
                           <td className="py-1.5 px-3 text-right text-gray-500 bg-gray-100/50">
-                            {isChecked ? formatUSD(cat.total) : ''}
+                            {isChecked ? formatUSDAmount(roundUSDCents(cat.total)) : ''}
                           </td>
                         </tr>
                       );
@@ -1191,9 +1190,7 @@ const DesktopReports = ({ onBack }) => {
                           .reduce((sum, cat) => sum + cat.total, 0))}
                       </td>
                       <td className={`py-2 px-3 text-right font-medium text-red-700 bg-gray-50 ${!isGroupFullyChecked('expense', groupData) && !isGroupIndeterminate('expense', groupData) ? 'opacity-30' : ''}`}>
-                        {formatUSD(groupData.categories
-                          .filter(cat => checkedCategories[`expense-cat-${cat.name}`])
-                          .reduce((sum, cat) => sum + cat.total, 0))}
+                        {formatUSDAmount(groupUSD('expense', groupData))}
                       </td>
                     </tr>
                     {/* Category Rows */}
@@ -1226,7 +1223,7 @@ const DesktopReports = ({ onBack }) => {
                             {isChecked ? formatCurrency(cat.total) : ''}
                           </td>
                           <td className="py-1.5 px-3 text-right text-gray-500 bg-gray-100/50">
-                            {isChecked ? formatUSD(cat.total) : ''}
+                            {isChecked ? formatUSDAmount(roundUSDCents(cat.total)) : ''}
                           </td>
                         </tr>
                       );

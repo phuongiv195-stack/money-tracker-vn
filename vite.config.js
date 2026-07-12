@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // Keep Vite's dep-optimizer cache outside Dropbox to avoid EBUSY file locks
+  cacheDir: 'C:/tmp/money-tracker-vite-cache',
   plugins: [
     react(),
     VitePWA({

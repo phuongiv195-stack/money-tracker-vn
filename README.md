@@ -4,6 +4,10 @@ Personal Finance Tracking App - Mobile-first PWA
 
 ## 📝 Changelog
 
+### 12 July 2026
+- **Profit & Loss – Total USD reconciliation:** made USD strictly bottom-up so every level equals the sum of the rows shown beneath it. Each category is rounded to whole cents, each group = sum of its categories' cents, and section/net totals = sum of the groups. Previously category rows, group rows, and totals each converted VND with different rounding, so section totals could be off by a cent (e.g. Health group). Applied to the on-screen table and the CSV export.
+- **Dev tooling:** moved Vite's dependency cache outside Dropbox (`cacheDir: C:/tmp/money-tracker-vite-cache`) to stop `EBUSY: resource busy or locked` errors when starting the dev server from the synced project folder.
+
 ### 10 July 2026
 - **Reports:** raised the desktop breakpoint from 1024px → 1080px so vertical/portrait screens get the full desktop reports instead of the "Desktop Only" prompt.
 - **Profit & Loss** (renamed from "Detailed Reports"):
