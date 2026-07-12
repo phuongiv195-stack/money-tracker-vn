@@ -5,6 +5,7 @@ Personal Finance Tracking App - Mobile-first PWA
 ## 📝 Changelog
 
 ### 12 July 2026
+- **Balance Sheet – USD reconciliation:** applied the same bottom-up USD rule as Profit & Loss. Each account/loan row is rounded to whole cents, each group = sum of its item cents, and Total Assets / Total Liabilities / Net Worth = sum of the group rows. Previously the totals converted the aggregate VND, so they could differ by a cent from adding up the rows on screen (e.g. Total Assets showing $214,357.88 where the groups summed to $214,357.89).
 - **Profit & Loss – Total USD reconciliation:** made USD strictly bottom-up so every level equals the sum of the rows shown beneath it. Each category is rounded to whole cents, each group = sum of its categories' cents, and section/net totals = sum of the groups. Previously category rows, group rows, and totals each converted VND with different rounding, so section totals could be off by a cent (e.g. Health group). Applied to the on-screen table and the CSV export.
 - **Dev tooling:** moved Vite's dependency cache outside Dropbox (`cacheDir: C:/tmp/money-tracker-vite-cache`) to stop `EBUSY: resource busy or locked` errors when starting the dev server from the synced project folder.
 

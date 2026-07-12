@@ -181,12 +181,28 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     return amount < 0 ? `-${formatted}` : formatted;
   };
 
-  // Format currency USD
+  // USD value rounded to whole cents (so per-row displays reconcile with totals)
+  const roundUSDCents = (amountVND) => {
+    if (!exchangeRate || exchangeRate === 0) return 0;
+    return Math.round(((amountVND || 0) / exchangeRate) * 100) / 100;
+  };
+
+  // Format an already-computed USD number
+  const formatUSDAmount = (usd) =>
+    `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // Format currency USD (single row: convert then round to cents)
   const formatUSD = (amountVND) => {
     if (!exchangeRate || exchangeRate === 0) return '$0.00';
-    const usd = amountVND / exchangeRate;
-    return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return formatUSDAmount(roundUSDCents(amountVND));
   };
+
+  // USD for a group = sum of its checked items' USD, each rounded to cents, so a
+  // group row equals the sum of the item rows shown beneath it.
+  const groupUSD = (groupKey, items) =>
+    items
+      .filter(i => isItemChecked(groupKey, i.name))
+      .reduce((s, i) => s + roundUSDCents(i.balance), 0);
 
   // Handle exchange rate input (supports decimals like 26,360.55)
   const handleExchangeRateChange = (e) => {
@@ -452,8 +468,24 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     const loansOwed = groupTotal('loansOwed', balanceData.loansOwed);
     const totalAssets = cash + checking + investments + fixedAssets + loansGiven;
     const totalLiabilities = loansOwed;
-    return { cash, checking, investments, fixedAssets, loansGiven, loansOwed, totalAssets, totalLiabilities, netWorth: totalAssets - totalLiabilities };
-  }, [balanceData, checkedItems]);
+
+    // USD is summed bottom-up (item cents → group → total) so the totals equal
+    // the sum of the group rows displayed on screen.
+    const totalAssetsUSD =
+      groupUSD('cash', balanceData.cash.items) +
+      groupUSD('checking', balanceData.checking.items) +
+      groupUSD('investments', balanceData.investments.items) +
+      groupUSD('fixedAssets', balanceData.fixedAssets.items) +
+      groupUSD('loansGiven', balanceData.loansGiven);
+    const totalLiabilitiesUSD = groupUSD('loansOwed', balanceData.loansOwed);
+
+    return {
+      cash, checking, investments, fixedAssets, loansGiven, loansOwed,
+      totalAssets, totalLiabilities, netWorth: totalAssets - totalLiabilities,
+      totalAssetsUSD, totalLiabilitiesUSD,
+      netWorthUSD: totalAssetsUSD - totalLiabilitiesUSD,
+    };
+  }, [balanceData, checkedItems, exchangeRate]);
 
   // Get all active accounts grouped
   const groupedActiveAccounts = useMemo(() => {
@@ -546,6 +578,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     const groupTotal = data.items
       .filter(i => isItemChecked(groupKey, i.name))
       .reduce((s, i) => s + i.balance, 0);
+    const groupTotalUSD = groupUSD(groupKey, data.items);
     const dim = !fullyChecked && !indeterminate;
 
     return (
@@ -571,7 +604,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
           </div>
           <div className={`flex items-center gap-6 ${dim ? 'opacity-30' : ''}`}>
             <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(groupTotal)}</span>
-            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(groupTotal)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSDAmount(groupTotalUSD)}</span>
           </div>
         </div>
 
@@ -617,6 +650,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
     const groupTotal = items
       .filter(i => isItemChecked(groupKey, i.name))
       .reduce((s, i) => s + i.balance, 0);
+    const groupTotalUSD = groupUSD(groupKey, items);
     const dim = !fullyChecked && !indeterminate;
 
     return (
@@ -642,7 +676,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
           </div>
           <div className={`flex items-center gap-6 ${dim ? 'opacity-30' : ''}`}>
             <span className="font-bold text-gray-900 w-32 text-right">{formatCurrency(groupTotal)}</span>
-            <span className="font-bold text-gray-900 w-28 text-right">{formatUSD(groupTotal)}</span>
+            <span className="font-bold text-gray-900 w-28 text-right">{formatUSDAmount(groupTotalUSD)}</span>
           </div>
         </div>
 
@@ -1008,7 +1042,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                   <span className="font-bold text-emerald-800">TOTAL ASSETS</span>
                   <div className="flex items-center gap-6">
                     <span className="font-bold text-emerald-800 text-xl w-32 text-right">{formatCurrency(checkedTotals.totalAssets)}</span>
-                    <span className="font-bold text-emerald-800 text-xl w-28 text-right">{formatUSD(checkedTotals.totalAssets)}</span>
+                    <span className="font-bold text-emerald-800 text-xl w-28 text-right">{formatUSDAmount(checkedTotals.totalAssetsUSD)}</span>
                   </div>
                 </div>
               </div>
@@ -1032,7 +1066,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                   <span className="font-bold text-red-800">TOTAL LIABILITIES</span>
                   <div className="flex items-center gap-6">
                     <span className="font-bold text-red-800 text-xl w-32 text-right">{formatCurrency(checkedTotals.totalLiabilities)}</span>
-                    <span className="font-bold text-red-800 text-xl w-28 text-right">{formatUSD(checkedTotals.totalLiabilities)}</span>
+                    <span className="font-bold text-red-800 text-xl w-28 text-right">{formatUSDAmount(checkedTotals.totalLiabilitiesUSD)}</span>
                   </div>
                 </div>
               </div>
@@ -1057,7 +1091,7 @@ const BalanceSheet = ({ transactions, accounts, onBack }) => {
                     {formatCurrency(checkedTotals.netWorth)}
                   </span>
                   <span className="text-white text-2xl font-bold w-32 text-right">
-                    {formatUSD(checkedTotals.netWorth)}
+                    {formatUSDAmount(checkedTotals.netWorthUSD)}
                   </span>
                 </div>
               </div>
