@@ -485,7 +485,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       
       for (let i = 0; i < newSplits.length; i++) {
         const s = newSplits[i];
-        if (Number(s.amount) <= 0) {
+        if (s.amount === '' || Number(s.amount) < 0) {
           toast.error(`Split #${i + 1}: Invalid amount`);
           return;
         }
