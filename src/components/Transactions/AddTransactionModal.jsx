@@ -242,7 +242,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           setActiveTab(editTransaction.splitType || 'expense');
           // Ensure all splits have required fields
           const loadedSplits = (editTransaction.splits || []).map(s => ({
-            amount: s.amount || '',
+            amount: s.amount != null ? String(s.amount) : '',
             category: s.category || '',
             loan: s.loan || '',
             memo: s.memo || '',
@@ -594,6 +594,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
         // If duplicating, always create new (addDoc), otherwise update or add based on editTransaction
         if (editTransaction && !isDuplicating) {
+          // Clear leftover single-transaction fields so a doc converted from a
+          // regular transaction doesn't keep matching by its old category/amount
+          transactionData.category = null;
+          transactionData.amount = null;
+          transactionData.memo = null;
+          transactionData.isLoan = false;
+          transactionData.loan = null;
+          transactionData.spendingType = null;
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -655,6 +663,11 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
 
         // If duplicating, always create new (addDoc), otherwise update or add based on editTransaction
         if (editTransaction && !isDuplicating) {
+          // Clear leftover split fields when a split was converted back to a
+          // regular transaction
+          transactionData.splits = null;
+          transactionData.totalAmount = null;
+          transactionData.splitType = null;
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);

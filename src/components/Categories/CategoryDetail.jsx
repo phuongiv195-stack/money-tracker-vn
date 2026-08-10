@@ -39,12 +39,9 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
     transactions.forEach(t => {
       if (!t.date || !t.date.startsWith(monthStr)) return;
       
-      // Regular transaction with this category
-      if (t.category === category.name) {
-        result.push(t);
-      }
-      
       // Split transaction - check if any split has this category
+      // (checked first: a doc converted from a regular transaction may still
+      // carry its old top-level category, which must not count a second time)
       if (t.type === 'split' && t.splits) {
         const hasCategoryInSplit = t.splits.some(s => s.category === category.name);
         if (hasCategoryInSplit) {
@@ -54,6 +51,9 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
             isSplitTransaction: true
           });
         }
+      } else if (t.category === category.name) {
+        // Regular transaction with this category
+        result.push(t);
       }
     });
     
@@ -230,7 +230,8 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
       </div>
 
       {/* TRANSACTION LIST */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="max-w-4xl mx-auto space-y-4">
         {Object.keys(groupedHistory).length === 0 ? (
           <div className="text-center text-gray-400 mt-10">No transactions this month</div>
         ) : (
@@ -298,6 +299,7 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
             </div>
           ))
         )}
+        </div>
       </div>
 
       {/* FAB Add Transaction Button */}

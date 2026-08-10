@@ -4,6 +4,11 @@ Personal Finance Tracking App - Mobile-first PWA
 
 ## 📝 Changelog
 
+### 10 August 2026
+- **Category detail – duplicate split rows:** a transaction converted from regular to split kept its old top-level `category` field, so the category detail list counted it twice. The list now treats split and regular matching as mutually exclusive, and saving an edit clears leftover fields from the old shape (both directions regular ↔ split).
+- **Edit split with a 0 line:** opening Edit on a split whose line is 0 loaded that amount as blank, so Save was blocked with "Invalid amount" until the user retyped it. Zero amounts now load as "0".
+- **Category detail – narrower list:** the transaction list is now centered with the same `max-w-4xl` width as Balance Sheet / Payee Report instead of stretching full-screen.
+
 ### 20 July 2026
 - **Split transactions – allow 0 amounts:** split lines can now have a 0 value (previously "Invalid amount" blocked saving). Blank amounts and negative values are still rejected, and a 0 remaining amount on the last (auto-filled) line is now valid.
 
