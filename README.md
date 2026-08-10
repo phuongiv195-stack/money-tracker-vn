@@ -5,6 +5,8 @@ Personal Finance Tracking App - Mobile-first PWA
 ## 📝 Changelog
 
 ### 10 August 2026
+- **Account & Loan detail – narrower list:** transaction lists in bank account detail and loan detail are now centered at `max-w-4xl`, same as category detail.
+- **Profit & Loss – period no longer resets:** the selected date range (e.g. Last month, including custom from/to) now survives the report unmounting when the window width crosses the 1080px desktop breakpoint (e.g. dragging between monitors); it no longer snaps back to This year.
 - **Category detail – sort toggle:** new button in the header (right side) that flips the transaction list between "Newest ↓" (default, newest → oldest) and "Oldest ↑" (oldest → newest) within the selected month. Category detail only.
 - **Category detail – duplicate split rows:** a transaction converted from regular to split kept its old top-level `category` field, so the category detail list counted it twice. The list now treats split and regular matching as mutually exclusive, and saving an edit clears leftover fields from the old shape (both directions regular ↔ split).
 - **Edit split with a 0 line:** opening Edit on a split whose line is 0 loaded that amount as blank, so Save was blocked with "Invalid amount" until the user retyped it. Zero amounts now load as "0".

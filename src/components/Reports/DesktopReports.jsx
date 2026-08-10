@@ -10,11 +10,25 @@ const DesktopReports = ({ onBack }) => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // Filters
-  const [dateRange, setDateRange] = useState('this-year');
-  const [customRange, setCustomRange] = useState({ from: '', to: '' });
+  // Filters — date range survives unmount/remount (crossing the 1080px
+  // desktop breakpoint, e.g. dragging the window between monitors)
+  const [dateRange, setDateRange] = useState(() => sessionStorage.getItem('plDateRange') || 'this-year');
+  const [customRange, setCustomRange] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('plCustomRange')) || { from: '', to: '' };
+    } catch {
+      return { from: '', to: '' };
+    }
+  });
   const [wantNeedFilter, setWantNeedFilter] = useState('all'); // 'all' | 'want' | 'need'
   const [reportType, setReportType] = useState('income-expense'); // 'income-expense' | 'category-detail'
+
+  useEffect(() => {
+    sessionStorage.setItem('plDateRange', dateRange);
+  }, [dateRange]);
+  useEffect(() => {
+    sessionStorage.setItem('plCustomRange', JSON.stringify(customRange));
+  }, [customRange]);
   
   // Expand/collapse state
   const [expandedGroups, setExpandedGroups] = useState({});

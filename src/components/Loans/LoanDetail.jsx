@@ -732,7 +732,7 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
       )}
 
       {/* Transaction History */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-4xl mx-auto w-full">
         {/* Uncleared Filter Banner */}
         {showUnclearedOnly && (
           <div className="bg-amber-100 border border-amber-300 rounded-lg p-3">
