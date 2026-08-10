@@ -14,6 +14,7 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [sortOrder, setSortOrder] = useState('desc'); // 'desc' newest first, 'asc' oldest first
 
   // Register back handler for hardware back button
   useBackHandler(true, isSelectMode ? () => { setIsSelectMode(false); setSelectedItems(new Set()); } : onClose);
@@ -57,8 +58,12 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
       }
     });
     
-    return result.sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [category, transactions, currentDate]);
+    return result.sort((a, b) =>
+      sortOrder === 'desc'
+        ? new Date(b.date) - new Date(a.date)
+        : new Date(a.date) - new Date(b.date)
+    );
+  }, [category, transactions, currentDate, sortOrder]);
 
   // Calculate total from history
   const totalAmount = useMemo(() => {
@@ -214,7 +219,13 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
         <div className="bg-white p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">
           <button onClick={onClose} className="text-gray-600 text-lg p-2 -ml-2">← Back</button>
           <div className="font-bold text-lg">{category.name}</div>
-          <div className="w-10"></div>
+          <button
+            onClick={() => setSortOrder(o => o === 'desc' ? 'asc' : 'desc')}
+            className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 active:bg-gray-100 whitespace-nowrap"
+            title={sortOrder === 'desc' ? 'Newest first — tap for oldest first' : 'Oldest first — tap for newest first'}
+          >
+            {sortOrder === 'desc' ? 'Newest ↓' : 'Oldest ↑'}
+          </button>
         </div>
       )}
 
