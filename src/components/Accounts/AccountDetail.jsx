@@ -405,6 +405,10 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     } catch (err) { toast.error('Error: ' + err.message); }
   };
 
+  // Virtual split-transfer rows (id `${parentId}-split-transfer-${idx}`) are not real docs —
+  // writing to them fails with "Missing or insufficient permissions". Map to the parent doc id.
+  const realTxIds = (list) => [...new Set(list.map(t => t._realId || t.id))];
+
   // Quick Reconcile - khi user confirm cleared balance đúng
   const handleQuickReconcile = async () => {
     const clearedTrans = accountTransactions.filter(t => t.clearStatus === 'cleared');
@@ -419,7 +423,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     try {
       const batch = writeBatch(db);
       const timestamp = new Date();
-      clearedTrans.forEach(t => batch.update(doc(db, 'transactions', t.id), { clearStatus: 'reconciled', reconciledAt: timestamp }));
+      realTxIds(clearedTrans).forEach(id => batch.update(doc(db, 'transactions', id), { clearStatus: 'reconciled', reconciledAt: timestamp }));
       
       if (clearedValueUpdates.length > 0 && account.valueHistory) {
         const newHistory = account.valueHistory.map(v => 
@@ -475,8 +479,13 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
       // Non-investment: tính tổng cleared transactions
       clearedTrans.forEach(t => {
         let amt = 0;
-        if (t.type === 'transfer') {
+        if (t._isSplitTransfer) {
+          const splitAmt = Math.abs(Number(t._splitAmount) || 0);
+          amt = t._parentSplitType === 'income' ? -splitAmt : splitAmt;
+        } else if (t.type === 'transfer') {
           amt = t.fromAccount === account.name ? -Number(t.amount) : Number(t.amount);
+        } else if (t.type === 'split') {
+          amt = Number(t.totalAmount) || 0;
         } else {
           amt = Number(t.amount) || 0;
         }
@@ -494,7 +503,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     try {
       const batch = writeBatch(db);
       const timestamp = new Date();
-      clearedTrans.forEach(t => batch.update(doc(db, 'transactions', t.id), { clearStatus: 'reconciled', reconciledAt: timestamp }));
+      realTxIds(clearedTrans).forEach(id => batch.update(doc(db, 'transactions', id), { clearStatus: 'reconciled', reconciledAt: timestamp }));
       
       if (clearedValueUpdates.length > 0 && account.valueHistory) {
         const newHistory = account.valueHistory.map(v => 
@@ -537,7 +546,7 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
     
     try {
       const batch = writeBatch(db);
-      toUnlock.forEach(t => batch.update(doc(db, 'transactions', t.id), { clearStatus: 'cleared', reconciledAt: null }));
+      realTxIds(toUnlock).forEach(id => batch.update(doc(db, 'transactions', id), { clearStatus: 'cleared', reconciledAt: null }));
       batch.update(doc(db, 'accounts', account.id), { lastReconcileDate: null, lastReconcileBalance: null });
       await batch.commit();
       toast.success('Unlocked successfully!');
