@@ -5,8 +5,10 @@ import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
+import { useOptionalBankImport } from '../../contexts/BankImportContext';
+import { isUncategorized } from '../../services/bankImport/importer';
 
-const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, prefilledAccount = null, prefilledCategory = null, forceFuture = false }) => {
+const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTransactionProp = null, prefilledAccount = null, prefilledCategory = null, forceFuture = false }) => {
   const toast = useToast();
   const userId = useUserId();
   const { 
@@ -24,6 +26,16 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
     payeeToCategoryMap: cachedPayeeToCategoryMap,
     payeeToAccountMap: cachedPayeeToAccountMap
   } = useData();
+
+  // Bank transactions still waiting for a category are offered at the top of a
+  // new transaction: picking one edits it instead of typing it in again.
+  const bankImport = useOptionalBankImport();
+  const [pickedPending, setPickedPending] = useState(null);
+  const editTransaction = editTransactionProp || pickedPending;
+  const pendingBank = useMemo(() => {
+    if (editTransactionProp || forceFuture || !bankImport) return [];
+    return bankImport.reviewTransactions.filter(t => !prefilledAccount || t.account === prefilledAccount);
+  }, [bankImport, editTransactionProp, forceFuture, prefilledAccount]);
   
   // Duplicate mode - when true, Save creates new transaction instead of updating
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -231,6 +243,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       setShowTagList(false);
       setActiveSplitIndex(null);
       setIsDuplicating(false); // Reset duplicate mode
+      setPickedPending(null);
     }
   }, [isOpen]);
 
@@ -272,7 +285,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           setFormData({
             amount: Math.abs(editTransaction.amount).toString(),
             payee: editTransaction.payee || '',
-            category: editTransaction.category || '',
+            // Bank imports wait in "Uncategorized": make the user pick a real one
+            category: isUncategorized(editTransaction.category) ? '' : (editTransaction.category || ''),
             account: editTransaction.account || accounts[0] || '',
             fromAccount: editTransaction.fromAccount || accounts[0] || '',
             toAccount: editTransaction.toAccount || accounts[1] || accounts[0] || '',
@@ -516,8 +530,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
       }
       setSplits(newSplits);
     } else {
-      // For future transactions with loan
-      if (forceFuture && formData.isLoan) {
+      // Loan instead of category (future transactions, or Pay/Received Loan)
+      if (formData.isLoan && activeTab !== 'transfer') {
         if (!formData.loan) {
           toast.error("Please select loan!");
           return;
@@ -638,17 +652,27 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           transactionData.payee = formData.payee;
           transactionData.account = isFuture ? null : formData.account;
           
-          // For future transactions with loan
-          if (isFuture && formData.isLoan && formData.loan) {
-            transactionData.isLoan = true;
-            transactionData.loan = formData.loan;
-            transactionData.category = null;
+          if (formData.isLoan && formData.loan) {
             // Determine loan type
             const determinedLoanType = loanTypeMap[formData.loan] || 
               (formData.loan.toLowerCase().startsWith('lend to') ? 'lend' : 
                formData.loan.toLowerCase().startsWith('borrow from') ? 'borrow' : null);
             if (determinedLoanType) {
               transactionData.loanType = determinedLoanType;
+            }
+            transactionData.loan = formData.loan;
+            transactionData.category = null;
+            if (isFuture) {
+              // Future transaction with loan: becomes a loan transaction when activated
+              transactionData.isLoan = true;
+            } else {
+              // Pay Loan / Received Loan: same shape as AddLoanTransactionModal
+              transactionData.type = 'loan';
+              transactionData.isLoan = false;
+              transactionData.spendingType = null;
+              if (editTransaction?.type !== 'loan' || isDuplicating) {
+                transactionData.loanClearStatus = 'uncleared';
+              }
             }
           } else {
             transactionData.category = formData.category;
@@ -668,6 +692,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           transactionData.splits = null;
           transactionData.totalAmount = null;
           transactionData.splitType = null;
+          // ...and expense/income fields when it became a transfer, so it no
+          // longer counts toward its old category or account
+          if (activeTab === 'transfer') {
+            transactionData.category = null;
+            transactionData.account = null;
+            transactionData.spendingType = null;
+            transactionData.isLoan = false;
+          }
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -789,6 +821,46 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto flex-1">
+
+          {/* Bank transactions waiting for a category */}
+          {!pickedPending && pendingBank.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="text-sm font-semibold text-amber-800">
+                🏦 {pendingBank.length} bank {pendingBank.length === 1 ? 'transaction' : 'transactions'} waiting
+              </div>
+              <div className="text-xs text-amber-700 mb-1">Already paid through the bank? Tap it instead of typing it again.</div>
+              <div className="max-h-48 overflow-y-auto divide-y divide-amber-100">
+                {pendingBank.map(t => {
+                  const amt = Number(t.amount) || 0;
+                  const [, mm, dd] = (t.date || '').split('-');
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setPickedPending(t)}
+                      className="w-full flex justify-between items-center gap-2 py-2 px-1 text-left rounded hover:bg-amber-100 active:bg-amber-100"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm text-gray-800 truncate">{t.payee || t.bankImport?.description || 'No Payee'}</div>
+                        <div className="text-xs text-gray-500">{dd}/{mm} · {t.account}</div>
+                      </div>
+                      <div className={`text-sm font-semibold whitespace-nowrap ${amt > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
+                        {amt > 0 ? '+' : '-'}{Math.abs(amt).toLocaleString('en-US')}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {pickedPending && (
+            <div className="flex justify-between items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2 px-3 text-sm text-amber-800">
+              <span>🏦 From the bank: choose a category and Save</span>
+              <button type="button" onClick={() => setPickedPending(null)} className="underline whitespace-nowrap">
+                Type new instead
+              </button>
+            </div>
+          )}
           
           {/* Amount + Split Button */}
           <div className="flex items-center gap-2">
@@ -1300,34 +1372,35 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
           {/* Normal Mode - Category/Loan */}
           {!isSplitMode && activeTab !== 'transfer' && (
             <div className="relative">
-              {/* Category/Loan Toggle - Only show for Future transactions (forceFuture) */}
-              {forceFuture && (
-                <div className="flex gap-1 mb-3">
-                  <button
-                    onClick={() => setFormData({...formData, isLoan: false, loan: ''})}
-                    className={`flex-1 py-2 text-sm rounded-lg font-medium ${
-                      !formData.isLoan
-                        ? 'bg-sky-500 text-white'
-                        : 'bg-white text-gray-500 border border-gray-200'
-                    }`}
-                  >
-                    Category
-                  </button>
-                  <button
-                    onClick={() => setFormData({...formData, isLoan: true, category: ''})}
-                    className={`flex-1 py-2 text-sm rounded-lg font-medium ${
-                      formData.isLoan 
-                        ? 'bg-sky-500 text-white'
-                        : 'bg-white text-gray-500 border border-gray-200'
-                    }`}
-                  >
-                    Loan
-                  </button>
-                </div>
-              )}
+              {/* Category/Loan Toggle - "Loan" for future transactions, Pay/Received Loan otherwise */}
+              <div className="flex gap-1 mb-3">
+                <button
+                  onClick={() => setFormData({...formData, isLoan: false, loan: ''})}
+                  className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                    !formData.isLoan
+                      ? 'bg-sky-500 text-white'
+                      : 'bg-white text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  Category
+                </button>
+                <button
+                  onClick={() => {
+                    setFormData({...formData, isLoan: true, category: ''});
+                    if (!forceFuture) setShowLoanPicker(true);
+                  }}
+                  className={`flex-1 py-2 text-sm rounded-lg font-medium ${
+                    formData.isLoan
+                      ? 'bg-sky-500 text-white'
+                      : 'bg-white text-gray-500 border border-gray-200'
+                  }`}
+                >
+                  {forceFuture ? 'Loan' : activeTab === 'expense' ? '🤝 Pay Loan' : '🤝 Received Loan'}
+                </button>
+              </div>
 
-              {/* Category Selector - show when not isLoan OR when not forceFuture */}
-              {(!forceFuture || !formData.isLoan) && (
+              {/* Category Selector */}
+              {!formData.isLoan && (
                 <>
                   <label className="text-xs text-gray-500 uppercase font-semibold">Category</label>
                   <div
@@ -1422,8 +1495,8 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction = null, 
                 </>
               )}
 
-              {/* Loan Selector - show when isLoan AND forceFuture */}
-              {forceFuture && formData.isLoan && (
+              {/* Loan Selector */}
+              {formData.isLoan && (
                 <>
                   <label className="text-xs text-gray-500 uppercase font-semibold">Loan</label>
                   <div

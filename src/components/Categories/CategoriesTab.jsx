@@ -5,10 +5,14 @@ import AddCategoryModal from './AddCategoryModal';
 import EditGroupModal from './EditGroupModal';
 import ReorderCategoriesModal from './ReorderCategoriesModal';
 import ReorderGroupsModal from './ReorderGroupsModal';
+import ReviewInbox from '../BankImport/ReviewInbox';
+import { useBankImport } from '../../contexts/BankImportContext';
 
 const CategoriesTab = () => {
   const { categories, transactions, isLoading } = useData();
-  
+  const { reviewCount } = useBankImport();
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [activeTab, setActiveTab] = useState('expense');
@@ -243,6 +247,18 @@ const CategoriesTab = () => {
         </div>
       </div>
 
+      {reviewCount > 0 && (
+        <div className="px-4 mb-4">
+          <button
+            onClick={() => setIsReviewOpen(true)}
+            className="w-full flex justify-between items-center p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 font-medium hover:bg-amber-100 active:bg-amber-100"
+          >
+            <span>🏦 {reviewCount} bank {reviewCount === 1 ? 'item' : 'items'} to review</span>
+            <span>→</span>
+          </button>
+        </div>
+      )}
+
       <div className="px-4 mb-4">
         <div className="flex items-center gap-2 mb-3">
           <input
@@ -400,6 +416,8 @@ const CategoriesTab = () => {
           onClose={() => setSelectedCategory(null)}
         />
       )}
+
+      {isReviewOpen && <ReviewInbox onClose={() => setIsReviewOpen(false)} />}
 
       <AddCategoryModal
         isOpen={isAddModalOpen}

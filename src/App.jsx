@@ -3,6 +3,7 @@ import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
 import { DataProvider, useData } from './contexts/DataContext';
+import { BankImportProvider } from './contexts/BankImportContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
@@ -218,7 +219,9 @@ function App() {
     <Router future={{ v7_relativeSplatPath: true }}>
       <NavigationProvider>
         <DataProvider>
-          <AppContent />
+          <BankImportProvider>
+            <AppContent />
+          </BankImportProvider>
         </DataProvider>
       </NavigationProvider>
     </Router>

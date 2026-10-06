@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/text"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/subtitle"
+            android:textColor="@color/muted"
+            android:textSize="14sp" />
+
+        <!-- Signed out -->
+        <LinearLayout
+            android:id="@+id/loginSection"
+            style="@style/Card">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/login_title"
+                android:textColor="@color/text"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <EditText
+                android:id="@+id/emailInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:autofillHints="emailAddress"
+                android:hint="@string/email_hint"
+                android:inputType="textEmailAddress" />
+
+            <EditText
+                android:id="@+id/passwordInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autofillHints="password"
+                android:hint="@string/password_hint"
+                android:inputType="textPassword" />
+
+            <Button
+                android:id="@+id/signInButton"
+                style="@style/PrimaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/sign_in" />
+
+            <TextView
+                android:id="@+id/loginMessage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/error"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Signed in -->
+        <LinearLayout
+            android:id="@+id/setupSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout style="@style/Card">
+
+                <LinearLayout style="@style/StatusRow">
+
+                    <TextView
+                        android:id="@+id/accountText"
+                        style="@style/StatusText" />
+
+                    <Button
+                        android:id="@+id/signOutButton"
+                        style="@style/TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/sign_out" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatusRow">
+
+                    <TextView
+                        android:id="@+id/listenerStatus"
+                        style="@style/StatusText" />
+
+                    <Button
+                        android:id="@+id/listenerButton"
+                        style="@style/PrimaryButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/grant_access" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatusRow">
+
+                    <TextView
+                        android:id="@+id/batteryStatus"
+                        style="@style/StatusText" />
+
+                    <Button
+                        android:id="@+id/batteryButton"
+                        style="@style/PrimaryButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/allow" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatusRow">
+
+                    <TextView
+                        android:id="@+id/appsStatus"
+                        style="@style/StatusText" />
+
+                    <Button
+                        android:id="@+id/appsButton"
+                        style="@style/TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/choose_apps" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/testButton"
+                    style="@style/PrimaryButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/send_test" />
+
+                <Button
+                    android:id="@+id/retryButton"
+                    style="@style/TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/retry_now" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/log_title"
+                android:textColor="@color/text"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/logEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/log_empty"
+                android:textColor="@color/muted" />
+
+            <LinearLayout
+                android:id="@+id/logList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

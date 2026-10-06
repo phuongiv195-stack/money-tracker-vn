@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PD Rich Sync</string>
+    <string name="subtitle">Companion of Money Tracker: sends bank notifications to it automatically</string>
+
+    <!-- Sign in -->
+    <string name="login_title">Sign in with your Money Tracker account</string>
+    <string name="email_hint">Email</string>
+    <string name="password_hint">Password</string>
+    <string name="sign_in">Sign in</string>
+    <string name="sign_out">Sign out</string>
+    <string name="signed_in_as">Signed in: %1$s</string>
+    <string name="enter_email_password">Enter email and password</string>
+    <string name="signing_in">Signing in…</string>
+    <string name="no_connection">Can\'t connect, check your network</string>
+    <string name="sign_out_confirm">Sign out? Bank notifications are still recorded on this phone and will be sent when you sign in again.</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Setup -->
+    <string name="grant_access">Grant access</string>
+    <string name="allow">Allow</string>
+    <string name="choose_apps">Choose apps</string>
+    <string name="listener_on">✅ Notification access granted</string>
+    <string name="listener_off">❌ No notification access</string>
+    <string name="battery_ok">✅ Allowed to run in the background</string>
+    <string name="battery_restricted">❌ Battery optimized (may miss transactions)</string>
+    <string name="apps_none">❌ No bank apps selected</string>
+    <string name="apps_listening">✅ Listening to: %1$s</string>
+
+    <!-- Log -->
+    <string name="send_test">Send test</string>
+    <string name="retry_now">Retry now</string>
+    <string name="retrying">Sending…</string>
+    <string name="log_title">Log (newest first)</string>
+    <string name="log_empty">No bank notifications captured yet.</string>
+    <string name="status_sent">✅ Sent</string>
+    <string name="status_pending">⏳ Waiting to send</string>
+    <string name="test_app_name">Test</string>
+    <string name="test_title">Test notification</string>
+    <string name="test_text">Test from %1$s at %2$s</string>
+
+    <!-- Errors -->
+    <string name="err_wrong_credentials">Wrong email or password</string>
+    <string name="err_invalid_email">Invalid email</string>
+    <string name="err_too_many">Too many failed attempts, try again in a few minutes</string>
+    <string name="err_disabled">This account is disabled</string>
+    <string name="err_sign_in_code">Sign-in error: %1$s</string>
+    <string name="err_sign_in_unknown">Unknown sign-in error</string>
+    <string name="err_not_signed_in">Not signed in</string>
+    <string name="err_session_expired">Session expired, please sign in again</string>
+    <string name="err_rules">Firebase refused the write (check Firestore rules)</string>
+    <string name="err_server">Server error %1$d</string>
+    <string name="err_offline">No network, will retry</string>
+
+    <!-- App picker -->
+    <string name="picker_title">Choose bank apps</string>
+    <string name="picker_hint">Only notifications from ticked apps are recorded. From Gmail, only bank emails (Timo, VCB, BV) are kept. Notifications containing an OTP are always ignored.</string>
+    <string name="done">Done</string>
+</resources>

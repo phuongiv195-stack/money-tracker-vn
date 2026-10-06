@@ -4,6 +4,27 @@ Personal Finance Tracking App - Mobile-first PWA
 
 ## 📝 Changelog
 
+### 6 October 2026
+- **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
+  - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
+  - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
+  - New transactions are marked cleared. They go to the new **Uncategorized** / **Uncategorized Income** categories. An amber banner on the Categories tab opens **To review**; tapping a transaction there opens the normal transaction form.
+  - The first time a bank account shows up, To review asks which Money Tracker account it is. The link is saved in `accounts.bankAccountKeys`.
+  - **Remembered categories:** a later transaction with the same sender or recipient gets the category or loan chosen last time.
+  - **Transfers between own accounts** are recognised automatically. The signals are:
+    - a shared bank reference;
+    - the other account's number appearing in the text;
+    - the other bank's name, with the account holder as the sender or recipient.
+
+    This works even when only one side notifies. OCB sends nothing for money going out, so payments from OCB to other people still have to be entered by hand.
+  - **No duplicates:** a transaction that arrives as a notification and an email, or is also typed in by hand, is recorded once.
+  - **Balance check:** the balance in each bank message is compared with Money Tracker's balance at that moment. A difference shows in To review, for example an OCB payment that wasn't entered.
+- **Add Transaction – waiting bank transactions:** a new transaction lists the bank transactions still waiting for a category. Tap one instead of typing it again.
+- **Add Transaction – Pay Loan / Received Loan:** an expense or income can go straight to a loan. It is saved as a loan transaction, the same as from the Loans tab.
+- **Edit transaction → Transfer:** switching to Transfer now clears the old category and account. Before, the transaction kept counting toward its old category.
+- **Firestore rules:** new `bankInbox` collection, owner-only. It is already added in the Firebase Console and recorded in `firestore.rules`.
+- **Optional:** [`apps-script/`](apps-script/README.md) is a Gmail Apps Script that sends bank emails without a phone. It is not needed when PD Rich Sync reads Gmail.
+
 ### 10 August 2026
 - **Account & Loan detail – narrower list:** transaction lists in bank account detail and loan detail are now centered at `max-w-4xl`, same as category detail.
 - **Profit & Loss – period no longer resets:** the selected date range (e.g. Last month, including custom from/to) now survives the report unmounting when the window width crosses the 1080px desktop breakpoint (e.g. dragging between monitors); it no longer snaps back to This year.
