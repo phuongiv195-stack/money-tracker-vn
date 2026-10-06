@@ -666,7 +666,7 @@ const TransactionsTab = () => {
                               }
                               {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
                               {needsReview(t) && (
-                                <span className="text-[10px] font-semibold text-white bg-amber-400 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">! To review</span>
+                                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" title="From the bank, not checked yet" />
                               )}
                               {isUnrealizedGain && (
                                 <span className={`text-xs px-1.5 py-0.5 rounded ml-1 ${isPositive ? 'text-emerald-600 bg-emerald-100' : 'text-red-600 bg-red-100'}`}>

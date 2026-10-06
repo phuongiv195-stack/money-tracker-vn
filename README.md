@@ -38,7 +38,7 @@ Personal Finance Tracking App - Mobile-first PWA
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
   - New transactions start **uncleared** and become cleared once checked. Without a remembered category they go to the new **Uncategorized** / **Uncategorized Income** categories.
-  - **Not checked yet** is shown everywhere: an amber **!** instead of ○/✓ in the account's transaction list, and an amber "! To review" label on the Transactions tab. In the account list, tapping **!** checks and clears the transaction. If it has no category yet, the form opens instead.
+  - **Not checked yet** is shown everywhere: an amber **!** instead of ○/✓ in the account's transaction list, and a small amber dot next to it on the Transactions tab. In the account list, tapping **!** checks and clears the transaction. If it has no category yet, the form opens instead.
   - **Bank review** is on the **Accounts** tab: an amber banner, and a red count on the Accounts tab button. It lists every transaction the app entered, shown like the transaction list (no bank text):
     - tap one to fix it in the normal form; saving it marks it checked and cleared;
     - **✓** when it's right, or **✓ All correct** for all of them (checked and cleared). Transactions still without a category stay until one is chosen.
