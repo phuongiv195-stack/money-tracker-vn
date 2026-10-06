@@ -5,7 +5,7 @@ Personal Finance Tracking App - Mobile-first PWA
 ## 📝 Changelog
 
 ### 6 October 2026
-- **Quick add (new):** a box on the Categories tab where you say (🎤) or type one line, e.g. "25 ngàn rau Street Grocer" → −25,000 · Street Grocer · memo "rau". Tap **Save**, or **Edit** to finish in the normal form.
+- **Quick add by voice (new):** in the Add Transaction form, tap 🎤 (right under the Split button, within thumb reach) and say or type one line, e.g. "25 ngàn rau Street Grocer" → −25,000 · Street Grocer · memo "vegetables". The fields fill in as you speak; check them and tap **Save**.
   - Rule-based, no AI (`src/services/quickAdd/parseQuickAdd.js`).
   - **Amounts:** "25k", "25 ngàn", "1tr2", "1 triệu rưỡi", "25 thousand".
   - **Direction:** "chi/trả/tiêu" for an expense, "nhận/tiền về/thu/lương" for income. Expense is the default.
@@ -14,14 +14,13 @@ Personal Finance Tracking App - Mobile-first PWA
   - **Date:** "hôm qua"/"yesterday".
   - Vietnamese words that differ only by accents are told apart (trả/trà, tiền về/tiền vé, chợ/cho).
   - The mic uses the browser's speech recognition (VI/EN toggle). It needs the HTTPS site; the keyboard mic works anywhere.
-  - App shortcut **Quick add** (long-press the app icon).
   - A quick-added bank payment is matched with its bank notification later instead of being imported twice.
   - **Several amounts in one go:** "rau 15k thịt 50k cá 30k" is saved as one transaction of 95,000. The preview shows 15,000 + 50,000 + 30,000 and the memo keeps the breakdown. When an amount has a unit, a bare small number counts as a quantity ("mua 3 ổ bánh mì 45k" is 45,000).
   - **Learns without AI:**
     - Memo words map to the category they usually end up in, learned from categorized transactions ("rau" → Groceries).
-    - After an **Edit** that picks a different payee, the words speech recognition heard are remembered for that payee, e.g. "trít gờ rô sơ" → Street Grocer. This applies only to phrases of 2+ words that aren't item words. The aliases are stored in `userSettings/{uid}.quickAddAliases`.
-  - **✕ button** clears the box.
-  - **🎤 in the Add Transaction form:** the form's header has a mic. As you speak, the fields fill in: "50k BL Stadium" sets amount, payee and the payee's category; "Vietcombank" sets the account; "memo Dinner with Hien" puts everything after "memo" (or "ghi chú"/"note") into Memo.
+    - When the payee is changed before saving, the words speech recognition heard are remembered for that payee, e.g. "trít gờ rô sơ" → Street Grocer. This applies only to phrases of 2+ words that aren't item words. The aliases are stored in `userSettings/{uid}.quickAddAliases`.
+  - **✕ button** clears what was said.
+  - As you speak, the fields fill in: "50k BL Stadium" sets amount, payee and the payee's category; "Vietcombank" sets the account; "memo Dinner with Hien" puts everything after "memo" (or "ghi chú"/"note") into Memo.
     - Only what was said changes. The tab stays unless a direction word is said, and so does the account unless one is named.
     - Tapping 🎤 again **adds** to what was already said.
     - Shared hooks: `useSpeech`, `useQuickAddLearning`.
@@ -34,12 +33,13 @@ Personal Finance Tracking App - Mobile-first PWA
     2. **Market food** ("rau", "rau thịt", several amounts): the category's usual payee, e.g. Street Grocer for Grocery. A payee is "usual" when it was used 3+ times in the last 120 days and twice as often as any other.
     3. Otherwise only a payee that these words were saved with before, in the same category ("cá" → Fish Stand). If nothing fits, Payee stays blank.
   - A name after "với"/"with" is a companion, not the payee ("ăn tối với Hiền" → memo "dinner with Hiền").
+  - The first version's Quick add box on the Categories tab, and its app shortcut, were removed: the form's mic does the same.
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
   - New transactions are marked cleared. They go to the new **Uncategorized** / **Uncategorized Income** categories. An amber banner on the Categories tab opens **To review**; tapping a transaction there opens the normal transaction form.
   - The first time a bank account shows up, To review asks which Money Tracker account it is. The link is saved in `accounts.bankAccountKeys`.
-  - **Remembered categories:** a later transaction with the same sender or recipient gets the category or loan chosen last time.
+  - **Remembered categories:** a later transaction with the same sender or recipient gets the category or loan chosen last time. The same name counts even from another account number or bank; the account holders' own names don't (those are transfers).
   - **Transfers between own accounts** are recognised automatically. The signals are:
     - a shared bank reference;
     - the other account's number appearing in the text;

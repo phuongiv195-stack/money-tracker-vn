@@ -36,13 +36,6 @@ export default defineConfig({
         ],
         shortcuts: [
           {
-            name: 'Quick add',
-            short_name: 'Quick add',
-            description: 'Say or type a transaction',
-            url: '/?action=quick-add',
-            icons: [{ src: '/icon-96.png', sizes: '96x96', type: 'image/png' }]
-          },
-          {
             name: 'Add Transaction',
             short_name: 'Add',
             description: 'Quickly add a new transaction',

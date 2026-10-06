@@ -89,14 +89,26 @@ function findSameMovement(pool, parsed, accountName) {
   return null;
 }
 
+// The other party's name on an imported transaction. Imports from before
+// counterpartyName was stored: read it from the bank text.
+const counterpartyNameOfImport = (t) => t.bankImport.counterpartyName
+  || counterpartyNameOf(t.bankImport.description || t.memo, originalAmount(t));
+
 // What the user last decided for this sender/recipient, money moving the same
-// way: { category } or { loan, loanType }. If that decision was a transfer or a
-// split, there is nothing to repeat.
-function learnedTarget(pool, categories, counterpartyKey, amount) {
-  if (!counterpartyKey) return null;
+// way: { category } or { loan, loanType }. The same account number, or the
+// same name (from another account or bank) counts as the same person, except
+// the account holders' own names: those are transfers between own accounts.
+// If that decision was a transfer or a split, there is nothing to repeat.
+function learnedTarget(pool, categories, parsed, ownNames) {
+  const { counterpartyKey, amount } = parsed;
+  const counterpartyName = ownNames.has(parsed.counterpartyName) ? '' : parsed.counterpartyName;
+  if (!counterpartyKey && !counterpartyName) return null;
   let latest = null;
   for (const t of pool) {
-    if (t.bankImport?.counterpartyKey !== counterpartyKey) continue;
+    if (!t.bankImport) continue;
+    const samePerson = (counterpartyKey && t.bankImport.counterpartyKey === counterpartyKey)
+      || (counterpartyName && counterpartyNameOfImport(t) === counterpartyName);
+    if (!samePerson) continue;
     if (Math.sign(originalAmount(t)) !== Math.sign(amount)) continue;
     if ((t.type === 'expense' || t.type === 'income') && isUncategorized(t.category)) continue; // undecided
     if (!latest || (t.bankImport.at || 0) > (latest.bankImport.at || 0)) latest = t;
@@ -129,9 +141,7 @@ const movementOf = (t) => ({
   refTokens: t.bankImport.refTokens || [],
   description: t.bankImport.description || t.memo || '',
   last4: (t.bankImport.accountKey || '').split(':')[1],
-  // Imports from before counterpartyName was stored: read it from the bank text
-  cpName: t.bankImport.counterpartyName
-    || counterpartyNameOf(t.bankImport.description || t.memo, originalAmount(t)),
+  cpName: counterpartyNameOfImport(t),
 });
 
 // How each bank is named in transfer descriptions ("...tai OCB", "chuyen tien tu Timo").
@@ -470,7 +480,7 @@ export async function processInbox({ userId, items, accounts, transactions, cate
     // Only one side notified, but it names another own account
     const otherAccount = otherOwnAccount(movementOfParsed(parsed, account.name), own);
     const type = parsed.amount < 0 ? 'expense' : 'income';
-    const learned = otherAccount ? null : learnedTarget(pool, categories, parsed.counterpartyKey, parsed.amount);
+    const learned = otherAccount ? null : learnedTarget(pool, categories, parsed, own.names);
     if (!otherAccount && !learned && !categoriesReady) {
       await ensureUncategorizedCategories(userId, categories);
       categoriesReady = true;

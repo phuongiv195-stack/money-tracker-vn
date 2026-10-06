@@ -4,7 +4,6 @@ import { useAuth } from './contexts/AuthContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
 import { DataProvider, useData } from './contexts/DataContext';
 import { BankImportProvider } from './contexts/BankImportContext';
-import { QUICK_ADD_FOCUS_KEY } from './components/QuickAdd/QuickAddBar';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
@@ -42,20 +41,11 @@ function AppContent() {
     const urlParams = new URLSearchParams(window.location.search);
     const action = urlParams.get('action');
     
-    if (action === 'add-transaction') {
+    // 'quick-add': the old Quick add shortcut; voice now lives in the Add Transaction form
+    if (action === 'add-transaction' || action === 'quick-add') {
       // Open Add Transaction modal immediately
       setIsModalOpen(true);
       // Clean up URL without reload
-      window.history.replaceState({}, '', '/');
-    } else if (action === 'quick-add') {
-      // Quick add lives on the Categories tab; it focuses itself when it sees this flag
-      try {
-        localStorage.setItem(QUICK_ADD_FOCUS_KEY, '1');
-      } catch {
-        // without storage the bar just isn't focused
-      }
-      setActiveTab('categories');
-      window.dispatchEvent(new Event(QUICK_ADD_FOCUS_KEY));
       window.history.replaceState({}, '', '/');
     }
   }, []);

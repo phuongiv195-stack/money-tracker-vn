@@ -826,15 +826,6 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         <div className="flex justify-between items-center p-4 border-b shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-gray-500 text-lg p-2 -ml-2">✕</button>
-            <button
-              onClick={startVoice}
-              className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${
-                speech.listening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              }`}
-              title="Say it: amount, payee, account, memo …"
-            >
-              🎤
-            </button>
             {/* Duplicate button - only show when editing and not already duplicating */}
             {editTransaction && !isDuplicating && (
               <button 
@@ -1018,19 +1009,32 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
               )}
             </div>
             
-            {activeTab !== 'transfer' && (
+            {/* Split, with the mic right under it (within thumb reach) */}
+            <div className="flex flex-col gap-2">
+              {activeTab !== 'transfer' && (
+                <button
+                  onClick={isSplitMode ? disableSplitMode : enableSplitMode}
+                  className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
+                    isSplitMode
+                      ? 'bg-sky-500 text-white'
+                      : 'bg-sky-50 text-sky-600 border border-sky-200 hover:bg-sky-100'
+                  }`}
+                  title={isSplitMode ? 'Cancel Split' : 'Split Transaction'}
+                >
+                  <SplitIcon />
+                </button>
+              )}
               <button
-                onClick={isSplitMode ? disableSplitMode : enableSplitMode}
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
-                  isSplitMode 
-                    ? 'bg-sky-500 text-white'
-                    : 'bg-sky-50 text-sky-600 border border-sky-200 hover:bg-sky-100'
+                type="button"
+                onClick={startVoice}
+                className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-colors ${
+                  speech.listening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
                 }`}
-                title={isSplitMode ? 'Cancel Split' : 'Split Transaction'}
+                title="Say it: amount, payee, account, memo …"
               >
-                <SplitIcon />
+                🎤
               </button>
-            )}
+            </div>
           </div>
 
           {/* Payee */}

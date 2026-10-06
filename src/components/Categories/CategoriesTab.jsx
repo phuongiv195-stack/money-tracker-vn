@@ -6,7 +6,6 @@ import EditGroupModal from './EditGroupModal';
 import ReorderCategoriesModal from './ReorderCategoriesModal';
 import ReorderGroupsModal from './ReorderGroupsModal';
 import ReviewInbox from '../BankImport/ReviewInbox';
-import QuickAddBar from '../QuickAdd/QuickAddBar';
 import { useBankImport } from '../../contexts/BankImportContext';
 
 const CategoriesTab = () => {
@@ -247,8 +246,6 @@ const CategoriesTab = () => {
           </span>
         </div>
       </div>
-
-      <QuickAddBar />
 
       {reviewCount > 0 && (
         <div className="px-4 mb-4">
