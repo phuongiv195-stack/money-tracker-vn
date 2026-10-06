@@ -11,6 +11,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       workbox: {
         cleanupOutdatedCaches: true,
+        // Bank review notifications (public/sw-review-notifications.js)
+        importScripts: ['sw-review-notifications.js'],
         skipWaiting: true,
         clientsClaim: true,
       },

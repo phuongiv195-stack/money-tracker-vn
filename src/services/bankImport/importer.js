@@ -228,7 +228,12 @@ function namedOwnAccount(description, numbers, accountName) {
 
 // Imported, and nobody has decided what it is yet (so it may become a transfer).
 const isUndecidedImport = (t) => t.bankImport && (t.type === 'expense' || t.type === 'income')
-  && (isUncategorized(t.category) || t.bankImport.autoCategorized) && t.clearStatus !== 'reconciled';
+  && (isUncategorized(t.category) || (t.bankImport.autoCategorized && !t.bankImport.reviewed))
+  && t.clearStatus !== 'reconciled';
+
+// Entered by the app and not yet looked at by the user. Typed-in transactions
+// the bank details were attached to (matched) were entered by the user.
+export const needsReview = (t) => Boolean(t.bankImport && !t.bankImport.reviewed && !t.bankImport.matched);
 
 // The other side of a transfer between own accounts, among imported transactions.
 function findTransferPair(pool, parsed, accountName, own) {
@@ -639,6 +644,15 @@ export async function mergeTypedDuplicates(transactions) {
       clearStatus: typed.clearStatus === 'reconciled' ? 'reconciled' : 'cleared',
     });
     batch.delete(doc(db, 'transactions', imported.id));
+    await batch.commit();
+  }
+}
+
+// The user checked these imported transactions: they leave To review.
+export async function markReviewed(transactionIds) {
+  for (let i = 0; i < transactionIds.length; i += 500) {
+    const batch = writeBatch(db);
+    transactionIds.slice(i, i + 500).forEach(id => batch.update(doc(db, 'transactions', id), { 'bankImport.reviewed': true }));
     await batch.commit();
   }
 }

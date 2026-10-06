@@ -3,10 +3,11 @@ import { BrowserRouter as Router } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
 import { DataProvider, useData } from './contexts/DataContext';
-import { BankImportProvider } from './contexts/BankImportContext';
+import { BankImportProvider, useBankImport } from './contexts/BankImportContext';
 import Login from './pages/Login';
 import CategoriesTab from './components/Categories/CategoriesTab';
 import AddTransactionModal from './components/Transactions/AddTransactionModal';
+import ReviewInbox from './components/BankImport/ReviewInbox';
 
 // Lazy load tabs that aren't shown on initial load
 const TransactionsTab = lazy(() => import('./components/Transactions/TransactionsTab'));
@@ -35,6 +36,13 @@ function AppContent() {
     return saved || 'categories';
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const { reviewCount } = useBankImport();
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  // Bank review lives on the Accounts tab
+  const openReview = useCallback(() => {
+    setActiveTab('accounts');
+    setIsReviewOpen(true);
+  }, []);
 
   // Check URL for PWA shortcut action (Add Transaction)
   useEffect(() => {
@@ -47,8 +55,12 @@ function AppContent() {
       setIsModalOpen(true);
       // Clean up URL without reload
       window.history.replaceState({}, '', '/');
+    } else if (action === 'review') {
+      // Tapped a bank review notification
+      openReview();
+      window.history.replaceState({}, '', '/');
     }
-  }, []);
+  }, [openReview]);
 
   // Save activeTab to localStorage when it changes
   useEffect(() => {
@@ -63,12 +75,20 @@ function AppContent() {
     window.addEventListener('openSettings', handleOpenSettings);
     window.addEventListener('closeSettings', handleCloseSettings);
     window.addEventListener('openLoans', handleOpenLoans);
+    window.addEventListener('openBankReview', openReview);
+    // A bank review notification tapped while the app was already open
+    const handleWorkerMessage = (event) => {
+      if (event.data?.type === 'open-bank-review') openReview();
+    };
+    navigator.serviceWorker?.addEventListener('message', handleWorkerMessage);
     return () => {
       window.removeEventListener('openSettings', handleOpenSettings);
       window.removeEventListener('closeSettings', handleCloseSettings);
       window.removeEventListener('openLoans', handleOpenLoans);
+      window.removeEventListener('openBankReview', openReview);
+      navigator.serviceWorker?.removeEventListener('message', handleWorkerMessage);
     };
-  }, []);
+  }, [openReview]);
 
   // Register back handler để về Categories khi không ở Categories
   const backToCategories = useCallback(() => {
@@ -169,6 +189,7 @@ function AppContent() {
   onClick={() => setActiveTab('accounts')}
   icon="/icons/acc.png" 
   label="Accounts" 
+  badge={reviewCount}
 />
 <NavButton 
   active={activeTab === 'loans'} 
@@ -185,6 +206,8 @@ function AppContent() {
         </div>
       </nav>
 
+      {isReviewOpen && <ReviewInbox onClose={() => setIsReviewOpen(false)} />}
+
       {/* Modal */}
       <AddTransactionModal 
         isOpen={isModalOpen} 
@@ -197,12 +220,17 @@ function AppContent() {
   );
 }
 
-const NavButton = ({ active, onClick, icon, label }) => (
+const NavButton = ({ active, onClick, icon, label, badge = 0 }) => (
   <button 
     onClick={onClick}
     className="flex-1 py-2 flex flex-col items-center justify-center transition-all"
   >
-    <div className={`p-2 rounded-xl transition-all ${active ? 'bg-emerald-100' : ''}`}>
+    <div className={`relative p-2 rounded-xl transition-all ${active ? 'bg-emerald-100' : ''}`}>
+      {badge > 0 && (
+        <span className="absolute -top-0.5 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
       <img 
         src={icon} 
         alt={label} 

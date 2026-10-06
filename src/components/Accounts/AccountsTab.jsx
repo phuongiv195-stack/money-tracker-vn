@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useData } from '../../contexts/DataContext';
+import { useBankImport } from '../../contexts/BankImportContext';
 import AddAccountModal from './AddAccountModal';
 import AccountDetail from './AccountDetail';
 import ReorderAccountsModal from './ReorderAccountsModal';
@@ -10,6 +11,7 @@ import { useToast } from '../Toast/ToastProvider';
 const AccountsTab = () => {
   const toast = useToast();
   const { accounts, transactions, accountBalances, isLoading, hiddenAccounts, setHiddenAccounts } = useData();
+  const { reviewCount } = useBankImport();
   
   const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -298,6 +300,18 @@ const AccountsTab = () => {
           </button>
         </div>
       </div>
+
+      {reviewCount > 0 && (
+        <div className="px-4 mb-4">
+          <button
+            onClick={() => window.dispatchEvent(new Event('openBankReview'))}
+            className="w-full flex justify-between items-center p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 font-medium hover:bg-amber-100 active:bg-amber-100"
+          >
+            <span>🏦 {reviewCount} bank {reviewCount === 1 ? 'item' : 'items'} to review</span>
+            <span>→</span>
+          </button>
+        </div>
+      )}
 
       {/* Account Groups */}
       <div className="px-4 space-y-6">

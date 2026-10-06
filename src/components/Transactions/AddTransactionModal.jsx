@@ -40,7 +40,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
   const editTransaction = editTransactionProp || pickedPending;
   const pendingBank = useMemo(() => {
     if (editTransactionProp || forceFuture || !bankImport) return [];
-    return bankImport.reviewTransactions.filter(t => !prefilledAccount || t.account === prefilledAccount);
+    return bankImport.waitingTransactions.filter(t => !prefilledAccount || t.account === prefilledAccount);
   }, [bankImport, editTransactionProp, forceFuture, prefilledAccount]);
   
   // Voice: say "50k BL Stadium Vietcombank memo Dinner with Hien" and the
@@ -636,6 +636,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
           transactionData.isLoan = false;
           transactionData.loan = null;
           transactionData.spendingType = null;
+          if (editTransaction.bankImport) transactionData['bankImport.reviewed'] = true; // checked: leaves To review
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -721,6 +722,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
             transactionData.spendingType = null;
             transactionData.isLoan = false;
           }
+          if (editTransaction.bankImport) transactionData['bankImport.reviewed'] = true; // checked: leaves To review
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);

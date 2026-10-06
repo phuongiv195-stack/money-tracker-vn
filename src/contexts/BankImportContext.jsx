@@ -4,9 +4,11 @@ import { db } from '../services/firebase';
 import { useUserId } from './AuthContext';
 import { useData } from './DataContext';
 import {
-  processInbox, isUncategorized, linkBankAccount, dismissInboxItem, mergeTypedDuplicates, pairImportedTransfers,
+  processInbox, isUncategorized, needsReview, markReviewed, linkBankAccount, dismissInboxItem, mergeTypedDuplicates,
+  pairImportedTransfers,
 } from '../services/bankImport/importer';
 import { findBalanceMismatches } from '../services/bankImport/balanceCheck';
+import useReviewBadge from '../hooks/useReviewBadge';
 
 const DISMISSED_KEY = 'bankBalanceDismissed';
 
@@ -95,15 +97,22 @@ export const BankImportProvider = ({ children }) => {
     });
   }, []);
 
+  // To review: everything the app entered that the user hasn't checked yet,
+  // plus anything still without a category (newest first).
   const reviewTransactions = useMemo(() => {
     return transactions
-      .filter(t => t.type !== 'transfer' && isUncategorized(t.category))
+      .filter(t => needsReview(t) || (t.type !== 'transfer' && isUncategorized(t.category)))
       .sort((a, b) => {
         const dateCompare = (b.date || '').localeCompare(a.date || '');
         if (dateCompare !== 0) return dateCompare;
         return (b.bankImport?.at || 0) - (a.bankImport?.at || 0);
       });
   }, [transactions]);
+  // Still waiting for a category (offered in the + form instead of typing them again)
+  const waitingTransactions = useMemo(
+    () => reviewTransactions.filter(t => t.type !== 'transfer' && isUncategorized(t.category)),
+    [reviewTransactions]
+  );
 
   // One entry per unlinked bank account, e.g. { accountKey: 'VCB:5678', bank: 'VCB', count: 2 }
   const unlinkedAccounts = useMemo(() => {
@@ -122,17 +131,26 @@ export const BankImportProvider = ({ children }) => {
     return Object.values(byKey);
   }, [pending.needsAccount]);
 
+  const reviewCount = reviewTransactions.length + pending.needsAccount.length + pending.unrecognized.length
+    + balanceMismatches.length;
+  useReviewBadge(reviewCount, reviewTransactions, {
+    unlinked: unlinkedAccounts.length,
+    unrecognized: pending.unrecognized.length,
+    mismatches: balanceMismatches.length,
+  });
+
   const value = useMemo(() => ({
     reviewTransactions,
+    waitingTransactions,
     unlinkedAccounts,
     unrecognized: pending.unrecognized,
     balanceMismatches,
-    reviewCount: reviewTransactions.length + pending.needsAccount.length + pending.unrecognized.length
-      + balanceMismatches.length,
+    reviewCount,
+    markReviewed,
     linkAccount: linkBankAccount,
     dismissItem: dismissInboxItem,
     dismissMismatch,
-  }), [reviewTransactions, unlinkedAccounts, pending, balanceMismatches, dismissMismatch]);
+  }), [reviewTransactions, waitingTransactions, unlinkedAccounts, pending, balanceMismatches, reviewCount, dismissMismatch]);
 
   return (
     <BankImportContext.Provider value={value}>
