@@ -37,10 +37,11 @@ Personal Finance Tracking App - Mobile-first PWA
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
-  - New transactions are marked cleared. They go to the new **Uncategorized** / **Uncategorized Income** categories.
+  - New transactions start **uncleared** and become cleared once checked. Without a remembered category they go to the new **Uncategorized** / **Uncategorized Income** categories.
+  - **Not checked yet** is shown everywhere: an amber **!** instead of ○/✓ in the account's transaction list, and an amber "! To review" label on the Transactions tab. In the account list, tapping **!** checks and clears the transaction. If it has no category yet, the form opens instead.
   - **Bank review** is on the **Accounts** tab: an amber banner, and a red count on the Accounts tab button. It lists every transaction the app entered, shown like the transaction list (no bank text):
-    - tap one to fix it in the normal form; saving it marks it checked;
-    - **✓** when it's right, or **✓ All correct** for all of them. Transactions still without a category stay until one is chosen.
+    - tap one to fix it in the normal form; saving it marks it checked and cleared;
+    - **✓** when it's right, or **✓ All correct** for all of them (checked and cleared). Transactions still without a category stay until one is chosen.
     - Checked transactions are flagged `bankImport.reviewed`. Typed-in transactions the bank details were attached to count as checked.
     - Bank messages that couldn't be read are folded away under "not read as a transaction".
   - **Count outside the app:** on desktop Chrome/Edge the app icon shows the count. On a phone, switch on 🔔 in Bank review (per device). While the app is in the background, each transaction to review is then a silent notification, so the phone shows the number on the app icon. Opening the app removes them, and tapping one opens Bank review (`public/sw-review-notifications.js`, `src/hooks/useReviewBadge.js`).

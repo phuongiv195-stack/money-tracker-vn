@@ -4,6 +4,7 @@ import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import AddTransactionModal from './AddTransactionModal';
+import { needsReview } from '../../services/bankImport/importer';
 
 const TransactionsTab = () => {
   const userId = useUserId();
@@ -664,6 +665,9 @@ const TransactionsTab = () => {
                                     : (t.payee || 'No Payee')
                               }
                               {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
+                              {needsReview(t) && (
+                                <span className="text-[10px] font-semibold text-white bg-amber-400 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">! To review</span>
+                              )}
                               {isUnrealizedGain && (
                                 <span className={`text-xs px-1.5 py-0.5 rounded ml-1 ${isPositive ? 'text-emerald-600 bg-emerald-100' : 'text-red-600 bg-red-100'}`}>
                                   {isPositive ? '📈 Gain' : '📉 Loss'}

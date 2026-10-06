@@ -502,7 +502,7 @@ export async function processInbox({ userId, items, accounts, transactions, cate
       tags: null,
       isFuture: false,
       createdAt: new Date(parsed.at), // keeps same-day ordering by bank time
-      clearStatus: 'cleared', // the bank already confirmed it
+      clearStatus: 'uncleared', // cleared once the user has checked it (Bank review)
       bankImport: bankImportFor(parsed, item, { autoCategorized: Boolean(learned) }),
     };
     if (otherAccount) {
@@ -648,11 +648,18 @@ export async function mergeTypedDuplicates(transactions) {
   }
 }
 
-// The user checked these imported transactions: they leave To review.
-export async function markReviewed(transactionIds) {
-  for (let i = 0; i < transactionIds.length; i += 500) {
+// What saving a checked imported transaction writes: it leaves To review, and
+// it is cleared now (the bank confirmed it) unless already reconciled.
+export const reviewedFields = (t) => ({
+  'bankImport.reviewed': true,
+  ...(t.clearStatus === 'reconciled' ? {} : { clearStatus: 'cleared' }),
+});
+
+// The user checked these imported transactions.
+export async function markReviewed(transactions) {
+  for (let i = 0; i < transactions.length; i += 500) {
     const batch = writeBatch(db);
-    transactionIds.slice(i, i + 500).forEach(id => batch.update(doc(db, 'transactions', id), { 'bankImport.reviewed': true }));
+    transactions.slice(i, i + 500).forEach(t => batch.update(doc(db, 'transactions', t._realId || t.id), reviewedFields(t)));
     await batch.commit();
   }
 }

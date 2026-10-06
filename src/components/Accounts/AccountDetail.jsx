@@ -9,6 +9,7 @@ import EditStartingBalanceModal from './EditStartingBalanceModal';
 import EditUnrealizedGainModal from './EditUnrealizedGainModal';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
+import { needsReview, isUncategorized, markReviewed } from '../../services/bankImport/importer';
 
 const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => {
   const toast = useToast();
@@ -371,6 +372,20 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
 
   const handleToggleClear = async (t, e) => {
     e.stopPropagation();
+    if (needsReview(t)) {
+      // Entered from the bank and not checked yet: checking it clears it. One
+      // without a category opens the form to choose one first.
+      if (t.type !== 'transfer' && isUncategorized(t.category)) {
+        setEditingTransaction(t);
+        setIsModalOpen(true);
+        return;
+      }
+      try {
+        await markReviewed([t]);
+        toast.success('Checked ✓');
+      } catch (err) { toast.error('Error: ' + err.message); }
+      return;
+    }
     if (t.clearStatus === 'reconciled') { toast.warning('🔒 Locked'); return; }
     try {
       const realId = t._realId || t.id;  // Use real ID for virtual transactions
@@ -1262,14 +1277,22 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                               </div>
                             )}
                           </div>
-                          {!isSelectMode && (
+                          {!isSelectMode && (needsReview(t) ? (
+                            <button 
+                              onClick={(e) => handleToggleClear(t, e)} 
+                              className="clear-btn w-10 h-10 flex items-center justify-center rounded-full active:bg-gray-200"
+                              title="From the bank, not checked yet: tap when it's right"
+                            >
+                              <span className="w-6 h-6 rounded-full bg-amber-400 text-white text-sm font-bold flex items-center justify-center">!</span>
+                            </button>
+                          ) : (
                             <button 
                               onClick={(e) => handleToggleClear(t, e)} 
                               className={`clear-btn text-xl w-10 h-10 flex items-center justify-center rounded-full active:bg-gray-200 ${getClearColor(t.clearStatus)}`}
                             >
                               {getClearIcon(t.clearStatus)}
                             </button>
-                          )}
+                          ))}
                         </div>
                         {isSplit && t.splits && (
                           <div className="mt-2 space-y-1 pl-4 border-l-2 border-sky-200 ml-1">

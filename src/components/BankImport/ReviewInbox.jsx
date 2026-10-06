@@ -59,9 +59,9 @@ const ReviewInbox = ({ onClose }) => {
   const isWaiting = (t) => t.type !== 'transfer' && t.type !== 'split' && isUncategorized(t.category);
   const confirmable = reviewTransactions.filter(t => needsReview(t) && !isWaiting(t));
 
-  const handleConfirm = async (ids) => {
+  const handleConfirm = async (list) => {
     try {
-      await markReviewed(ids);
+      await markReviewed(list);
     } catch (error) {
       console.error('Error confirming transactions:', error);
       toast.error('Error: ' + error.message);
@@ -215,7 +215,7 @@ const ReviewInbox = ({ onClose }) => {
                 <span className="text-xs text-gray-500">Tap one to fix it · ✓ when it's right</span>
                 {confirmable.length > 1 && (
                   <button
-                    onClick={() => handleConfirm(confirmable.map(t => t.id))}
+                    onClick={() => handleConfirm(confirmable)}
                     className="text-sm px-3 py-1.5 rounded-lg bg-emerald-500 text-white font-medium whitespace-nowrap"
                   >
                     ✓ All correct ({confirmable.length})
@@ -261,7 +261,7 @@ const ReviewInbox = ({ onClose }) => {
                           </div>
                           {canConfirm ? (
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleConfirm([t.id]); }}
+                              onClick={(e) => { e.stopPropagation(); handleConfirm([t]); }}
                               className="w-9 h-9 shrink-0 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-600 font-bold flex items-center justify-center active:bg-emerald-100"
                               title="It's right"
                             >

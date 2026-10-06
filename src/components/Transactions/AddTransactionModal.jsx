@@ -6,7 +6,7 @@ import { useData } from '../../contexts/DataContext';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 import { useOptionalBankImport } from '../../contexts/BankImportContext';
-import { isUncategorized } from '../../services/bankImport/importer';
+import { isUncategorized, needsReview, reviewedFields } from '../../services/bankImport/importer';
 import { parseQuickAdd } from '../../services/quickAdd/parseQuickAdd';
 import useSpeech from '../QuickAdd/useSpeech';
 import useQuickAddLearning from '../QuickAdd/useQuickAddLearning';
@@ -636,7 +636,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
           transactionData.isLoan = false;
           transactionData.loan = null;
           transactionData.spendingType = null;
-          if (editTransaction.bankImport) transactionData['bankImport.reviewed'] = true; // checked: leaves To review
+          if (needsReview(editTransaction)) Object.assign(transactionData, reviewedFields(editTransaction)); // checked: cleared
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
@@ -722,7 +722,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
             transactionData.spendingType = null;
             transactionData.isLoan = false;
           }
-          if (editTransaction.bankImport) transactionData['bankImport.reviewed'] = true; // checked: leaves To review
+          if (needsReview(editTransaction)) Object.assign(transactionData, reviewedFields(editTransaction)); // checked: cleared
           await updateDoc(doc(db, 'transactions', editTransaction.id), transactionData);
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
