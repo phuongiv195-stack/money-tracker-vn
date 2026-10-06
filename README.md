@@ -5,6 +5,17 @@ Personal Finance Tracking App - Mobile-first PWA
 ## 📝 Changelog
 
 ### 6 October 2026
+- **Quick add (new):** a box on the Categories tab where you say (🎤) or type one line, e.g. "25 ngàn rau Street Grocer" → −25,000 · Street Grocer · memo "rau". Tap **Save**, or **Edit** to finish in the normal form.
+  - Rule-based, no AI (`src/services/quickAdd/parseQuickAdd.js`).
+  - **Amounts:** "25k", "25 ngàn", "1tr2", "1 triệu rưỡi", "25 thousand".
+  - **Direction:** "chi/trả/tiêu" for an expense, "nhận/tiền về/thu/lương" for income. Expense is the default.
+  - **Account:** an account or bank name ("OCB"), or "tiền mặt"/"cash". Otherwise the per-device default.
+  - **Category:** used if said. Otherwise the payee's last category, else Uncategorized.
+  - **Date:** "hôm qua"/"yesterday".
+  - Vietnamese words that differ only by accents are told apart (trả/trà, tiền về/tiền vé, chợ/cho).
+  - The mic uses the browser's speech recognition (VI/EN toggle). It needs the HTTPS site; the keyboard mic works anywhere.
+  - App shortcut **Quick add** (long-press the app icon).
+  - A quick-added bank payment is matched with its bank notification later instead of being imported twice.
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).

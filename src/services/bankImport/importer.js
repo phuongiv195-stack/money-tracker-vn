@@ -21,7 +21,7 @@ const postedMs = (item) => item.postedAt?.toMillis?.() ?? item.capturedAt?.toMil
 const transactionId = (importKey) => `bank_${importKey.replace(/[^A-Za-z0-9-]+/g, '_')}`;
 
 // Same rules as AddTransactionModal: locked categories fix need/want.
-function spendingTypeFor(categories, categoryName) {
+export function spendingTypeFor(categories, categoryName) {
   const cat = categories.find(c => c.name === categoryName);
   if (cat?.spendingMode === 'need' || cat?.spendingMode === 'want') return cat.spendingMode;
   return cat?.spendingType || 'need';
@@ -29,7 +29,7 @@ function spendingTypeFor(categories, categoryName) {
 
 // Normal categories, so the Categories tab and every report count them as-is.
 // Deterministic ids keep two devices from creating them twice.
-async function ensureUncategorizedCategories(userId, categories) {
+export async function ensureUncategorizedCategories(userId, categories) {
   for (const type of ['expense', 'income']) {
     const name = UNCATEGORIZED[type];
     if (categories.some(c => c.name === name)) continue;

@@ -8,7 +8,9 @@ import { useToast } from '../Toast/ToastProvider';
 import { useOptionalBankImport } from '../../contexts/BankImportContext';
 import { isUncategorized } from '../../services/bankImport/importer';
 
-const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTransactionProp = null, prefilledAccount = null, prefilledCategory = null, forceFuture = false }) => {
+// prefill: a new transaction's starting values, e.g. from Quick add
+// ({ type, amount, payee, category, account, memo, date })
+const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTransactionProp = null, prefilledAccount = null, prefilledCategory = null, prefill = null, forceFuture = false }) => {
   const toast = useToast();
   const userId = useUserId();
   const { 
@@ -307,33 +309,35 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         if (prefilledCategory?.type) {
           setActiveTab(prefilledCategory.type);
         } else {
-          setActiveTab('expense');
+          setActiveTab(prefill?.type || 'expense');
         }
         
         // Set default account - use prefilledAccount or first account from quick select list
         const firstQuickAccount = quickSelectGroupedAccounts[0]?.accounts[0]?.name || accounts[0] || '';
-        const defaultAccount = prefilledAccount || firstQuickAccount;
+        const defaultAccount = prefilledAccount || prefill?.account || firstQuickAccount;
         const otherAccounts = accounts.filter(a => a !== defaultAccount);
+        const prefillAmount = prefill?.amount ? Math.abs(prefill.amount) : null;
+        const startCategory = prefilledCategory?.name || prefill?.category || '';
         
         setFormData({
-          amount: '',
-          payee: '',
-          category: prefilledCategory?.name || '',
+          amount: prefillAmount ? String(prefillAmount) : '',
+          payee: prefill?.payee || '',
+          category: startCategory,
           account: defaultAccount,
           fromAccount: defaultAccount,
           toAccount: otherAccounts[0] || accounts[0] || '',
-          date: getLocalToday(),
-          memo: '',
+          date: prefill?.date || getLocalToday(),
+          memo: prefill?.memo || '',
           tag: '',
           tags: [],
-          spendingType: prefilledCategory?.spendingType || 'need',
+          spendingType: prefilledCategory?.spendingType || (startCategory ? spendingForNewCategory(startCategory) : 'need'),
           isLoan: false,
           loan: ''
         });
-        setDisplayAmount('');
+        setDisplayAmount(prefillAmount ? prefillAmount.toLocaleString('en-US') : '');
       }
     }
-  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory, accounts, quickSelectGroupedAccounts]);
+  }, [isOpen, editTransaction, prefilledAccount, prefilledCategory, prefill, accounts, quickSelectGroupedAccounts]);
 
   const formatDateForDisplay = (isoDate) => {
     if (!isoDate) return '';
