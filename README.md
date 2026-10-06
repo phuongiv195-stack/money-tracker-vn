@@ -28,6 +28,12 @@ Personal Finance Tracking App - Mobile-first PWA
   - **Better category guess:** words learned from payees as well as memos ("gas" → Bike Gas via the gas stations). Every said word votes, including the ones after "memo", and a category whose name contains a said word gets an extra vote ("gas … black bike" → Bike Gas, "gas car" → Car Gas). A tie picks nothing.
   - With "memo …" said, the leftover words before it become the payee ("50000 gas memo black bike" → payee Gas, memo "black bike").
   - Only Spending/Savings accounts are matched by voice, so an asset account named "Car" doesn't take the word "car".
+  - **Memos in English** so both partners can read them: a built-in Vietnamese→English word list (`src/services/quickAdd/viEnDictionary.js`), no translation service. "30,000 rau, 15,000 thịt, 80k cá" → memo "vegetables 30k, meat 15k, fish 80k". Words not in the list stay as said.
+  - **Payee when none is said** (rather blank than a wrong guess):
+    1. **Remembered:** a saved transaction whose memo is like what was said (more than half of the words in common, compared in English) gives its payee and category; the latest save wins. Save "40k xăng" once with Ha Giang Gas Station, and "60k xăng xe" picks it next time.
+    2. **Market food** ("rau", "rau thịt", several amounts): the category's usual payee, e.g. Street Grocer for Grocery. A payee is "usual" when it was used 3+ times in the last 120 days and twice as often as any other.
+    3. Otherwise only a payee that these words were saved with before, in the same category ("cá" → Fish Stand). If nothing fits, Payee stays blank.
+  - A name after "với"/"with" is a companion, not the payee ("ăn tối với Hiền" → memo "dinner with Hiền").
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
