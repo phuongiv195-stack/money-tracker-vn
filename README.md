@@ -21,6 +21,10 @@ Personal Finance Tracking App - Mobile-first PWA
     - Memo words map to the category they usually end up in, learned from categorized transactions ("rau" → Groceries).
     - After an **Edit** that picks a different payee, the words speech recognition heard are remembered for that payee, e.g. "trít gờ rô sơ" → Street Grocer. This applies only to phrases of 2+ words that aren't item words. The aliases are stored in `userSettings/{uid}.quickAddAliases`.
   - **✕ button** clears the box.
+  - **🎤 in the Add Transaction form:** the form's header has a mic. As you speak, the fields fill in: "50k BL Stadium" sets amount, payee and the payee's category; "Vietcombank" sets the account; "memo Dinner with Hien" puts everything after "memo" (or "ghi chú"/"note") into Memo.
+    - Only what was said changes. The tab stays unless a direction word is said, and so does the account unless one is named.
+    - Tapping 🎤 again **adds** to what was already said.
+    - Shared hooks: `useSpeech`, `useQuickAddLearning`.
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).

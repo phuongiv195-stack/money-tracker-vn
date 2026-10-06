@@ -7,6 +7,9 @@ import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 import { useOptionalBankImport } from '../../contexts/BankImportContext';
 import { isUncategorized } from '../../services/bankImport/importer';
+import { parseQuickAdd } from '../../services/quickAdd/parseQuickAdd';
+import useSpeech from '../QuickAdd/useSpeech';
+import useQuickAddLearning from '../QuickAdd/useQuickAddLearning';
 
 // prefill: a new transaction's starting values, e.g. from Quick add
 // ({ type, amount, payee, category, account, memo, date })
@@ -15,6 +18,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
   const userId = useUserId();
   const { 
     accountNames, 
+    accounts: accountObjects,
     groupedAccounts,
     quickSelectGroupedAccounts,
     categories, 
@@ -39,6 +43,14 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
     return bankImport.reviewTransactions.filter(t => !prefilledAccount || t.account === prefilledAccount);
   }, [bankImport, editTransactionProp, forceFuture, prefilledAccount]);
   
+  // Voice: say "50k BL Stadium Vietcombank memo Dinner with Hien" and the
+  // fields fill in as you speak (same rules as Quick add)
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceText, setVoiceText] = useState('');
+  const [voiceDraft, setVoiceDraft] = useState(null);
+  const learning = useQuickAddLearning(voiceOpen);
+  const speech = useSpeech(setVoiceText, (error) => toast.error('Microphone: ' + error));
+
   // Duplicate mode - when true, Save creates new transaction instead of updating
   const [isDuplicating, setIsDuplicating] = useState(false);
   
@@ -246,6 +258,9 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
       setActiveSplitIndex(null);
       setIsDuplicating(false); // Reset duplicate mode
       setPickedPending(null);
+      setVoiceOpen(false);
+      setVoiceText('');
+      setVoiceDraft(null);
     }
   }, [isOpen]);
 
@@ -713,6 +728,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         saved = transactionData;
       }
 
+      if (voiceDraft) learning.learnAlias(voiceDraft, saved);
       if (onSave) onSave(saved);
       onClose();
     } catch (error) {
@@ -743,6 +759,45 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
     }
   };
 
+  // Fill the form from what was said. Only what was actually said changes:
+  // the tab and account stay unless named, the category only when found.
+  useEffect(() => {
+    if (!voiceOpen || !voiceText.trim()) return;
+    const tab = activeTab === 'income' ? 'income' : 'expense';
+    const draft = parseQuickAdd(voiceText, {
+      accounts: accountObjects,
+      categories: categorySuggestions,
+      payees: payeeSuggestions,
+      payeeToCategory: payeeToCategoryMap,
+      aliases: learning.aliases,
+      wordCategories: learning.wordCategories,
+      defaultType: tab,
+    });
+    setVoiceDraft(draft);
+    const fill = {};
+    if (draft.amount != null) fill.amount = String(Math.abs(draft.amount));
+    if (draft.payee) fill.payee = draft.payee;
+    if (draft.memo) fill.memo = draft.memo;
+    if (draft.dateSaid) fill.date = draft.date;
+    if (activeTab === 'transfer') {
+      if (draft.accountSaid) fill.fromAccount = draft.account;
+    } else {
+      if (draft.accountSaid) fill.account = draft.account;
+      if (draft.category) {
+        Object.assign(fill, { category: draft.category, spendingType: spendingForNewCategory(draft.category), isLoan: false, loan: '' });
+      }
+      if (draft.directionSaid && draft.type !== activeTab) setActiveTab(draft.type);
+    }
+    setFormData(prev => ({ ...prev, ...fill }));
+    if (fill.amount) setDisplayAmount(Number(fill.amount).toLocaleString('en-US'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refill only when the words change
+  }, [voiceText]);
+
+  const startVoice = () => {
+    setVoiceOpen(true);
+    if (speech.supported && !speech.listening) speech.toggle(voiceText);
+  };
+
   if (!isOpen) return null;
 
   const filteredCategories = categorySuggestions.filter(cat => {
@@ -771,6 +826,15 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         <div className="flex justify-between items-center p-4 border-b shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-gray-500 text-lg p-2 -ml-2">✕</button>
+            <button
+              onClick={startVoice}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${
+                speech.listening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              }`}
+              title="Say it: amount, payee, account, memo …"
+            >
+              🎤
+            </button>
             {/* Duplicate button - only show when editing and not already duplicating */}
             {editTransaction && !isDuplicating && (
               <button 
@@ -828,6 +892,64 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto flex-1">
+
+          {voiceOpen && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={voiceText}
+                  onChange={(e) => setVoiceText(e.target.value)}
+                  placeholder="50k BL Stadium Vietcombank memo Dinner with Hien"
+                  className="flex-1 min-w-0 p-2 bg-white rounded-lg text-base focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                {voiceText && (
+                  <button
+                    type="button"
+                    onClick={() => { setVoiceText(''); setVoiceDraft(null); }}
+                    className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-white"
+                    title="Clear"
+                  >
+                    ✕
+                  </button>
+                )}
+                {speech.supported && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => speech.toggle(voiceText)}
+                      className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${
+                        speech.listening ? 'bg-red-500 text-white animate-pulse' : 'bg-white text-emerald-700 border border-emerald-200'
+                      }`}
+                      title={speech.listening ? 'Stop' : 'Speak (adds to the text)'}
+                    >
+                      🎤
+                    </button>
+                    <button
+                      type="button"
+                      onClick={speech.toggleLang}
+                      className="w-8 shrink-0 text-xs font-semibold text-emerald-800"
+                      title="Speech language"
+                    >
+                      {speech.lang.toUpperCase()}
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-emerald-800 mt-1 px-1">
+                {speech.listening
+                  ? 'Listening… pause, then tap 🎤 again to add more.'
+                  : speech.supported
+                    ? 'Say amount, payee, account, then "memo …". Tap 🎤 to add more.'
+                    : 'Type, or use the keyboard mic: amount, payee, account, then "memo …".'}
+              </div>
+              {voiceDraft?.parts?.length > 1 && (
+                <div className="text-sm text-gray-700 mt-1 px-1">
+                  {voiceDraft.parts.map(p => p.toLocaleString('en-US')).join(' + ')} = <span className="font-semibold">{Math.abs(voiceDraft.amount).toLocaleString('en-US')}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Bank transactions waiting for a category */}
           {!pickedPending && pendingBank.length > 0 && (

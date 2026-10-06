@@ -1,20 +1,19 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { collection, addDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useToast } from '../Toast/ToastProvider';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
-import { parseQuickAdd, learnWordCategories, aliasWords } from '../../services/quickAdd/parseQuickAdd';
+import { parseQuickAdd } from '../../services/quickAdd/parseQuickAdd';
 import {
   UNCATEGORIZED, ensureUncategorizedCategories, spendingTypeFor,
 } from '../../services/bankImport/importer';
+import useSpeech from './useSpeech';
+import useQuickAddLearning from './useQuickAddLearning';
 
 const ACCOUNT_KEY = 'quickAddAccount';
-const LANG_KEY = 'quickAddLang';
 export const QUICK_ADD_FOCUS_KEY = 'quickAddFocus'; // set by the "Quick add" app shortcut
-
-const SpeechRecognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
 const readStorage = (key) => {
   try {
@@ -37,31 +36,16 @@ const formatAmount = (amount) => `${amount > 0 ? '+' : '-'}${new Intl.NumberForm
 // transaction. Without a category it lands in Uncategorized, i.e. To review.
 const QuickAddBar = () => {
   const userId = useUserId();
-  const { accountNames, accounts, categories, transactions, payeeSuggestions, payeeToCategoryMap } = useData();
+  const { accountNames, accounts, categories, payeeSuggestions, payeeToCategoryMap } = useData();
   const toast = useToast();
+  const { aliases, wordCategories, learnAlias } = useQuickAddLearning();
 
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [listening, setListening] = useState(false);
-  const [lang, setLang] = useState(() => readStorage(LANG_KEY) || 'vi');
   const [savedAccount, setSavedAccount] = useState(() => readStorage(ACCOUNT_KEY));
-  const [aliases, setAliases] = useState({});
   const inputRef = useRef(null);
-  const recognitionRef = useRef(null);
-
-  // Names the user taught: what speech recognition heard -> the real payee
-  useEffect(() => {
-    if (!userId) return undefined;
-    return onSnapshot(
-      doc(db, 'userSettings', userId),
-      (snap) => setAliases(snap.data()?.quickAddAliases || {}),
-      (error) => console.error('Quick add aliases listener error:', error)
-    );
-  }, [userId]);
-
-  // Which category memo words usually go to, learned from categorized transactions
-  const wordCategories = useMemo(() => learnWordCategories(transactions), [transactions]);
+  const speech = useSpeech(setText, (error) => toast.error('Microphone: ' + error));
 
   // Per-device default account: the one chosen here, else the first cash account
   const defaultAccount = useMemo(() => {
@@ -82,22 +66,6 @@ const QuickAddBar = () => {
     });
   }, [text, accounts, categories, payeeSuggestions, payeeToCategoryMap, aliases, wordCategories, defaultAccount]);
 
-  // After an Edit that picked a different payee, remember what was heard for it
-  // ("trít gờ rô sơ" -> Street Grocer). Only phrases of 2+ words that aren't item
-  // words already linked to a category, so "rau" never turns into a payee.
-  const learnAlias = (heardDraft, saved) => {
-    const payee = (saved?.payee || '').trim();
-    if (!userId || !heardDraft || !payee || payee === heardDraft.payee) return;
-    const kept = new Set(aliasWords(saved.memo));
-    const itemWords = new Set(Object.keys(wordCategories[heardDraft.type] || {}).flatMap(aliasWords));
-    const heard = aliasWords(`${heardDraft.payee} ${heardDraft.memo}`)
-      .filter(w => !kept.has(w) && !itemWords.has(w) && !/^\d/.test(w));
-    const phrase = heard.join(' ');
-    if (heard.length < 2 || heard.length > 6 || phrase === aliasWords(payee).join(' ')) return;
-    setDoc(doc(db, 'userSettings', userId), { quickAddAliases: { [phrase]: payee } }, { merge: true })
-      .catch(error => console.error('Could not save quick add alias:', error));
-  };
-
   // Opened from the "Quick add" app shortcut: put the cursor here. The flag
   // covers this bar mounting later (another tab was open); the event covers
   // it being on screen already.
@@ -115,32 +83,6 @@ const QuickAddBar = () => {
     window.addEventListener(QUICK_ADD_FOCUS_KEY, focusIfAsked);
     return () => window.removeEventListener(QUICK_ADD_FOCUS_KEY, focusIfAsked);
   }, []);
-
-  useEffect(() => () => recognitionRef.current?.abort(), []);
-
-  const toggleMic = () => {
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.lang = lang === 'vi' ? 'vi-VN' : 'en-US';
-    recognition.interimResults = true;
-    recognition.onresult = (e) => setText(Array.from(e.results).map(r => r[0].transcript).join(' '));
-    recognition.onerror = (e) => {
-      if (e.error !== 'aborted' && e.error !== 'no-speech') toast.error('Microphone: ' + e.error);
-    };
-    recognition.onend = () => setListening(false);
-    recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
-  };
-
-  const toggleLang = () => {
-    const next = lang === 'vi' ? 'en' : 'vi';
-    setLang(next);
-    writeStorage(LANG_KEY, next);
-  };
 
   const chooseDefaultAccount = (name) => {
     setSavedAccount(name);
@@ -209,25 +151,25 @@ const QuickAddBar = () => {
               ✕
             </button>
           )}
-          {SpeechRecognition && (
+          {speech.supported && (
             <>
               <button
                 type="button"
-                onClick={toggleMic}
+                onClick={() => speech.toggle(text)}
                 className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${
-                  listening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  speech.listening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                 }`}
-                title={listening ? 'Stop' : 'Speak'}
+                title={speech.listening ? 'Stop' : 'Speak (adds to the text)'}
               >
                 🎤
               </button>
               <button
                 type="button"
-                onClick={toggleLang}
+                onClick={speech.toggleLang}
                 className="w-8 shrink-0 text-xs font-semibold text-gray-500"
                 title="Speech language"
               >
-                {lang.toUpperCase()}
+                {speech.lang.toUpperCase()}
               </button>
             </>
           )}
@@ -274,7 +216,7 @@ const QuickAddBar = () => {
           </div>
         ) : (
           <div className="mt-1 px-1 flex justify-between items-center text-xs text-gray-500">
-            <span>Say or type amount, what, where{SpeechRecognition ? '' : ' (use the keyboard mic)'}</span>
+            <span>Say or type amount, what, where{speech.supported ? '' : ' (use the keyboard mic)'}</span>
             <select
               value={defaultAccount}
               onChange={(e) => chooseDefaultAccount(e.target.value)}

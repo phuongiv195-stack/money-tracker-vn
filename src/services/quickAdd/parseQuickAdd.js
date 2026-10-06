@@ -224,18 +224,24 @@ export function learnWordCategories(transactions) {
 const pad = (n) => String(n).padStart(2, '0');
 const dateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+// "... memo Dinner with Hien": everything after the memo word goes to the memo as said
+const MEMO_MARKER = /(?:^|\s)(memo|mê mô|ghi chú|notes?)(?=[\s:]|$)[\s:]*/iu;
+
 const shortAmount = (n) => (n % 1000 === 0 ? `${n / 1000}k` : n.toLocaleString('en-US'));
 
 /**
  * @param text      what was said or typed
  * @param ctx       { accounts, categories, payees: string[], payeeToCategory: {payee: category},
  *                    aliases: {heard phrase: payee}, wordCategories (learnWordCategories),
- *                    defaultAccount: name, today: Date }
- * @returns { amount (signed total), parts: [amounts], type, account, category, payee, memo, date }
- *          — amount is null if none was found
+ *                    defaultAccount: name, defaultType: 'expense' | 'income', today: Date }
+ * @returns { amount (signed total), parts: [amounts], type, account, category, payee, memo, date,
+ *            directionSaid, accountSaid, dateSaid } — amount is null if none was found
  */
 export function parseQuickAdd(text, ctx) {
-  const tokens = tokenize(text);
+  const full = String(text || '').normalize('NFC');
+  const marker = full.match(MEMO_MARKER);
+  const saidMemo = marker ? full.slice(marker.index + marker[0].length).trim() : null;
+  const tokens = tokenize(marker ? full.slice(0, marker.index) : full);
   const today = ctx.today || new Date();
 
   const amounts = takeAmounts(tokens);
@@ -250,7 +256,10 @@ export function parseQuickAdd(text, ctx) {
 
   // Income or expense: "+500k", or said ("nhận", "tiền về" / "chi", "trả", "tiêu"); expense by default
   const direction = takeDirection(tokens);
-  const type = amounts[0]?.positive || direction === 'income' ? 'income' : 'expense';
+  const directionSaid = Boolean(amounts[0]?.positive || direction);
+  const type = amounts[0]?.positive || direction === 'income' ? 'income'
+    : direction === 'expense' ? 'expense'
+    : ctx.defaultType || 'expense';
 
   // Account: by name, by bank ("OCB" -> the account linked to OCB), or cash
   const activeAccounts = (ctx.accounts || []).filter(a => a.isActive !== false && a.group !== 'LOANS');
@@ -273,6 +282,7 @@ export function parseQuickAdd(text, ctx) {
     account = (ctx.defaultAccount && isCash(ctx.defaultAccount) ? ctx.defaultAccount : null)
       || activeAccounts.find(a => isCash(a.name))?.name || null;
   }
+  const accountSaid = Boolean(account);
   account = account || ctx.defaultAccount || null;
 
   // Payee: a name the user taught (what speech recognition made of it), or a
@@ -314,9 +324,11 @@ export function parseQuickAdd(text, ctx) {
     if (hits.length) category = hits[0].category;
   }
 
-  const memo = amounts.length > 1
-    ? [words, `(${amounts.map(a => shortAmount(a.amount)).join(' + ')})`].filter(Boolean).join(' ')
-    : words;
+  const memo = [
+    words,
+    saidMemo,
+    amounts.length > 1 ? `(${amounts.map(a => shortAmount(a.amount)).join(' + ')})` : '',
+  ].filter(Boolean).join(' ');
 
   return {
     amount: amounts.length ? (type === 'expense' ? -total : total) : null,
@@ -327,5 +339,8 @@ export function parseQuickAdd(text, ctx) {
     payee,
     memo,
     date: dateStr(day),
+    directionSaid,
+    accountSaid,
+    dateSaid: Boolean(when),
   };
 }
