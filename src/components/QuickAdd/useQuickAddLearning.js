@@ -5,7 +5,7 @@ import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { learnWordCategories, aliasWords } from '../../services/quickAdd/parseQuickAdd';
 
-const NOTHING_LEARNED = { expense: {}, income: {} };
+const NOTHING_LEARNED = { expense: {}, income: {}, memoWords: { expense: [], income: [] } };
 
 /**
  * What Quick add learns from the user, without AI:
@@ -40,7 +40,7 @@ export default function useQuickAddLearning(enabled = true) {
     const payee = (saved?.payee || '').trim();
     if (!userId || !heardDraft || !payee || payee === heardDraft.payee) return;
     const kept = new Set(aliasWords(saved.memo));
-    const itemWords = new Set(Object.keys(wordCategories[heardDraft.type] || {}).flatMap(aliasWords));
+    const itemWords = new Set((wordCategories.memoWords?.[heardDraft.type] || []).flatMap(aliasWords));
     const heard = aliasWords(`${heardDraft.payee} ${heardDraft.memo}`)
       .filter(w => !kept.has(w) && !itemWords.has(w) && !/^\d/.test(w));
     const phrase = heard.join(' ');

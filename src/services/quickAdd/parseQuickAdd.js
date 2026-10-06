@@ -188,37 +188,62 @@ function takeDirection(tokens) {
 
 // --- Learning from the user's own transactions ---------------------------
 
+// Words too common to say anything about the category ("đi" in "đi học" is not "Đi chợ")
 const STOP_WORDS = new Set([
   'tiền', 'của', 'và', 'cho', 'ở', 'tại', 'mua', 'trả', 'chi', 'tiêu', 'với', 'các', 'những', 'một', 'hai',
-  'the', 'and', 'for', 'of', 'to', 'at', 'in', 'on', 'from',
+  'đi', 'về', 'là', 'có', 'được', 'đã', 'sẽ', 'này', 'kia', 'nhé', 'luôn', 'thêm', 'lại',
+  'the', 'and', 'for', 'of', 'to', 'at', 'in', 'on', 'from', 'with', 'my', 'a', 'an',
 ]);
 const memoWords = (memo) => String(memo || '').normalize('NFC').toLowerCase()
   .split(/[^\p{L}\p{N}]+/u)
   .filter(w => w.length >= 2 && !/^\d/.test(w) && !STOP_WORDS.has(w));
 
 /**
- * Which category each memo word usually ends up in, per type, from categorized
- * transactions: { expense: { rau: 'Groceries' }, income: {...} }. A word counts
- * only when at least 60% of its uses share one category.
+ * How often each word of a transaction's payee and memo went with each category,
+ * per type, from categorized transactions:
+ *   { expense: { gas: { counts: { 'Bike Gas': 25, 'House Upgrade': 1 }, total: 26 } }, income: {...},
+ *     memoWords: { expense: [...], income: [...] } }   // words seen in memos (item words)
  */
 export function learnWordCategories(transactions) {
-  const stats = { expense: {}, income: {} };
+  const learned = { expense: {}, income: {}, memoWords: { expense: [], income: [] } };
+  const memoSeen = { expense: new Set(), income: new Set() };
   for (const t of transactions) {
     if ((t.type !== 'expense' && t.type !== 'income') || !t.category || /^uncategorized/i.test(t.category)) continue;
-    for (const word of new Set(memoWords(t.memo))) {
-      const counts = (stats[t.type][word] = stats[t.type][word] || {});
-      counts[t.category] = (counts[t.category] || 0) + 1;
+    const memo = memoWords(t.memo);
+    memo.forEach(w => memoSeen[t.type].add(w));
+    for (const word of new Set([...memo, ...memoWords(t.payee)])) {
+      const entry = (learned[t.type][word] = learned[t.type][word] || { counts: {}, total: 0 });
+      entry.counts[t.category] = (entry.counts[t.category] || 0) + 1;
+      entry.total++;
     }
   }
-  const learned = { expense: {}, income: {} };
-  for (const type of ['expense', 'income']) {
-    for (const [word, counts] of Object.entries(stats[type])) {
-      const total = Object.values(counts).reduce((a, b) => a + b, 0);
-      const [category, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-      if (count / total >= 0.6) learned[type][word] = { category, count };
-    }
-  }
+  learned.memoWords = { expense: [...memoSeen.expense], income: [...memoSeen.income] };
   return learned;
+}
+
+// The category the said words point to: each word votes with how its past uses
+// were split between categories, and a category whose name contains a said word
+// gets a full extra vote ("gas" + "bike" -> Bike Gas, not Car Gas or Cooking Gas).
+// No pick on a tie.
+function inferCategory(words, categories, learned) {
+  const scores = {};
+  for (const word of new Set(words)) {
+    const entry = learned?.[word];
+    if (entry) {
+      for (const [category, count] of Object.entries(entry.counts)) {
+        scores[category] = (scores[category] || 0) + count / entry.total;
+      }
+    }
+    for (const c of categories) {
+      if (memoWords(c.name).includes(word)) scores[c.name] = (scores[c.name] || 0) + 1;
+    }
+  }
+  const ranked = Object.entries(scores)
+    .filter(([name]) => categories.some(c => c.name === name))
+    .sort((a, b) => b[1] - a[1]);
+  if (!ranked.length || ranked[0][1] < 0.6) return null;
+  if (ranked[1] && ranked[1][1] === ranked[0][1]) return null;
+  return ranked[0][0];
 }
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -261,8 +286,11 @@ export function parseQuickAdd(text, ctx) {
     : direction === 'expense' ? 'expense'
     : ctx.defaultType || 'expense';
 
-  // Account: by name, by bank ("OCB" -> the account linked to OCB), or cash
-  const activeAccounts = (ctx.accounts || []).filter(a => a.isActive !== false && a.group !== 'LOANS');
+  // Account: by name, by bank ("OCB" -> the account linked to OCB), or cash.
+  // Only accounts money is paid from: an asset account named "Car" must not
+  // swallow the "car" of "50k gas car".
+  const activeAccounts = (ctx.accounts || []).filter(a => a.isActive !== false
+    && (!a.group || a.group === 'SPENDING' || a.group === 'SAVINGS'));
   let account = takeName(tokens, activeAccounts)?.name || null;
   if (!account) {
     for (const t of tokens) {
@@ -315,17 +343,20 @@ export function parseQuickAdd(text, ctx) {
 
   const words = tokens.filter(t => !t.used && !FILLER_WORDS.has(t.l)).map(t => t.raw).join(' ');
 
-  // Still no category: what these memo words usually are ("rau" -> Groceries)
-  if (!category && ctx.wordCategories) {
-    const hits = memoWords(words)
-      .map(w => ctx.wordCategories[type]?.[w])
-      .filter(h => h && typedCategories.some(c => c.name === h.category))
-      .sort((a, b) => b.count - a.count);
-    if (hits.length) category = hits[0].category;
+  // Still no category: what the said words usually go with ("rau" -> Groceries)
+  if (!category) {
+    category = inferCategory(memoWords(`${words} ${payee} ${saidMemo || ''}`), typedCategories, ctx.wordCategories?.[type]);
+  }
+
+  // With "memo …" said, the other leftover words name the payee ("50000 gas memo black bike")
+  let leftover = words;
+  if (saidMemo !== null && !payee && words) {
+    payee = words.replace(/(^|\s)(\p{Ll})/gu, (_, sp, c) => sp + c.toUpperCase());
+    leftover = '';
   }
 
   const memo = [
-    words,
+    leftover,
     saidMemo,
     amounts.length > 1 ? `(${amounts.map(a => shortAmount(a.amount)).join(' + ')})` : '',
   ].filter(Boolean).join(' ');

@@ -25,6 +25,9 @@ Personal Finance Tracking App - Mobile-first PWA
     - Only what was said changes. The tab stays unless a direction word is said, and so does the account unless one is named.
     - Tapping 🎤 again **adds** to what was already said.
     - Shared hooks: `useSpeech`, `useQuickAddLearning`.
+  - **Better category guess:** words learned from payees as well as memos ("gas" → Bike Gas via the gas stations). Every said word votes, including the ones after "memo", and a category whose name contains a said word gets an extra vote ("gas … black bike" → Bike Gas, "gas car" → Car Gas). A tie picks nothing.
+  - With "memo …" said, the leftover words before it become the payee ("50000 gas memo black bike" → payee Gas, memo "black bike").
+  - Only Spending/Savings accounts are matched by voice, so an asset account named "Car" doesn't take the word "car".
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
