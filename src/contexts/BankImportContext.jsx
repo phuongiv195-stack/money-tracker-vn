@@ -133,11 +133,7 @@ export const BankImportProvider = ({ children }) => {
 
   const reviewCount = reviewTransactions.length + pending.needsAccount.length + pending.unrecognized.length
     + balanceMismatches.length;
-  useReviewBadge(reviewCount, reviewTransactions, {
-    unlinked: unlinkedAccounts.length,
-    unrecognized: pending.unrecognized.length,
-    mismatches: balanceMismatches.length,
-  });
+  useReviewBadge(reviewCount, reviewTransactions);
 
   const value = useMemo(() => ({
     reviewTransactions,
