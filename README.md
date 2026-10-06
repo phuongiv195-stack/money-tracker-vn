@@ -5,6 +5,7 @@ Personal Finance Tracking App - Mobile-first PWA
 ## 📝 Changelog
 
 ### 6 October 2026
+- **Fix:** an Android back swipe that starts on a category no longer opens Edit category. It also no longer starts multi-select or the edit form in other lists. Long presses ignore touches at the screen edge, are cancelled when the system takes the swipe (`touchcancel`), and on the Categories tab also by the back itself (`src/utils/touch.js`).
 - **Quick add by voice (new):** in the Add Transaction form, tap 🎤 (right under the Split button, within thumb reach) and say or type one line, e.g. "25 ngàn rau Street Grocer" → −25,000 · Street Grocer · memo "vegetables". The fields fill in as you speak; check them and tap **Save**.
   - Rule-based, no AI (`src/services/quickAdd/parseQuickAdd.js`).
   - **Amounts:** "25k", "25 ngàn", "1tr2", "1 triệu rưỡi", "25 thousand".
@@ -38,7 +39,7 @@ Personal Finance Tracking App - Mobile-first PWA
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).
   - New transactions start **uncleared** and become cleared once checked. Without a remembered category they go to the new **Uncategorized** / **Uncategorized Income** categories.
-  - **Not checked yet** is shown everywhere: an amber **!** instead of ○/✓ in the account's transaction list, and a small amber dot next to it on the Transactions tab. In the account list, tapping **!** checks and clears the transaction. If it has no category yet, the form opens instead.
+  - **Not checked yet** is shown everywhere: an amber **!** instead of ○/✓ in the account's transaction list, and the same **!** next to the payee on the Transactions tab. In the account list, tapping **!** checks and clears the transaction. If it has no category yet, the form opens instead.
   - **Bank review** is on the **Accounts** tab: an amber banner, and a red count on the Accounts tab button. It lists every transaction the app entered, shown like the transaction list (no bank text):
     - tap one to fix it in the normal form; saving it marks it checked and cleared;
     - **✓** when it's right, or **✓ All correct** for all of them (checked and cleared). Transactions still without a category stay until one is chosen.

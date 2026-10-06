@@ -5,6 +5,7 @@ import AddCategoryModal from './AddCategoryModal';
 import EditGroupModal from './EditGroupModal';
 import ReorderCategoriesModal from './ReorderCategoriesModal';
 import ReorderGroupsModal from './ReorderGroupsModal';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const CategoriesTab = () => {
   const { categories, transactions, isLoading } = useData();
@@ -27,10 +28,17 @@ const CategoriesTab = () => {
   const longPressTimer = useRef(null);
   const touchStartPos = useRef({ x: 0, y: 0 });
 
-  // Cleanup timer on unmount
+  // A back swipe must never finish as a long press (Edit category); also
+  // clean up the timer on unmount
   useEffect(() => {
-    return () => {
+    const cancel = () => {
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    };
+    window.addEventListener('popstate', cancel);
+    return () => {
+      window.removeEventListener('popstate', cancel);
+      cancel();
     };
   }, []);
 
@@ -157,6 +165,7 @@ const CategoriesTab = () => {
   // Long press start
   const handleLongPressStart = (cat, type, e) => {
     longPressTriggered.current = false;
+    if (startsAtScreenEdge(e)) return;
     
     // Lưu vị trí touch ban đầu
     if (e?.touches?.[0]) {
@@ -319,6 +328,7 @@ const CategoriesTab = () => {
                 onTouchStart={(e) => handleLongPressStart(groupName, 'group', e)}
                 onTouchMove={handleLongPressMove}
                 onTouchEnd={handleLongPressEnd}
+                onTouchCancel={handleLongPressEnd}
                 onMouseDown={(e) => handleLongPressStart(groupName, 'group', e)}
                 onMouseUp={handleLongPressEnd}
                 onMouseLeave={handleLongPressEnd}
@@ -350,6 +360,7 @@ const CategoriesTab = () => {
                     onTouchStart={(e) => handleLongPressStart(cat, 'category', e)}
                     onTouchMove={handleLongPressMove}
                     onTouchEnd={handleLongPressEnd}
+                    onTouchCancel={handleLongPressEnd}
                     onMouseDown={(e) => handleLongPressStart(cat, 'category', e)}
                     onMouseUp={handleLongPressEnd}
                     onMouseLeave={handleLongPressEnd}

@@ -7,6 +7,7 @@ import AddAccountModal from './AddAccountModal';
 import AccountDetail from './AccountDetail';
 import ReorderAccountsModal from './ReorderAccountsModal';
 import { useToast } from '../Toast/ToastProvider';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const AccountsTab = () => {
   const toast = useToast();
@@ -34,6 +35,7 @@ const AccountsTab = () => {
 
   const handleLongPressStart = (account, e) => {
     longPressTriggered.current = false;
+    if (startsAtScreenEdge(e)) return;
     
     if (e?.touches?.[0]) {
       touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -345,6 +347,7 @@ const AccountsTab = () => {
                       onTouchStart={(e) => handleLongPressStart(acc, e)}
                       onTouchMove={handleLongPressMove}
                       onTouchEnd={handleLongPressEnd}
+                      onTouchCancel={handleLongPressEnd}
                       onMouseDown={(e) => handleLongPressStart(acc, e)}
                       onMouseMove={handleLongPressMove}
                       onMouseUp={handleLongPressEnd}

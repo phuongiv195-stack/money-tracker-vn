@@ -5,6 +5,7 @@ import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import AddTransactionModal from './AddTransactionModal';
 import { needsReview } from '../../services/bankImport/importer';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const TransactionsTab = () => {
   const userId = useUserId();
@@ -330,7 +331,8 @@ const TransactionsTab = () => {
   }, [isSelectMode]);
 
   // Touch handlers for long press
-  const handleTouchStart = useCallback((id) => {
+  const handleTouchStart = useCallback((id, e) => {
+    if (startsAtScreenEdge(e)) return;
     const timer = setTimeout(() => handleLongPress(id), 500);
     setLongPressTimer(timer);
   }, [handleLongPress]);
@@ -638,8 +640,9 @@ const TransactionsTab = () => {
                     <div 
                       key={t.id || index}
                       onClick={() => handleTransactionClick(t)}
-                      onTouchStart={() => !isFrozen && handleTouchStart(t.id)}
+                      onTouchStart={(e) => !isFrozen && handleTouchStart(t.id, e)}
                       onTouchEnd={handleTouchEnd}
+                      onTouchCancel={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
                       onContextMenu={(e) => { e.preventDefault(); handleLongPress(t.id); }}
                       className={`p-3 ${isFrozen ? 'cursor-default bg-gray-50' : 'cursor-pointer hover:bg-gray-50'} ${index !== items.length - 1 ? 'border-b' : ''} ${isSelected ? 'bg-indigo-50' : ''}`}
@@ -666,7 +669,7 @@ const TransactionsTab = () => {
                               }
                               {isLoan && <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-1">Loan</span>}
                               {needsReview(t) && (
-                                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" title="From the bank, not checked yet" />
+                                <span className="w-5 h-5 rounded-full bg-amber-400 text-white text-xs font-bold flex items-center justify-center shrink-0" title="From the bank, not checked yet">!</span>
                               )}
                               {isUnrealizedGain && (
                                 <span className={`text-xs px-1.5 py-0.5 rounded ml-1 ${isPositive ? 'text-emerald-600 bg-emerald-100' : 'text-red-600 bg-red-100'}`}>

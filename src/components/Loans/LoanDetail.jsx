@@ -6,6 +6,7 @@ import AddLoanTransactionModal from './AddLoanTransactionModal';
 import EditLoanTransactionModal from './EditLoanTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
   const toast = useToast();
@@ -490,7 +491,8 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
 
   // Long press handler
   let longPressTimer = null;
-  const handleTouchStart = (itemId) => {
+  const handleTouchStart = (itemId, e) => {
+    if (startsAtScreenEdge(e)) return;
     longPressTimer = setTimeout(() => handleLongPress(itemId), 500);
   };
   const handleTouchEnd = () => {
@@ -768,8 +770,9 @@ const LoanDetail = ({ loan, onClose, onLoanRenamed }) => {
                         if (e.target.closest('.clear-btn')) return;
                         handleTransactionClick(t);
                       }}
-                      onTouchStart={() => !t.isSplitPart && handleTouchStart(t.id)}
+                      onTouchStart={(e) => !t.isSplitPart && handleTouchStart(t.id, e)}
                       onTouchEnd={handleTouchEnd}
+                      onTouchCancel={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
                       onContextMenu={(e) => { e.preventDefault(); !t.isSplitPart && handleLongPress(t.id); }}
                       className={`p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors ${index !== items.length - 1 ? 'border-b border-gray-50' : ''} ${isSelected ? 'bg-indigo-50' : ''}`}

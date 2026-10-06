@@ -3,6 +3,7 @@ import { writeBatch, doc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
 import useBackHandler from '../../hooks/useBackHandler';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
   const [editingTransaction, setEditingTransaction] = useState(null);
@@ -175,7 +176,8 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
 
   // Long press handler
   let longPressTimer = null;
-  const handleTouchStart = (itemId) => {
+  const handleTouchStart = (itemId, e) => {
+    if (startsAtScreenEdge(e)) return;
     longPressTimer = setTimeout(() => handleLongPress(itemId), 500);
   };
   const handleTouchEnd = () => {
@@ -277,8 +279,9 @@ const CategoryDetail = ({ category, transactions, currentDate, onClose }) => {
                     <div 
                       key={t.id} 
                       onClick={() => handleTransactionClick(t)}
-                      onTouchStart={() => handleTouchStart(t.id)}
+                      onTouchStart={(e) => handleTouchStart(t.id, e)}
                       onTouchEnd={handleTouchEnd}
+                      onTouchCancel={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
                       onContextMenu={(e) => { e.preventDefault(); handleLongPress(t.id); }}
                       className={`p-3 flex justify-between items-center cursor-pointer hover:bg-gray-50 active:bg-gray-100 ${index !== items.length - 1 ? 'border-b border-gray-50' : ''} ${isSelected ? 'bg-indigo-50' : ''}`}

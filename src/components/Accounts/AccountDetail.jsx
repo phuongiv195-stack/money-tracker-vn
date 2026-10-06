@@ -10,6 +10,7 @@ import EditUnrealizedGainModal from './EditUnrealizedGainModal';
 import useBackHandler from '../../hooks/useBackHandler';
 import { useToast } from '../Toast/ToastProvider';
 import { needsReview, isUncategorized, markReviewed } from '../../services/bankImport/importer';
+import { startsAtScreenEdge } from '../../utils/touch';
 
 const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => {
   const toast = useToast();
@@ -607,7 +608,8 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
 
   // Long press handler
   let longPressTimer = null;
-  const handleTouchStart = (itemId) => {
+  const handleTouchStart = (itemId, e) => {
+    if (startsAtScreenEdge(e)) return;
     longPressTimer = setTimeout(() => handleLongPress(itemId), 500);
   };
   const handleTouchEnd = () => {
@@ -1168,8 +1170,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                               setEditUnrealizedGain(t);
                             }
                           }} 
-                          onTouchStart={() => handleTouchStart(t.id)}
+                          onTouchStart={(e) => handleTouchStart(t.id, e)}
                           onTouchEnd={handleTouchEnd}
+                          onTouchCancel={handleTouchEnd}
                           onTouchMove={handleTouchEnd}
                           onContextMenu={(e) => { e.preventDefault(); handleLongPress(t.id); }}
                           className={`p-3 cursor-pointer hover:bg-gray-50 active:bg-gray-100 ${isSelected ? 'bg-indigo-50' : ''}`}
@@ -1226,8 +1229,9 @@ const AccountDetail = ({ account, transactions, onClose, onAccountUpdated }) => 
                             setIsModalOpen(true);
                           }
                         }} 
-                        onTouchStart={() => handleTouchStart(t._realId || t.id)}
+                        onTouchStart={(e) => handleTouchStart(t._realId || t.id, e)}
                         onTouchEnd={handleTouchEnd}
+                        onTouchCancel={handleTouchEnd}
                         onTouchMove={handleTouchEnd}
                         onContextMenu={(e) => { e.preventDefault(); handleLongPress(t._realId || t.id); }}
                         className={`p-3 cursor-pointer hover:bg-gray-50 active:bg-gray-100 ${isSelected ? 'bg-indigo-50' : ''}`}
