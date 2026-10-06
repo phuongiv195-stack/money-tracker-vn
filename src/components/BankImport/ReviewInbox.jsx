@@ -23,17 +23,15 @@ const formatTime = (t) => {
 
 // Full-screen list of the bank transactions the app entered, shown like the
 // transaction list: tap one to fix it in the normal form, ✓ when it's right.
-// Also: bank accounts to link, balance differences, unread bank messages.
+// Also: bank accounts to link, balance differences.
 const ReviewInbox = ({ onClose }) => {
   const { activeAccounts } = useData();
   const {
-    reviewTransactions, unlinkedAccounts, unrecognized, balanceMismatches, linkAccount, dismissItem, dismissMismatch,
-    markReviewed,
+    reviewTransactions, unlinkedAccounts, balanceMismatches, linkAccount, dismissMismatch, markReviewed,
   } = useBankImport();
   const toast = useToast();
 
   const [editing, setEditing] = useState(null);
-  const [showUnread, setShowUnread] = useState(false);
   const [notifyOn, setNotifyOn] = useState(reviewNotifyEnabled);
 
   useBackHandler(true, onClose);
@@ -78,15 +76,6 @@ const ReviewInbox = ({ onClose }) => {
     }
   };
 
-  const handleDismiss = async (ids) => {
-    try {
-      for (const id of ids) await dismissItem(id);
-    } catch (error) {
-      console.error('Error dismissing notification:', error);
-      toast.error('Error: ' + error.message);
-    }
-  };
-
   const toggleNotify = async () => {
     try {
       if (notifyOn) {
@@ -109,8 +98,7 @@ const ReviewInbox = ({ onClose }) => {
   };
 
   const total = reviewTransactions.length;
-  const allDone = total === 0 && unlinkedAccounts.length === 0 && unrecognized.length === 0
-    && balanceMismatches.length === 0;
+  const allDone = total === 0 && unlinkedAccounts.length === 0 && balanceMismatches.length === 0;
 
   return (
     <div className="fixed inset-0 bg-gray-50 z-40 flex flex-col no-pull-refresh">
@@ -276,47 +264,6 @@ const ReviewInbox = ({ onClose }) => {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {unrecognized.length > 0 && (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-gray-700">
-                  📩 {unrecognized.length} bank {unrecognized.length === 1 ? 'message' : 'messages'} not read as a transaction
-                </span>
-                <button onClick={() => setShowUnread(v => !v)} className="text-sm text-emerald-700 underline whitespace-nowrap">
-                  {showUnread ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {showUnread && (
-                <div className="mt-2 space-y-2">
-                  {unrecognized.map(item => (
-                    <div key={item.id} className="border-t border-gray-100 pt-2">
-                      <div className="text-xs text-gray-500">{item.appName}</div>
-                      <div className="text-xs text-gray-700 whitespace-pre-wrap break-all">
-                        {[item.title, item.bigText || item.text].filter(Boolean).join('\n')}
-                      </div>
-                      <div className="text-right mt-1">
-                        <button
-                          onClick={() => handleDismiss([item.id])}
-                          className="text-sm px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="text-right mt-2">
-                <button
-                  onClick={() => handleDismiss(unrecognized.map(item => item.id))}
-                  className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-                >
-                  Dismiss all
-                </button>
-              </div>
             </div>
           )}
         </div>

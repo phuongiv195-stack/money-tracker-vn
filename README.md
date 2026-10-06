@@ -44,7 +44,7 @@ Personal Finance Tracking App - Mobile-first PWA
     - tap one to fix it in the normal form; saving it marks it checked and cleared;
     - **✓** when it's right, or **✓ All correct** for all of them (checked and cleared). Transactions still without a category stay until one is chosen.
     - Checked transactions are flagged `bankImport.reviewed`. Typed-in transactions the bank details were attached to count as checked.
-    - Bank messages that couldn't be read are folded away under "not read as a transaction".
+    - Bank messages that couldn't be read as a transaction are neither shown nor counted. A missed transaction still shows up in the balance check.
   - **Count outside the app:** on desktop Chrome/Edge the app icon shows the count. On a phone, switch on 🔔 in Bank review (per device). While the app is in the background, each transaction to review is then a silent notification, with amount, payee, account, date and category, and nothing else. The phone shows the number on the app icon. Opening the app removes them, and tapping one opens Bank review (`public/sw-review-notifications.js`, `src/hooks/useReviewBadge.js`).
   - The first time a bank account shows up, To review asks which Money Tracker account it is. The link is saved in `accounts.bankAccountKeys`.
   - **Remembered categories:** a later transaction with the same sender or recipient gets the category or loan chosen last time. The same name counts even from another account number or bank; the account holders' own names don't (those are transfers).

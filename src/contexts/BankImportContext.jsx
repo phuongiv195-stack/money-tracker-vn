@@ -4,7 +4,7 @@ import { db } from '../services/firebase';
 import { useUserId } from './AuthContext';
 import { useData } from './DataContext';
 import {
-  processInbox, isUncategorized, needsReview, markReviewed, linkBankAccount, dismissInboxItem, mergeTypedDuplicates,
+  processInbox, isUncategorized, needsReview, markReviewed, linkBankAccount, mergeTypedDuplicates,
   pairImportedTransfers,
 } from '../services/bankImport/importer';
 import { findBalanceMismatches } from '../services/bankImport/balanceCheck';
@@ -131,20 +131,19 @@ export const BankImportProvider = ({ children }) => {
     return Object.values(byKey);
   }, [pending.needsAccount]);
 
-  const reviewCount = reviewTransactions.length + pending.needsAccount.length + pending.unrecognized.length
-    + balanceMismatches.length;
+  // Bank messages that couldn't be read aren't shown or counted (the user didn't
+  // want them); a missed transaction still shows up in the balance check.
+  const reviewCount = reviewTransactions.length + pending.needsAccount.length + balanceMismatches.length;
   useReviewBadge(reviewCount, reviewTransactions);
 
   const value = useMemo(() => ({
     reviewTransactions,
     waitingTransactions,
     unlinkedAccounts,
-    unrecognized: pending.unrecognized,
     balanceMismatches,
     reviewCount,
     markReviewed,
     linkAccount: linkBankAccount,
-    dismissItem: dismissInboxItem,
     dismissMismatch,
   }), [reviewTransactions, waitingTransactions, unlinkedAccounts, pending, balanceMismatches, reviewCount, dismissMismatch]);
 
