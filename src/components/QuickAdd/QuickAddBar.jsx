@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useUserId } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useToast } from '../Toast/ToastProvider';
 import AddTransactionModal from '../Transactions/AddTransactionModal';
-import { parseQuickAdd } from '../../services/quickAdd/parseQuickAdd';
+import { parseQuickAdd, learnWordCategories, aliasWords } from '../../services/quickAdd/parseQuickAdd';
 import {
   UNCATEGORIZED, ensureUncategorizedCategories, spendingTypeFor,
 } from '../../services/bankImport/importer';
@@ -37,7 +37,7 @@ const formatAmount = (amount) => `${amount > 0 ? '+' : '-'}${new Intl.NumberForm
 // transaction. Without a category it lands in Uncategorized, i.e. To review.
 const QuickAddBar = () => {
   const userId = useUserId();
-  const { accountNames, accounts, categories, payeeSuggestions, payeeToCategoryMap } = useData();
+  const { accountNames, accounts, categories, transactions, payeeSuggestions, payeeToCategoryMap } = useData();
   const toast = useToast();
 
   const [text, setText] = useState('');
@@ -46,8 +46,22 @@ const QuickAddBar = () => {
   const [listening, setListening] = useState(false);
   const [lang, setLang] = useState(() => readStorage(LANG_KEY) || 'vi');
   const [savedAccount, setSavedAccount] = useState(() => readStorage(ACCOUNT_KEY));
+  const [aliases, setAliases] = useState({});
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  // Names the user taught: what speech recognition heard -> the real payee
+  useEffect(() => {
+    if (!userId) return undefined;
+    return onSnapshot(
+      doc(db, 'userSettings', userId),
+      (snap) => setAliases(snap.data()?.quickAddAliases || {}),
+      (error) => console.error('Quick add aliases listener error:', error)
+    );
+  }, [userId]);
+
+  // Which category memo words usually go to, learned from categorized transactions
+  const wordCategories = useMemo(() => learnWordCategories(transactions), [transactions]);
 
   // Per-device default account: the one chosen here, else the first cash account
   const defaultAccount = useMemo(() => {
@@ -62,9 +76,27 @@ const QuickAddBar = () => {
       categories,
       payees: payeeSuggestions,
       payeeToCategory: payeeToCategoryMap,
+      aliases,
+      wordCategories,
       defaultAccount,
     });
-  }, [text, accounts, categories, payeeSuggestions, payeeToCategoryMap, defaultAccount]);
+  }, [text, accounts, categories, payeeSuggestions, payeeToCategoryMap, aliases, wordCategories, defaultAccount]);
+
+  // After an Edit that picked a different payee, remember what was heard for it
+  // ("trít gờ rô sơ" -> Street Grocer). Only phrases of 2+ words that aren't item
+  // words already linked to a category, so "rau" never turns into a payee.
+  const learnAlias = (heardDraft, saved) => {
+    const payee = (saved?.payee || '').trim();
+    if (!userId || !heardDraft || !payee || payee === heardDraft.payee) return;
+    const kept = new Set(aliasWords(saved.memo));
+    const itemWords = new Set(Object.keys(wordCategories[heardDraft.type] || {}).flatMap(aliasWords));
+    const heard = aliasWords(`${heardDraft.payee} ${heardDraft.memo}`)
+      .filter(w => !kept.has(w) && !itemWords.has(w) && !/^\d/.test(w));
+    const phrase = heard.join(' ');
+    if (heard.length < 2 || heard.length > 6 || phrase === aliasWords(payee).join(' ')) return;
+    setDoc(doc(db, 'userSettings', userId), { quickAddAliases: { [phrase]: payee } }, { merge: true })
+      .catch(error => console.error('Could not save quick add alias:', error));
+  };
 
   // Opened from the "Quick add" app shortcut: put the cursor here. The flag
   // covers this bar mounting later (another tab was open); the event covers
@@ -167,6 +199,16 @@ const QuickAddBar = () => {
             placeholder="Quick add: 25k rau Street Grocer"
             className="flex-1 min-w-0 p-2 bg-gray-50 rounded-lg text-base focus:outline-none focus:ring-1 focus:ring-emerald-500"
           />
+          {text && (
+            <button
+              type="button"
+              onClick={() => { setText(''); inputRef.current?.focus(); }}
+              className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+              title="Clear"
+            >
+              ✕
+            </button>
+          )}
           {SpeechRecognition && (
             <>
               <button
@@ -205,6 +247,13 @@ const QuickAddBar = () => {
               )}
               {draft.memo && <span className="text-gray-500 italic">· {draft.memo}</span>}
             </div>
+            {draft.parts.length > 1 && (
+              <div className="text-sm text-gray-600 mt-1">
+                {draft.parts.map(p => new Intl.NumberFormat('en-US').format(p)).join(' + ')}
+                {' = '}
+                <span className="font-semibold text-gray-900">{new Intl.NumberFormat('en-US').format(Math.abs(draft.amount))}</span>
+              </div>
+            )}
             <div className="flex gap-2 mt-2">
               <button
                 type="button"
@@ -242,7 +291,7 @@ const QuickAddBar = () => {
         isOpen={!!editing}
         prefill={editing}
         onClose={() => setEditing(null)}
-        onSave={() => { setEditing(null); setText(''); }}
+        onSave={(saved) => { learnAlias(editing, saved); setEditing(null); setText(''); }}
       />
     </div>
   );

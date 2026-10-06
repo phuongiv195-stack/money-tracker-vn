@@ -16,6 +16,11 @@ Personal Finance Tracking App - Mobile-first PWA
   - The mic uses the browser's speech recognition (VI/EN toggle). It needs the HTTPS site; the keyboard mic works anywhere.
   - App shortcut **Quick add** (long-press the app icon).
   - A quick-added bank payment is matched with its bank notification later instead of being imported twice.
+  - **Several amounts in one go:** "rau 15k thịt 50k cá 30k" is saved as one transaction of 95,000. The preview shows 15,000 + 50,000 + 30,000 and the memo keeps the breakdown. When an amount has a unit, a bare small number counts as a quantity ("mua 3 ổ bánh mì 45k" is 45,000).
+  - **Learns without AI:**
+    - Memo words map to the category they usually end up in, learned from categorized transactions ("rau" → Groceries).
+    - After an **Edit** that picks a different payee, the words speech recognition heard are remembered for that payee, e.g. "trít gờ rô sơ" → Street Grocer. This applies only to phrases of 2+ words that aren't item words. The aliases are stored in `userSettings/{uid}.quickAddAliases`.
+  - **✕ button** clears the box.
 - **Bank import (new):** bank transactions now arrive by themselves, so they don't have to be typed. Free: no paid APIs, and no server code.
   - The Android companion app **PD Rich Sync** ([`android-bank-capture/`](android-bank-capture/README.md)) forwards notifications from the bank apps (VCB, Timo, OCB, BV). It also forwards bank emails shown by Gmail, and nothing else from Gmail. Everything goes to the new Firestore collection `bankInbox`.
   - Money Tracker reads `bankInbox` whenever it is open (`src/services/bankImport/`).

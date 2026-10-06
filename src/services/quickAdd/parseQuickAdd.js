@@ -3,10 +3,16 @@
 //   "1tr2 tiền nhà OCB"               -> -1,200,000 from the OCB account
 //   "45k coffee Highlands yesterday"  -> -45,000 dated yesterday
 //   "+500k lương"                     -> income 500,000
-// Pure function (no Firebase), so it can be tested with plain Node.
+//   "rau 15k thịt 50k cá 30k"         -> -95,000 (15k + 50k + 30k)
+// It also learns from the user: names heard for a payee (aliases) and which
+// category memo words like "rau" usually go to (learnWordCategories).
+// Pure functions (no Firebase), so they can be tested with plain Node.
 
 const stripAccents = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 const norm = (s) => stripAccents(String(s || '')).toLowerCase();
+
+// "Trít gờ rô sơ" -> ['trit', 'go', 'ro', 'so']: how aliases are stored and matched
+export const aliasWords = (s) => norm(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
 // Words split for matching; numbers keep their separators ("25.000", "1,5", "1tr2").
 // n: without accents, for names; l: lower case WITH accents, for Vietnamese words
@@ -38,6 +44,7 @@ function readNumber(s) {
 function takeAmount(tokens) {
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
+    if (t.used) continue;
     // glued forms: "25k", "1tr", "1tr2", "1.5tr", "500ng"
     const glued = t.n.match(/^\+?(\d+(?:[.,]\d+)*)(k|tr|trieu|m|ng)(\d{0,3})$/);
     const plain = t.n.match(/^\+?(\d+(?:[.,]\d+)*)$/);
@@ -49,17 +56,18 @@ function takeAmount(tokens) {
     const used = [i];
 
     let j = i + 1;
-    if (!unit && tokens[j] && (THOUSAND.test(tokens[j].n) || MILLION.test(tokens[j].n) || HUNDRED_K.test(tokens[j].n))) {
+    const free = (k) => tokens[k] && !tokens[k].used;
+    if (!unit && free(j) && (THOUSAND.test(tokens[j].n) || MILLION.test(tokens[j].n) || HUNDRED_K.test(tokens[j].n))) {
       unit = tokens[j].n;
       used.push(j++);
     }
     // "1 triệu 2" / "1 triệu 250": the following bare digits belong to the amount
-    if (unit && MILLION.test(unit) && !tail && tokens[j] && /^\d{1,3}$/.test(tokens[j].n)) {
+    if (unit && MILLION.test(unit) && !tail && free(j) && /^\d{1,3}$/.test(tokens[j].n)) {
       tail = tokens[j].n;
       used.push(j++);
     }
     let half = false;
-    if (tokens[j] && HALF.test(tokens[j].n)) {
+    if (free(j) && HALF.test(tokens[j].n)) {
       half = true;
       used.push(j++);
     }
@@ -75,9 +83,24 @@ function takeAmount(tokens) {
     if (half) amount += multiplier / 2;
 
     used.forEach(k => { tokens[k].used = true; });
-    return { amount: Math.round(amount), positive: t.raw.startsWith('+') };
+    // explicit: had a unit or thousands separators; a bare "3" may be a quantity
+    const explicit = Boolean(unit) || value >= 1000;
+    return { amount: Math.round(amount), positive: t.raw.startsWith('+'), explicit, used };
   }
   return null;
+}
+
+// Every amount said: "rau 15k thịt 50k" -> [15000, 50000]. When some amount
+// has a unit, bare small numbers are quantities ("3 ổ bánh mì 45k") and stay in the memo.
+function takeAmounts(tokens) {
+  const amounts = [];
+  let found;
+  while ((found = takeAmount(tokens))) amounts.push(found);
+  if (amounts.some(a => a.explicit)) {
+    for (const a of amounts.filter(x => !x.explicit)) a.used.forEach(k => { tokens[k].used = false; });
+    return amounts.filter(a => a.explicit);
+  }
+  return amounts;
 }
 
 // --- Names (accounts, categories, payees) -----------------------------------
@@ -163,20 +186,60 @@ function takeDirection(tokens) {
   return null;
 }
 
+// --- Learning from the user's own transactions ---------------------------
+
+const STOP_WORDS = new Set([
+  'tiền', 'của', 'và', 'cho', 'ở', 'tại', 'mua', 'trả', 'chi', 'tiêu', 'với', 'các', 'những', 'một', 'hai',
+  'the', 'and', 'for', 'of', 'to', 'at', 'in', 'on', 'from',
+]);
+const memoWords = (memo) => String(memo || '').normalize('NFC').toLowerCase()
+  .split(/[^\p{L}\p{N}]+/u)
+  .filter(w => w.length >= 2 && !/^\d/.test(w) && !STOP_WORDS.has(w));
+
+/**
+ * Which category each memo word usually ends up in, per type, from categorized
+ * transactions: { expense: { rau: 'Groceries' }, income: {...} }. A word counts
+ * only when at least 60% of its uses share one category.
+ */
+export function learnWordCategories(transactions) {
+  const stats = { expense: {}, income: {} };
+  for (const t of transactions) {
+    if ((t.type !== 'expense' && t.type !== 'income') || !t.category || /^uncategorized/i.test(t.category)) continue;
+    for (const word of new Set(memoWords(t.memo))) {
+      const counts = (stats[t.type][word] = stats[t.type][word] || {});
+      counts[t.category] = (counts[t.category] || 0) + 1;
+    }
+  }
+  const learned = { expense: {}, income: {} };
+  for (const type of ['expense', 'income']) {
+    for (const [word, counts] of Object.entries(stats[type])) {
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      const [category, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      if (count / total >= 0.6) learned[type][word] = { category, count };
+    }
+  }
+  return learned;
+}
+
 const pad = (n) => String(n).padStart(2, '0');
 const dateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+const shortAmount = (n) => (n % 1000 === 0 ? `${n / 1000}k` : n.toLocaleString('en-US'));
 
 /**
  * @param text      what was said or typed
  * @param ctx       { accounts, categories, payees: string[], payeeToCategory: {payee: category},
+ *                    aliases: {heard phrase: payee}, wordCategories (learnWordCategories),
  *                    defaultAccount: name, today: Date }
- * @returns { amount (signed), type, account, category, payee, memo, date } — amount is null if none was found
+ * @returns { amount (signed total), parts: [amounts], type, account, category, payee, memo, date }
+ *          — amount is null if none was found
  */
 export function parseQuickAdd(text, ctx) {
   const tokens = tokenize(text);
   const today = ctx.today || new Date();
 
-  const found = takeAmount(tokens);
+  const amounts = takeAmounts(tokens);
+  const total = amounts.reduce((sum, a) => sum + a.amount, 0);
 
   // Date words
   const day = new Date(today);
@@ -187,7 +250,7 @@ export function parseQuickAdd(text, ctx) {
 
   // Income or expense: "+500k", or said ("nhận", "tiền về" / "chi", "trả", "tiêu"); expense by default
   const direction = takeDirection(tokens);
-  const type = found?.positive || direction === 'income' ? 'income' : 'expense';
+  const type = amounts[0]?.positive || direction === 'income' ? 'income' : 'expense';
 
   // Account: by name, by bank ("OCB" -> the account linked to OCB), or cash
   const activeAccounts = (ctx.accounts || []).filter(a => a.isActive !== false && a.group !== 'LOANS');
@@ -212,8 +275,10 @@ export function parseQuickAdd(text, ctx) {
   }
   account = account || ctx.defaultAccount || null;
 
-  // Known payee first (longest match), then the category if it was said
-  const payeeItem = takeName(tokens, (ctx.payees || []).map(name => ({ name })));
+  // Payee: a name the user taught (what speech recognition made of it), or a
+  // known payee (longest match); then the category if it was said
+  const aliasItem = takeName(tokens, Object.entries(ctx.aliases || {}).map(([name, payee]) => ({ name, payee })));
+  const payeeItem = aliasItem ? { name: aliasItem.payee } : takeName(tokens, (ctx.payees || []).map(name => ({ name })));
   const typedCategories = (ctx.categories || []).filter(c => c.type === type && !/^uncategorized/i.test(c.name));
   let category = takeName(tokens, typedCategories)?.name || null;
 
@@ -238,10 +303,24 @@ export function parseQuickAdd(text, ctx) {
     if (learned && typedCategories.some(c => c.name === learned)) category = learned;
   }
 
-  const memo = tokens.filter(t => !t.used && !FILLER_WORDS.has(t.l)).map(t => t.raw).join(' ');
+  const words = tokens.filter(t => !t.used && !FILLER_WORDS.has(t.l)).map(t => t.raw).join(' ');
+
+  // Still no category: what these memo words usually are ("rau" -> Groceries)
+  if (!category && ctx.wordCategories) {
+    const hits = memoWords(words)
+      .map(w => ctx.wordCategories[type]?.[w])
+      .filter(h => h && typedCategories.some(c => c.name === h.category))
+      .sort((a, b) => b.count - a.count);
+    if (hits.length) category = hits[0].category;
+  }
+
+  const memo = amounts.length > 1
+    ? [words, `(${amounts.map(a => shortAmount(a.amount)).join(' + ')})`].filter(Boolean).join(' ')
+    : words;
 
   return {
-    amount: found ? (type === 'expense' ? -found.amount : found.amount) : null,
+    amount: amounts.length ? (type === 'expense' ? -total : total) : null,
+    parts: amounts.map(a => a.amount),
     type,
     account,
     category,

@@ -560,6 +560,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
     setLoading(true);
     try {
       const isFuture = forceFuture || isFutureDate(formData.date);
+      let saved = null; // passed to onSave, e.g. so Quick add can learn from corrections
       
       if (isSplitMode) {
         const totalAmount = Number(formData.amount);
@@ -624,6 +625,7 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
         }
+        saved = transactionData;
       } else {
         let finalAmount = Number(formData.amount);
 
@@ -708,9 +710,10 @@ const AddTransactionModal = ({ isOpen, onClose, onSave, editTransaction: editTra
         } else {
           await addDoc(collection(db, 'transactions'), transactionData);
         }
+        saved = transactionData;
       }
 
-      if (onSave) onSave();
+      if (onSave) onSave(saved);
       onClose();
     } catch (error) {
       console.error("Error saving transaction:", error);
