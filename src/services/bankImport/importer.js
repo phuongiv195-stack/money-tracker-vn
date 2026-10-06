@@ -263,7 +263,10 @@ function findCoveringTransfer(pool, parsed, accountName, own) {
 
 const dayGap = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
 export const createdMs = (t) => t.createdAt?.toMillis?.() ?? (t.createdAt instanceof Date ? t.createdAt.getTime() : 0);
-const TYPED_BEFORE_WINDOW_MS = 12 * 60 * 60 * 1000;
+// A typed transaction matches a bank message if it was entered shortly before
+// the money moved (typed, then paid) or afterwards, until the message is processed.
+const TYPED_LEAD_MS = 30 * 60 * 1000;
+const TYPED_LAG_MS = 12 * 60 * 60 * 1000;
 
 // Does transaction t (typed by the user) record money moving `amount` through
 // `accountName` around `date`? Typed dates may be a day off the bank's.
@@ -277,12 +280,13 @@ function recordsMovement(t, accountName, amount, date) {
 }
 
 // A typed transaction for this notification, entered around the time it happened
-// (not, say, yesterday's identical coffee).
+// (not yesterday's identical coffee, nor this morning's identical transfer).
 function findTypedBefore(transactions, claimed, accountName, parsed) {
   let best = null;
   for (const t of transactions) {
     if (claimed.has(t.id) || !recordsMovement(t, accountName, parsed.amount, parsed.date)) continue;
-    if (Math.abs(createdMs(t) - parsed.at) > TYPED_BEFORE_WINDOW_MS) continue;
+    const created = createdMs(t);
+    if (created < parsed.at - TYPED_LEAD_MS || created > parsed.at + TYPED_LAG_MS) continue;
     if (!best || dayGap(t.date, parsed.date) < dayGap(best.date, parsed.date)) best = t;
   }
   return best;
